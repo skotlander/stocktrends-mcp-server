@@ -100,4 +100,5 @@ Candidate intelligence resources are excluded from the Phase 1 registry until no
 - [API Capability Coverage Audit](docs/API_CAPABILITY_COVERAGE_AUDIT.md)
 - [Security Model](docs/SECURITY_MODEL.md)
 - [Phase 1 Implementation Memo](docs/PHASE1_STDIO_PUBLIC_RESOURCES_IMPLEMENTATION_MEMO.md)
+- [Phase 1 Validation Report](docs/PHASE1_VALIDATION_REPORT.md)
 - [Phase 1 Implementation Notes](docs/PHASE1_IMPLEMENTATION_NOTES.md)
