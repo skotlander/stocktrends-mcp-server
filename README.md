@@ -1,22 +1,97 @@
 # Stock Trends MCP Server
 
-Architecture scaffold for an MCP server that will provide agent-native access to the Stock Trends API.
+Local Model Context Protocol (MCP) adapter for public Stock Trends API resources.
 
 ## Current Status
 
-This repository currently contains architecture and preparation documentation only. There is no MCP server implementation yet, no runtime tool surface, and no package installation required for the current scaffold.
+Phase 1 implements a conservative local stdio MCP server for public-resource access only.
+
+Included in Phase 1:
+
+- Local stdio transport only.
+- Public Stock Trends API resources only.
+- Fetch-on-request behavior; no startup API fetch is required.
+- Zero MCP tools by default.
+- Zero MCP prompts.
+- No API key requirement.
+
+Excluded from Phase 1:
+
+- Paid endpoints.
+- API-key-required calls.
+- x402, wallets, payment retries, and OAuth.
+- Remote HTTP/SSE/Streamable HTTP hosting.
+- Database or control-plane access.
+- Intelligence Agent recomputation, generated guidance, generated research, or a parallel reasoning layer.
 
 ## Authority Boundary
 
 The future server must be a thin adapter over the canonical Stock Trends API. It must not query Stock Trends databases directly, recompute ST-IM or indicators, create selections or rankings, generate research or guidance, bypass API authentication/pricing/metering/payment rules, or create a parallel intelligence layer.
 
-Published Stock Trends API responses and API-served Intelligence Agent artifacts remain authoritative. The MCP adapter will only translate those API capabilities into MCP tools, resources, and prompts.
+Published Stock Trends API responses and API-served Intelligence Agent artifacts remain authoritative. The MCP adapter only translates reviewed public API resources into MCP resource responses.
 
 ## Local Development
 
-Work in a dedicated branch or worktree. Keep changes documentation-only until implementation is explicitly approved. Do not install packages or add runtime code as part of the architecture scaffold.
+Work in a dedicated branch or worktree. Do not modify `main` directly.
 
 Never store API keys, bearer tokens, payment headers, wallet material, database credentials, or other secrets in this repository.
+
+Install dependencies:
+
+```sh
+npm install
+```
+
+Run validation:
+
+```sh
+npm run typecheck
+npm test
+npm run build
+```
+
+Start the built stdio MCP server:
+
+```sh
+npm run build
+npm start
+```
+
+For local TypeScript execution during development:
+
+```sh
+npm run dev
+```
+
+Do not run the stdio server directly in a terminal expecting human-readable output. stdout is reserved for MCP JSON-RPC messages.
+
+## Environment Variables
+
+| Variable | Required | Default | Phase 1 behavior |
+| --- | --- | --- | --- |
+| `STOCKTRENDS_API_BASE_URL` | No | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. |
+| `STOCKTRENDS_MCP_TRANSPORT` | No | `stdio` | Only `stdio` is supported in Phase 1. |
+| `STOCKTRENDS_MCP_LOG_LEVEL` | No | `warn` | Normal logs go to stderr, never stdout. |
+| `STOCKTRENDS_API_KEY` | No | None | Ignored by Phase 1 and never sent. |
+
+## Phase 1 Resources
+
+The server registers these resources:
+
+| MCP resource URI | Backing endpoint |
+| --- | --- |
+| `stocktrends://api/openapi` | `GET /v1/openapi.json` |
+| `stocktrends://ai/context` | `GET /v1/ai/context` |
+| `stocktrends://ai/tools` | `GET /v1/ai/tools` |
+| `stocktrends://workflows` | `GET /v1/workflows` |
+| `stocktrends://methodology/stim` | `GET /v1/meta/stim` |
+
+Candidate intelligence resources are excluded from the Phase 1 registry until no-key public verification succeeds:
+
+| Excluded candidate endpoint | Reason |
+| --- | --- |
+| `GET /v1/intelligence/discovery` | No-key verification returned `503 application/json` on 2026-07-07. |
+| `GET /v1/intelligence/editorial/latest/preview` | No-key verification returned `503 application/json` on 2026-07-07. |
 
 ## Documentation
 
@@ -24,3 +99,5 @@ Never store API keys, bearer tokens, payment headers, wallet material, database 
 - [MCP Server Architecture](docs/MCP_SERVER_ARCHITECTURE.md)
 - [API Capability Coverage Audit](docs/API_CAPABILITY_COVERAGE_AUDIT.md)
 - [Security Model](docs/SECURITY_MODEL.md)
+- [Phase 1 Implementation Memo](docs/PHASE1_STDIO_PUBLIC_RESOURCES_IMPLEMENTATION_MEMO.md)
+- [Phase 1 Implementation Notes](docs/PHASE1_IMPLEMENTATION_NOTES.md)
