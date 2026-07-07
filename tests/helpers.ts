@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { parseConfig } from "../src/config.js";
+import { parseConfig, type Env } from "../src/config.js";
 import { createStockTrendsMcpServer } from "../src/server.js";
 import type { FetchLike } from "../src/stocktrendsClient.js";
 
@@ -22,10 +22,10 @@ export function textResponse(body: string, status = 200, headers: Record<string,
   });
 }
 
-export async function connectMcp(fetchFn: FetchLike): Promise<{ client: Client; server: McpServer }> {
+export async function connectMcp(fetchFn: FetchLike, env: Env = {}): Promise<{ client: Client; server: McpServer }> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const runtime = createStockTrendsMcpServer({
-    config: parseConfig({}),
+    config: parseConfig(env),
     fetchFn
   });
   const client = new Client({

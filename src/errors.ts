@@ -26,8 +26,8 @@ export interface SafeErrorData {
 
 const ERROR_MESSAGES: Record<StockTrendsErrorCode, string> = {
   invalid_config: "Invalid Stock Trends MCP configuration.",
-  unsupported_transport: "Unsupported transport for Phase 1; only stdio is enabled.",
-  invalid_resource_request: "Unknown or unsupported Phase 1 resource request.",
+  unsupported_transport: "Unsupported transport; only stdio is enabled.",
+  invalid_resource_request: "Unknown or unsupported public resource request.",
   api_unavailable: "Stock Trends API is unavailable for this public resource.",
   timeout: "Timed out fetching Stock Trends public resource.",
   malformed_api_response: "Stock Trends API returned malformed JSON for this public resource.",

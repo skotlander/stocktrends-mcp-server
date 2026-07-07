@@ -4,9 +4,9 @@ Local Model Context Protocol (MCP) adapter for public Stock Trends API resources
 
 ## Current Status
 
-Phase 1 implements a conservative local stdio MCP server for public-resource access only.
+Phase 2 implements a conservative local stdio MCP server for public-resource access only.
 
-Included in Phase 1:
+Included:
 
 - Local stdio transport only.
 - Public Stock Trends API resources only.
@@ -15,7 +15,7 @@ Included in Phase 1:
 - Zero MCP prompts.
 - No API key requirement.
 
-Excluded from Phase 1:
+Excluded:
 
 - Paid endpoints.
 - API-key-required calls.
@@ -67,14 +67,14 @@ Do not run the stdio server directly in a terminal expecting human-readable outp
 
 ## Environment Variables
 
-| Variable | Required | Default | Phase 1 behavior |
+| Variable | Required | Default | Current behavior |
 | --- | --- | --- | --- |
 | `STOCKTRENDS_API_BASE_URL` | No | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. |
-| `STOCKTRENDS_MCP_TRANSPORT` | No | `stdio` | Only `stdio` is supported in Phase 1. |
+| `STOCKTRENDS_MCP_TRANSPORT` | No | `stdio` | Only `stdio` is supported. |
 | `STOCKTRENDS_MCP_LOG_LEVEL` | No | `warn` | Normal logs go to stderr, never stdout. |
-| `STOCKTRENDS_API_KEY` | No | None | Ignored by Phase 1 and never sent. |
+| `STOCKTRENDS_API_KEY` | No | None | Ignored and never sent. |
 
-## Phase 1 Resources
+## Public Resources
 
 The server registers these resources:
 
@@ -85,13 +85,17 @@ The server registers these resources:
 | `stocktrends://ai/tools` | `GET /v1/ai/tools` |
 | `stocktrends://workflows` | `GET /v1/workflows` |
 | `stocktrends://methodology/stim` | `GET /v1/meta/stim` |
+| `stocktrends://methodology/indicators` | `GET /v1/meta/indicators` |
+| `stocktrends://methodology/inference` | `GET /v1/meta/inference` |
+| `stocktrends://pricing/catalog` | `GET /v1/pricing/catalog` |
+| `stocktrends://proof/market-edge` | `GET /v1/ai/proof/market-edge` |
 
-Candidate intelligence resources are excluded from the Phase 1 registry until no-key public verification succeeds:
+Candidate intelligence resources remain excluded until no-key public verification succeeds:
 
 | Excluded candidate endpoint | Reason |
 | --- | --- |
-| `GET /v1/intelligence/discovery` | No-key verification returned `503 application/json` on 2026-07-07. |
-| `GET /v1/intelligence/editorial/latest/preview` | No-key verification returned `503 application/json` on 2026-07-07. |
+| `GET /v1/intelligence/discovery` | No-key verification returned `503 application/json` during Phase 1 and Phase 2 checks on 2026-07-07. |
+| `GET /v1/intelligence/editorial/latest/preview` | No-key verification returned `503 application/json` during Phase 1 and Phase 2 checks on 2026-07-07. |
 
 ## Documentation
 
@@ -103,3 +107,4 @@ Candidate intelligence resources are excluded from the Phase 1 registry until no
 - [Phase 1 Validation Report](docs/PHASE1_VALIDATION_REPORT.md)
 - [Phase 1 Implementation Notes](docs/PHASE1_IMPLEMENTATION_NOTES.md)
 - [Phase 2 Public Metadata and Paid Tool Boundary Memo](docs/PHASE2_PUBLIC_METADATA_AND_PAID_TOOL_BOUNDARY_MEMO.md)
+- [Phase 2 Public Metadata Implementation Notes](docs/PHASE2_PUBLIC_METADATA_IMPLEMENTATION_NOTES.md)
