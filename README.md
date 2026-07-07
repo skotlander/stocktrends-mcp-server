@@ -4,7 +4,7 @@ Local Model Context Protocol (MCP) adapter for public Stock Trends API resources
 
 ## Current Status
 
-Phase 2 implements a conservative local stdio MCP server for public-resource access only.
+Phase 3 implements a conservative local stdio MCP server for public-resource access plus an internal no-tools paid-auth/spend-control foundation.
 
 Included:
 
@@ -14,11 +14,13 @@ Included:
 - Zero MCP tools by default.
 - Zero MCP prompts.
 - No API key requirement.
+- Internal paid-mode configuration, host enforcement, redaction, paid endpoint policy metadata, and spend/preflight policy scaffolding for a future branch.
 
 Excluded:
 
+- Paid runtime tools.
 - Paid endpoints.
-- API-key-required calls.
+- API-key-required calls or API-key forwarding.
 - x402, wallets, payment retries, and OAuth.
 - Remote HTTP/SSE/Streamable HTTP hosting.
 - Database or control-plane access.
@@ -72,7 +74,12 @@ Do not run the stdio server directly in a terminal expecting human-readable outp
 | `STOCKTRENDS_API_BASE_URL` | No | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. |
 | `STOCKTRENDS_MCP_TRANSPORT` | No | `stdio` | Only `stdio` is supported. |
 | `STOCKTRENDS_MCP_LOG_LEVEL` | No | `warn` | Normal logs go to stderr, never stdout. |
-| `STOCKTRENDS_API_KEY` | No | None | Ignored and never sent. |
+| `STOCKTRENDS_ENABLE_PAID_TOOLS` | No | `false` | Enables internal paid-mode configuration only. No paid tools are registered in this build. |
+| `STOCKTRENDS_API_KEY` | No | None | Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; never sent for public resources and not used by any current runtime tool path. |
+| `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | No | `0` | Future local paid-call cap scaffold only; no paid calls are authorized in this build. |
+| `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | No | `0` | Future per-tool paid-call cap scaffold only; no paid tools are registered in this build. |
+| `STOCKTRENDS_MAX_STC_PER_SESSION` | No | None | Future STC budget placeholder only; no executable pricing preflight exists in this build. |
+| `STOCKTRENDS_MAX_USD_PER_SESSION` | No | None | Future USD budget placeholder only; no executable pricing preflight exists in this build. |
 
 ## Public Resources
 
@@ -109,3 +116,4 @@ Candidate intelligence resources remain excluded until no-key public verificatio
 - [Phase 2 Public Metadata and Paid Tool Boundary Memo](docs/PHASE2_PUBLIC_METADATA_AND_PAID_TOOL_BOUNDARY_MEMO.md)
 - [Phase 2 Public Metadata Implementation Notes](docs/PHASE2_PUBLIC_METADATA_IMPLEMENTATION_NOTES.md)
 - [Phase 3 Paid Tools Auth and Spend Design Memo](docs/PHASE3_PAID_TOOLS_AUTH_SPEND_DESIGN_MEMO.md)
+- [Phase 3 Paid Auth Foundation Implementation Notes](docs/PHASE3_PAID_AUTH_FOUNDATION_IMPLEMENTATION_NOTES.md)

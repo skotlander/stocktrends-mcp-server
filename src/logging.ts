@@ -1,5 +1,6 @@
 import type { StockTrendsMcpConfig, StockTrendsMcpLogLevel } from "./config.js";
 import { StockTrendsMcpError } from "./errors.js";
+import { redactSensitiveText } from "./redaction.js";
 
 export interface Logger {
   debug(message: string): void;
@@ -24,16 +25,18 @@ export function createLogger(config: Pick<StockTrendsMcpConfig, "logLevel">): Lo
   };
 }
 
-export function safeErrorMessage(error: unknown): string {
+export function safeErrorMessage(error: unknown, knownSecrets: readonly (string | undefined)[] = []): string {
+  let message: string;
+
   if (error instanceof StockTrendsMcpError) {
-    return `${error.errorCode}: ${error.message}`;
+    message = `${error.errorCode}: ${error.message}`;
+  } else if (error instanceof Error) {
+    message = `startup_error: ${error.message}`;
+  } else {
+    message = "startup_error: Unknown startup failure.";
   }
 
-  if (error instanceof Error) {
-    return `startup_error: ${error.message}`;
-  }
-
-  return "startup_error: Unknown startup failure.";
+  return redactSensitiveText(message, knownSecrets);
 }
 
 function write(level: Exclude<StockTrendsMcpLogLevel, "silent">, message: string, configuredLevel: StockTrendsMcpLogLevel): void {
@@ -45,5 +48,5 @@ function write(level: Exclude<StockTrendsMcpLogLevel, "silent">, message: string
     return;
   }
 
-  console.error(`[stocktrends-mcp] ${level}: ${message}`);
+  console.error(`[stocktrends-mcp] ${level}: ${redactSensitiveText(message)}`);
 }

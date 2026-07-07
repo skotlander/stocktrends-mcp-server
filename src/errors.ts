@@ -13,7 +13,11 @@ export type StockTrendsErrorCode =
   | "api_not_found"
   | "api_rate_limited"
   | "api_unapproved_redirect"
-  | "api_unexpected_status";
+  | "api_unexpected_status"
+  | "paid_auth_unavailable"
+  | "paid_policy_denied"
+  | "unapproved_auth_host"
+  | "unapproved_paid_endpoint";
 
 export interface SafeErrorData {
   errorCode: StockTrendsErrorCode;
@@ -37,7 +41,11 @@ const ERROR_MESSAGES: Record<StockTrendsErrorCode, string> = {
   api_not_found: "Stock Trends public resource endpoint was not found.",
   api_rate_limited: "Stock Trends API rate limited this public resource request.",
   api_unapproved_redirect: "Stock Trends API returned a redirect for this public resource.",
-  api_unexpected_status: "Stock Trends API returned an unexpected status for this public resource."
+  api_unexpected_status: "Stock Trends API returned an unexpected status for this public resource.",
+  paid_auth_unavailable: "Paid Stock Trends authentication is not available.",
+  paid_policy_denied: "Paid Stock Trends call is not authorized by local policy.",
+  unapproved_auth_host: "Refusing to create auth headers for an unapproved Stock Trends API host.",
+  unapproved_paid_endpoint: "Refusing to authorize an unapproved Stock Trends paid endpoint."
 };
 
 export class StockTrendsMcpError extends Error {
@@ -104,7 +112,13 @@ export function errorFromHttpStatus(status: number, safeData: Omit<SafeErrorData
 }
 
 function toJsonRpcErrorCode(errorCode: StockTrendsErrorCode): ErrorCode {
-  if (errorCode === "invalid_config" || errorCode === "unsupported_transport" || errorCode === "invalid_resource_request") {
+  if (
+    errorCode === "invalid_config" ||
+    errorCode === "unsupported_transport" ||
+    errorCode === "invalid_resource_request" ||
+    errorCode === "unapproved_auth_host" ||
+    errorCode === "unapproved_paid_endpoint"
+  ) {
     return ErrorCode.InvalidParams;
   }
 

@@ -1,0 +1,241 @@
+import { describe, expect, it, vi } from "vitest";
+import { parseConfig, type Env } from "../src/config.js";
+import { StockTrendsMcpError } from "../src/errors.js";
+import { createLogger, safeErrorMessage } from "../src/logging.js";
+import {
+  assertPaidCallPolicySatisfied,
+  assertPaidEndpointAllowed,
+  buildPaidAuthHeaders,
+  PAID_ENDPOINT_POLICIES,
+  PHASE3_PAID_TOOLS_REGISTERED
+} from "../src/paidPolicy.js";
+import { redactSensitiveText } from "../src/redaction.js";
+import { listPublicResourceUris, PHASE1_PROMPT_DEFINITIONS, PHASE1_TOOL_DEFINITIONS, PUBLIC_RESOURCES } from "../src/resources/index.js";
+import type { FetchLike } from "../src/stocktrendsClient.js";
+import { connectMcp, jsonResponse } from "./helpers.js";
+
+const EXPECTED_PUBLIC_RESOURCE_URIS = [
+  "stocktrends://api/openapi",
+  "stocktrends://ai/context",
+  "stocktrends://ai/tools",
+  "stocktrends://workflows",
+  "stocktrends://methodology/stim",
+  "stocktrends://methodology/indicators",
+  "stocktrends://methodology/inference",
+  "stocktrends://pricing/catalog",
+  "stocktrends://proof/market-edge"
+];
+
+const PAID_ENV_MATRIX: Array<{ label: string; env: Env }> = [
+  { label: "paid flag absent and API key absent", env: {} },
+  { label: "paid flag false and API key absent", env: { STOCKTRENDS_ENABLE_PAID_TOOLS: "false" } },
+  { label: "paid flag false and API key present", env: { STOCKTRENDS_ENABLE_PAID_TOOLS: "false", STOCKTRENDS_API_KEY: "ignored-secret" } },
+  { label: "paid flag absent and API key present", env: { STOCKTRENDS_API_KEY: "ignored-secret" } },
+  { label: "paid flag true and API key absent", env: { STOCKTRENDS_ENABLE_PAID_TOOLS: "true" } },
+  { label: "paid flag true and API key present", env: { STOCKTRENDS_ENABLE_PAID_TOOLS: "true", STOCKTRENDS_API_KEY: "configured-secret" } }
+];
+
+describe("Phase 3 paid-auth foundation", () => {
+  it.each(PAID_ENV_MATRIX)("keeps resources unchanged and tools/prompts zero when $label", async ({ env }) => {
+    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
+    const { client, server } = await connectMcp(fetchFn, env);
+
+    const resources = await client.listResources();
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(resources.resources.map((resource) => resource.uri)).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
+    expect(listPublicResourceUris()).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
+    expect(PHASE1_TOOL_DEFINITIONS).toEqual([]);
+    expect(PHASE1_PROMPT_DEFINITIONS).toEqual([]);
+    expect(client.getServerCapabilities()?.tools).toBeUndefined();
+    expect(client.getServerCapabilities()?.prompts).toBeUndefined();
+
+    await client.close();
+    await server.close();
+  });
+
+  it("keeps public resources readable without auth headers when paid mode is blocked by a missing API key", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
+    const { client, server } = await connectMcp(fetchFn, {
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true"
+    });
+
+    await client.readResource({
+      uri: "stocktrends://api/openapi"
+    });
+
+    const init = fetchFn.mock.calls[0]?.[1];
+
+    expect(init?.headers).toEqual({
+      Accept: "application/json",
+      "User-Agent": "stocktrends-mcp-server/1.0"
+    });
+
+    await client.close();
+    await server.close();
+  });
+
+  it("keeps the paid auth helper scoped to the configured Stock Trends API origin", () => {
+    const config = parseConfig({
+      STOCKTRENDS_API_BASE_URL: "https://staging.stocktrends.com",
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+      STOCKTRENDS_API_KEY: "phase3-helper-secret"
+    });
+
+    expect(buildPaidAuthHeaders(config, new URL("https://staging.stocktrends.com/v1/stim/latest?symbol_exchange=AAPL_XNAS"))).toEqual({
+      "X-API-Key": "phase3-helper-secret"
+    });
+
+    for (const target of [
+      "https://api.stocktrends.com/v1/stim/latest",
+      "https://example.com/v1/stim/latest",
+      "http://staging.stocktrends.com/v1/stim/latest",
+      "https://user:pass@staging.stocktrends.com/v1/stim/latest",
+      "https://staging.stocktrends.com/v1/stim/latest#fragment"
+    ]) {
+      expect(() => buildPaidAuthHeaders(config, new URL(target))).toThrow(StockTrendsMcpError);
+
+      try {
+        buildPaidAuthHeaders(config, new URL(target));
+      } catch (error) {
+        expect(serializedSafeError(error)).not.toContain("phase3-helper-secret");
+      }
+    }
+  });
+
+  it("does not construct auth headers from API-key-only public configuration", () => {
+    const config = parseConfig({
+      STOCKTRENDS_API_KEY: "key-alone-must-not-enable-auth"
+    });
+
+    expect(() => buildPaidAuthHeaders(config, new URL("https://api.stocktrends.com/v1/stim/latest"))).toThrow(StockTrendsMcpError);
+
+    try {
+      buildPaidAuthHeaders(config, new URL("https://api.stocktrends.com/v1/stim/latest"));
+    } catch (error) {
+      expect(serializedSafeError(error)).not.toContain("key-alone-must-not-enable-auth");
+    }
+  });
+
+  it("defines only a narrow static paid endpoint policy and does not register it as public resources", () => {
+    expect(PHASE3_PAID_TOOLS_REGISTERED).toBe(false);
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toEqual([
+      "/v1/stim/latest",
+      "/v1/stim/history",
+      "/v1/indicators/latest",
+      "/v1/indicators/history"
+    ]);
+    expect(PAID_ENDPOINT_POLICIES.every((policy) => policy.requiresPricingPreflight)).toBe(true);
+    expect(PAID_ENDPOINT_POLICIES.find((policy) => policy.endpointPath === "/v1/stim/latest")?.requiredHistoryPair).toBe(
+      "stocktrends_get_stim_history"
+    );
+    expect(PAID_ENDPOINT_POLICIES.find((policy) => policy.endpointPath === "/v1/indicators/latest")?.requiredHistoryPair).toBe(
+      "stocktrends_get_indicators_history"
+    );
+    expect(() => assertPaidEndpointAllowed("/v1/selections/latest")).toThrow(StockTrendsMcpError);
+
+    const registeredResourceEndpoints = PUBLIC_RESOURCES.map((resource) => resource.endpointPath);
+
+    for (const policy of PAID_ENDPOINT_POLICIES) {
+      expect(registeredResourceEndpoints).not.toContain(policy.endpointPath);
+    }
+  });
+
+  it("keeps pricing/spend policy fail-closed until pricing and local authorization are implemented", () => {
+    const config = parseConfig({
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+      STOCKTRENDS_API_KEY: "phase3-policy-secret",
+      STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION: "1",
+      STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL: "1"
+    });
+
+    expect(config.paidTools.spendPolicy).toMatchObject({
+      pricingPreflightRequired: true,
+      maxPaidCallsPerSession: 1,
+      maxPaidCallsPerTool: 1,
+      automaticPaidRetries: false,
+      paidCallsAuthorizedInThisBuild: false
+    });
+
+    const paidCallAttempt = {
+      endpointPath: "/v1/stim/history",
+      toolName: "stocktrends_get_stim_history",
+      pricingDetermined: true,
+      localPolicyAuthorized: true
+    };
+
+    expect(() => assertPaidCallPolicySatisfied(config, paidCallAttempt)).toThrow(StockTrendsMcpError);
+
+    try {
+      assertPaidCallPolicySatisfied(config, paidCallAttempt);
+    } catch (error) {
+      expect(error).toMatchObject({
+        errorCode: "paid_policy_denied"
+      });
+      expect(serializedSafeError(error)).not.toContain("phase3-policy-secret");
+    }
+  });
+
+  it("blocks paid policy checks when pricing has not been determined", () => {
+    const config = parseConfig({
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+      STOCKTRENDS_API_KEY: "phase3-preflight-secret"
+    });
+
+    expect(() =>
+      assertPaidCallPolicySatisfied(config, {
+        endpointPath: "/v1/stim/history",
+        toolName: "stocktrends_get_stim_history",
+        pricingDetermined: false,
+        localPolicyAuthorized: true
+      })
+    ).toThrow(StockTrendsMcpError);
+  });
+
+  it("redacts API keys, auth headers, payment headers, and known secrets from logs and error text", () => {
+    const text = [
+      "STOCKTRENDS_API_KEY=phase3-redact-secret",
+      "Authorization: Bearer phase3-bearer-secret",
+      "X-API-Key: phase3-header-secret",
+      "PAYMENT-SIGNATURE: phase3-payment-secret",
+      "loose-known-secret"
+    ].join(" ");
+
+    const redacted = redactSensitiveText(text, ["loose-known-secret"]);
+
+    for (const secret of [
+      "phase3-redact-secret",
+      "phase3-bearer-secret",
+      "phase3-header-secret",
+      "phase3-payment-secret",
+      "loose-known-secret"
+    ]) {
+      expect(redacted).not.toContain(secret);
+    }
+
+    expect(safeErrorMessage(new Error(text), ["loose-known-secret"])).not.toContain("phase3-redact-secret");
+
+    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const logger = createLogger({ logLevel: "warn" });
+      logger.warn(text);
+
+      const logged = String(stderrSpy.mock.calls[0]?.[0]);
+
+      expect(logged).toContain("[REDACTED]");
+      expect(logged).not.toContain("phase3-header-secret");
+      expect(logged).not.toContain("phase3-payment-secret");
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+});
+
+function serializedSafeError(error: unknown): string {
+  if (error instanceof StockTrendsMcpError) {
+    return `${error.message} ${JSON.stringify(error.toSafeData())}`;
+  }
+
+  return safeErrorMessage(error);
+}

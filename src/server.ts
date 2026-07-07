@@ -41,10 +41,15 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
 
 export async function startStdioServer(env: Env = process.env): Promise<void> {
   const config = parseConfig(env);
+  const logger = createLogger({ logLevel: config.logLevel });
   const runtime = createStockTrendsMcpServer({ config });
 
   if (config.transport !== "stdio") {
     throw new Error("Unsupported transport after configuration validation.");
+  }
+
+  if (config.paidTools.status === "blocked_missing_api_key") {
+    logger.warn("STOCKTRENDS_ENABLE_PAID_TOOLS=true but no API key is configured; paid mode is blocked and no paid tools are registered.");
   }
 
   await runtime.server.connect(new StdioServerTransport());

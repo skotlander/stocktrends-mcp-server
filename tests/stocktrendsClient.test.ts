@@ -22,11 +22,12 @@ describe("StockTrendsClient", () => {
     expect(String(fetchFn.mock.calls[0]?.[0])).toBe("https://staging.stocktrends.com/v1/openapi.json");
   });
 
-  it("does not send API keys or authorization headers", async () => {
+  it("does not send API keys, authorization headers, or secret headers for public resources", async () => {
     const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
     const client = new StockTrendsClient(
       parseConfig({
-        STOCKTRENDS_API_KEY: "phase-1-must-ignore-this"
+        STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+        STOCKTRENDS_API_KEY: "phase3-public-resource-must-not-send-this"
       }),
       fetchFn
     );
@@ -37,11 +38,13 @@ describe("StockTrendsClient", () => {
     });
 
     const init = fetchFn.mock.calls[0]?.[1];
-    expect(init?.headers).toMatchObject({
-      Accept: "application/json"
+    expect(init?.headers).toEqual({
+      Accept: "application/json",
+      "User-Agent": "stocktrends-mcp-server/1.0"
     });
     expect(JSON.stringify(init?.headers).toLowerCase()).not.toContain("api-key");
     expect(JSON.stringify(init?.headers).toLowerCase()).not.toContain("authorization");
+    expect(JSON.stringify(init?.headers).toLowerCase()).not.toContain("secret");
   });
 
   it("rejects unsafe endpoint paths", () => {
