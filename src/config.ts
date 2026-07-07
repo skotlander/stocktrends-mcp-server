@@ -36,7 +36,7 @@ function parseTransport(value: string | undefined): StockTrendsMcpTransport {
 
   if (transport !== "stdio") {
     throw new StockTrendsMcpError("unsupported_transport", {
-      detail: "Set STOCKTRENDS_MCP_TRANSPORT=stdio for Phase 1."
+      detail: "Set STOCKTRENDS_MCP_TRANSPORT=stdio."
     });
   }
 
