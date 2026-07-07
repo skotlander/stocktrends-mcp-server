@@ -108,3 +108,4 @@ Candidate intelligence resources remain excluded until no-key public verificatio
 - [Phase 1 Implementation Notes](docs/PHASE1_IMPLEMENTATION_NOTES.md)
 - [Phase 2 Public Metadata and Paid Tool Boundary Memo](docs/PHASE2_PUBLIC_METADATA_AND_PAID_TOOL_BOUNDARY_MEMO.md)
 - [Phase 2 Public Metadata Implementation Notes](docs/PHASE2_PUBLIC_METADATA_IMPLEMENTATION_NOTES.md)
+- [Phase 3 Paid Tools Auth and Spend Design Memo](docs/PHASE3_PAID_TOOLS_AUTH_SPEND_DESIGN_MEMO.md)
