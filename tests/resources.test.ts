@@ -178,10 +178,11 @@ describe("public resources", () => {
     }
   });
 
-  it("does not send auth headers for Phase 2 resources even when STOCKTRENDS_API_KEY is set", async () => {
+  it("does not send auth headers for Phase 2 resources even when paid mode and STOCKTRENDS_API_KEY are set", async () => {
     const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
     const { client, server } = await connectMcp(fetchFn, {
-      STOCKTRENDS_API_KEY: "must-not-be-read-or-forwarded"
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+      STOCKTRENDS_API_KEY: "must-not-be-forwarded-for-public-resources"
     });
 
     await client.readResource({
@@ -189,11 +190,13 @@ describe("public resources", () => {
     });
 
     const init = fetchFn.mock.calls[0]?.[1];
-    expect(init?.headers).toMatchObject({
-      Accept: "application/json"
+    expect(init?.headers).toEqual({
+      Accept: "application/json",
+      "User-Agent": "stocktrends-mcp-server/1.0"
     });
     expect(JSON.stringify(init?.headers).toLowerCase()).not.toContain("api-key");
     expect(JSON.stringify(init?.headers).toLowerCase()).not.toContain("authorization");
+    expect(JSON.stringify(init?.headers).toLowerCase()).not.toContain("secret");
 
     await client.close();
     await server.close();

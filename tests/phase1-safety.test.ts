@@ -17,11 +17,11 @@ describe("MCP safety surface", () => {
     await server.close();
   });
 
-  it("does not register paid, x402, wallet, OAuth, remote, or database surfaces", () => {
+  it("does not register paid, x402, wallet, OAuth, remote, database, or control-plane surfaces", () => {
     const serializedTools = JSON.stringify(PHASE1_TOOL_DEFINITIONS);
     const serializedPrompts = JSON.stringify(PHASE1_PROMPT_DEFINITIONS);
 
-    for (const forbidden of ["x402", "wallet", "oauth", "database", "streamable", "sse", "guidance", "research"]) {
+    for (const forbidden of ["x402", "wallet", "oauth", "database", "control-plane", "control_plane", "remote", "streamable", "sse", "guidance", "research"]) {
       expect(serializedTools.toLowerCase()).not.toContain(forbidden);
       expect(serializedPrompts.toLowerCase()).not.toContain(forbidden);
     }

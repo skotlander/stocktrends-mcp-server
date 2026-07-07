@@ -10,6 +10,21 @@ describe("config", () => {
     expect(config.transport).toBe("stdio");
     expect(config.logLevel).toBe("warn");
     expect(config.requestTimeoutMs).toBe(10_000);
+    expect(config.paidTools).toMatchObject({
+      requested: false,
+      apiKeyConfigured: false,
+      status: "disabled",
+      runtimeToolsRegistered: false,
+      spendPolicy: {
+        pricingPreflightRequired: true,
+        maxPaidCallsPerSession: 0,
+        maxPaidCallsPerTool: 0,
+        maxStcPerSession: null,
+        maxUsdPerSession: null,
+        automaticPaidRetries: false,
+        paidCallsAuthorizedInThisBuild: false
+      }
+    });
   });
 
   it("supports a configured Stock Trends API base URL", () => {
@@ -21,12 +36,76 @@ describe("config", () => {
     expect(config.apiBaseUrl.href).toBe("https://staging.stocktrends.com/");
   });
 
-  it("does not require or parse an API key for Phase 1", () => {
+  it("ignores API key configuration unless paid tools are explicitly enabled", () => {
     const config = parseConfig({
-      STOCKTRENDS_API_KEY: "not-used-by-phase-1"
+      STOCKTRENDS_API_KEY: "not-used-without-paid-flag"
     });
 
     expect(config.transport).toBe("stdio");
+    expect(config.paidTools.apiKeyConfigured).toBe(false);
+    expect(config.paidTools.apiKey).toBeUndefined();
+  });
+
+  it("does not read STOCKTRENDS_API_KEY when the paid flag is absent or false", () => {
+    const envTargets: Array<Record<string, string | undefined>> = [{}, { STOCKTRENDS_ENABLE_PAID_TOOLS: "false" }];
+
+    for (const envTarget of envTargets) {
+      const env = new Proxy(envTarget, {
+        get(target, property: string | symbol) {
+          if (property === "STOCKTRENDS_API_KEY") {
+            throw new Error("STOCKTRENDS_API_KEY should not be read.");
+          }
+
+          return typeof property === "string" ? target[property] : undefined;
+        }
+      });
+
+      const config = parseConfig(env);
+
+      expect(config.paidTools.status).toBe("disabled");
+    }
+  });
+
+  it("blocks paid mode without breaking public configuration when the flag is true but the API key is missing", () => {
+    const config = parseConfig({
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true"
+    });
+
+    expect(config.transport).toBe("stdio");
+    expect(config.paidTools).toMatchObject({
+      requested: true,
+      apiKeyConfigured: false,
+      status: "blocked_missing_api_key",
+      runtimeToolsRegistered: false
+    });
+  });
+
+  it("stores a paid API key only for explicit paid-mode configuration and keeps it out of JSON diagnostics", () => {
+    const config = parseConfig({
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+      STOCKTRENDS_API_KEY: "phase3-test-secret",
+      STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION: "3",
+      STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL: "2",
+      STOCKTRENDS_MAX_STC_PER_SESSION: "5.5"
+    });
+
+    expect(config.paidTools).toMatchObject({
+      requested: true,
+      apiKeyConfigured: true,
+      status: "configured_no_tools_registered",
+      runtimeToolsRegistered: false,
+      spendPolicy: {
+        maxPaidCallsPerSession: 3,
+        maxPaidCallsPerTool: 2,
+        maxStcPerSession: 5.5,
+        maxUsdPerSession: null,
+        pricingPreflightRequired: true,
+        automaticPaidRetries: false,
+        paidCallsAuthorizedInThisBuild: false
+      }
+    });
+    expect(config.paidTools.apiKey).toBe("phase3-test-secret");
+    expect(JSON.stringify(config.paidTools)).not.toContain("phase3-test-secret");
   });
 
   it("rejects unsupported transports", () => {
@@ -45,7 +124,7 @@ describe("config", () => {
     ).toThrow(StockTrendsMcpError);
   });
 
-  it("rejects base URLs with credentials or routes", () => {
+  it("rejects base URLs with credentials, query, fragment, or routes", () => {
     expect(() =>
       parseConfig({
         STOCKTRENDS_API_BASE_URL: "https://user:pass@api.stocktrends.com"
@@ -54,7 +133,35 @@ describe("config", () => {
 
     expect(() =>
       parseConfig({
+        STOCKTRENDS_API_BASE_URL: "https://api.stocktrends.com?token=unsafe"
+      })
+    ).toThrow(StockTrendsMcpError);
+
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_API_BASE_URL: "https://api.stocktrends.com#unsafe"
+      })
+    ).toThrow(StockTrendsMcpError);
+
+    expect(() =>
+      parseConfig({
         STOCKTRENDS_API_BASE_URL: "https://api.stocktrends.com/v1"
+      })
+    ).toThrow(StockTrendsMcpError);
+  });
+
+  it("rejects invalid paid-mode configuration instead of enabling paid behavior silently", () => {
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_ENABLE_PAID_TOOLS: "yes"
+      })
+    ).toThrow(StockTrendsMcpError);
+
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+        STOCKTRENDS_API_KEY: "phase3-test-secret",
+        STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION: "-1"
       })
     ).toThrow(StockTrendsMcpError);
   });
