@@ -12,6 +12,8 @@ Repository authority for this architecture:
 - `C:\Users\skort\Projects\stocktrends-api-control` is the API control plane and is not relevant to the MCP v1 front-facing API contract.
 - The MCP server must be designed against the external/public API surface, not against the control plane, database, internal admin workflows, or deployment machinery.
 
+Accepted architecture decisions are recorded in `docs/ARCHITECTURE_DECISIONS.md`.
+
 ## 2. Non-Goals
 
 - Do not query any Stock Trends database directly.
@@ -25,7 +27,7 @@ Repository authority for this architecture:
 ## 3. Authority Chain
 
 1. The external/public Stock Trends API surface is the canonical authority for endpoint contracts, authentication, pricing, metering, payment handling, data provenance, and output semantics.
-2. `/v1/ai/tools`, `/v1/ai/context`, `/v1/openapi.json`, `/v1/workflows`, and `/v1/pricing/catalog` are the primary machine-readable discovery and planning authorities for agents.
+2. `/v1/ai/tools`, `/v1/openapi.json`, `/v1/workflows`, and confirmed public metadata routes are the primary machine-readable discovery and planning authorities for agents. `/v1/ai/context` is a Phase 1 public candidate requiring implementation-time no-key verification. `/v1/pricing/catalog` must not be invented for MCP and belongs in the surface only if it is confirmed as an existing public front-facing API endpoint.
 3. Published Stock Trends Intelligence Agent artifacts are authoritative only when served by the Stock Trends API through the public intelligence artifact endpoints.
 4. The MCP adapter is authoritative only for MCP protocol presentation, local input validation, safe call planning, and client-facing documentation.
 5. MCP prompts are procedural helpers. They must not override API metadata, invent conclusions, or turn Stock Trends outputs into buy/sell instructions.
@@ -40,47 +42,53 @@ Repository authority for this architecture:
 | Stock Trends Intelligence Agent | Producing research, guidance, editorial previews, and discovery artifacts that are later published. | Live MCP requests, API auth, API pricing, or direct MCP behavior. |
 | MCP adapter | MCP tools/resources/prompts, local configuration, request forwarding, response passthrough, guardrails, documentation. | Data computation, hidden data access, intelligence generation, payment bypass, or artifact mutation. |
 
-The adapter may add transparent envelope metadata such as MCP resource URIs, cached-at timestamps for public discovery resources, and warnings about paid calls. It must not modify API facts, rankings, probabilities, artifact payloads, or provenance fields.
+The adapter may add transparent envelope metadata such as MCP resource URIs, fetched-at timestamps for public discovery resources, and warnings about paid calls. It must not modify API facts, rankings, probabilities, artifact payloads, or provenance fields.
 
 ## 5. Recommended v1 MCP Capability Surface
 
-v1 should be conservative:
+v1 should be conservative. Phase 1 is the narrowest subset:
 
 - Local stdio MCP server only.
 - Read-only, idempotent API access only.
-- API-key authentication supplied through local runtime configuration.
 - Public discovery and metadata exposed as MCP resources.
-- Paid data endpoints exposed as tools only when the caller provides credentials and the server can enforce per-call spend/rate safeguards.
-- Historical endpoints included alongside latest endpoints so clients do not overfit to current snapshots.
-- Prompts limited to workflow planning and interpretation discipline, not answer generation.
+- Resources-first, ideally zero tools.
+- No prompts in Phase 1.
+- No API-key-required calls in Phase 1.
+- No paid data endpoints in Phase 1.
+- No x402, wallet, OAuth, remote transport, database access, control-plane access, or Intelligence Agent recomputation in Phase 1.
+- Fetch resources on request; do not require startup-time API fetches.
+- Avoid caching in Phase 1 unless a narrow reason is documented.
+
+Later paid phases may add API-key authentication, paid tools, spend/rate safeguards, and historical endpoints. Those phases must include history endpoints alongside latest endpoints so clients do not overfit to current snapshots.
 
 Recommended v1 categories:
 
-- Discovery: tools manifest, context, OpenAPI, workflows, pricing catalog.
+- Discovery: tools manifest, context candidate after no-key verification, OpenAPI, workflows, and pricing catalog only if confirmed as an existing public front-facing endpoint.
 - Metadata: indicator definitions, inference contract, ST-IM provider profile.
 - Instrument resolution: lookup and resolve helpers.
 - Market data intelligence: indicators latest/history, ST-IM latest/history, selections latest/history.
 - Published intelligence artifacts: discovery, editorial preview, guidance, research.
-- Planning controls: cost estimate and explicit paid-call confirmation metadata.
+- Planning controls in later paid phases: cost estimate and explicit paid-call confirmation metadata.
 
 ## 6. Proposed MCP Tools
 
-Tool names are proposed and should be finalized during implementation after confirming the MCP SDK naming conventions.
+Tool names are proposed and should be finalized during implementation after confirming the MCP SDK naming conventions. This table describes the broader planned MCP surface. Phase 1 should expose no tools by default unless implementation proves that a public endpoint truly requires parameterized invocation and cannot be safely represented as a resource.
 
 Route canonicality rules:
 
 - Confirmed observed API routes are the HTTP paths the MCP adapter should call.
-- Requested or planned endpoint aliases are not canonical until the front-facing API exposes them or product guidance explicitly approves MCP-only aliasing.
-- MCP tool names are adapter-facing names. They may wrap canonical API routes while documenting requested aliases separately.
-- Any unknown route or alias status must remain an open question and fail closed during implementation.
+- Requested or planned endpoint aliases are not canonical until the front-facing API exposes them for front-facing product reasons.
+- Do not add or assume `/v1/intelligence/guidance/latest/by_id` or `/v1/intelligence/research/latest/by_id` as required MCP v1 API routes.
+- MCP tool names are adapter-facing names. They may remain semantic and agent-readable even when they wrap canonical API routes with different REST shapes.
+- Any unknown route status must fail closed during implementation.
 
 | Tool | API mapping | Inputs | Output value | Notes |
 | --- | --- | --- | --- | --- |
 | `stocktrends_get_ai_tools` | `GET /v1/ai/tools` | None | Machine-readable API tools manifest. | Public discovery; cacheable. |
-| `stocktrends_get_ai_context` | `GET /v1/ai/context` | None | Dataset context, endpoint groups, recommended flows. | Public explanatory context. |
+| `stocktrends_get_ai_context` | `GET /v1/ai/context` after implementation-time no-key verification. | None | Dataset context, endpoint groups, recommended flows. | Public candidate; future compatibility tool only, not Phase 1 default. |
 | `stocktrends_get_openapi` | `GET /v1/openapi.json` | None | Exact route schemas and security metadata. | Public contract source. |
 | `stocktrends_get_workflows` | `GET /v1/workflows` | None | Workflow registry with step costs and sequencing. | Public planning surface. |
-| `stocktrends_get_pricing_catalog` | `GET /v1/pricing/catalog` | None | Live STC pricing rules. | Public planning surface; still treat as pricing authority. |
+| `stocktrends_get_pricing_catalog` | `GET /v1/pricing/catalog`, only if confirmed as an existing public front-facing endpoint. | None | Live STC pricing rules. | Later paid-phase planning surface; do not invent this endpoint for MCP. |
 | `stocktrends_estimate_cost` | `GET /v1/cost-estimate` | `workflow_id`, optional count/step parameters as defined by API. | Deterministic workflow cost estimate. | Must be called before multi-step paid plans. |
 | `stocktrends_lookup_instruments` | `GET /v1/instruments/lookup` | Symbol and API-defined filters. | Candidate instruments and exchange context. | Public planning helper. |
 | `stocktrends_resolve_instrument` | `GET /v1/instruments/resolve` | `symbol_exchange` or symbol/exchange fields. | Canonical instrument resolution. | Public planning helper. |
@@ -98,21 +106,21 @@ Route canonicality rules:
 | `stocktrends_get_intelligence_discovery` | `GET /v1/intelligence/discovery` | None | Public discovery metadata envelope for published intelligence artifacts. | Public/free. |
 | `stocktrends_get_editorial_preview` | `GET /v1/intelligence/editorial/latest/preview` | None | Latest public editorial preview artifact envelope. | Public/free. |
 | `stocktrends_get_guidance_latest` | `GET /v1/intelligence/guidance/latest` | None | Latest market guidance artifact envelope. | Paid; API-served artifact only. |
-| `stocktrends_get_guidance_by_id` | Confirmed observed API route: `GET /v1/intelligence/guidance/{artifact_id}`. Requested/planned alias needing confirmation: `/v1/intelligence/guidance/latest/by_id`. | `artifact_id`. | Market guidance artifact by manifest id. | Paid; MCP tool may wrap the canonical route, but must not claim the alias is an API route until confirmed. |
+| `stocktrends_get_guidance_by_id` | Confirmed observed API route: `GET /v1/intelligence/guidance/{artifact_id}`. | `artifact_id`. | Market guidance artifact by manifest id. | Paid; future semantic MCP by-id tool may wrap the canonical route. `/latest/by_id` is not required for MCP v1. |
 | `stocktrends_get_research_latest` | `GET /v1/intelligence/research/latest` | None | Latest market research artifact envelope. | Paid; API-served artifact only. |
-| `stocktrends_get_research_by_id` | Confirmed observed API route: `GET /v1/intelligence/research/{artifact_id}`. Requested/planned alias needing confirmation: `/v1/intelligence/research/latest/by_id`. | `artifact_id`. | Market research artifact by manifest id. | Paid; MCP tool may wrap the canonical route, but must not claim the alias is an API route until confirmed. |
+| `stocktrends_get_research_by_id` | Confirmed observed API route: `GET /v1/intelligence/research/{artifact_id}`. | `artifact_id`. | Market research artifact by manifest id. | Paid; future semantic MCP by-id tool may wrap the canonical route. `/latest/by_id` is not required for MCP v1. |
 
 Implementation rule: a tool must declare whether it is public, paid, or unknown before it can be called. Unknown status should fail closed.
 
 ## 7. Proposed MCP Resources
 
-Resources should represent low-risk, mostly static or discovery-oriented API outputs. Suggested URIs:
+Resources should represent low-risk, mostly static or discovery-oriented API outputs. Phase 1 should register only reviewed public resources, fetch them on request, and avoid caching unless a narrow reason is documented. Suggested URIs for the broader resource plan:
 
 - `stocktrends://api/ai-tools` -> `/v1/ai/tools`
-- `stocktrends://api/context` -> `/v1/ai/context`
+- `stocktrends://api/context` -> `/v1/ai/context` after implementation-time no-key verification
 - `stocktrends://api/openapi` -> `/v1/openapi.json`
 - `stocktrends://api/workflows` -> `/v1/workflows`
-- `stocktrends://api/pricing/catalog` -> `/v1/pricing/catalog`
+- `stocktrends://api/pricing/catalog` -> `/v1/pricing/catalog` only if confirmed as an existing public front-facing endpoint in a later phase
 - `stocktrends://api/meta/indicators` -> `/v1/meta/indicators`
 - `stocktrends://api/meta/inference` -> `/v1/meta/inference`
 - `stocktrends://api/meta/stim` -> `/v1/meta/stim`
@@ -121,9 +129,9 @@ Resources should represent low-risk, mostly static or discovery-oriented API out
 
 Paid, parameterized, symbol-specific, or high-cardinality responses should usually remain tools rather than resources in v1. Resource templates can be considered later for clients that handle parameterized resources well.
 
-## 8. Proposed MCP Prompts
+## 8. Future MCP Prompts
 
-Prompts should produce safe API usage plans, not market conclusions.
+Phase 1 should ship no MCP prompts. Prompts may be reconsidered later only if they are safe, public, non-authoritative, and clearly instructional rather than conclusion-generating. Future prompts should produce safe API usage plans, not market conclusions.
 
 | Prompt | Purpose | Required discipline |
 | --- | --- | --- |
@@ -141,7 +149,7 @@ Remote HTTP/SSE should be deferred until after a security review covers authenti
 
 ## 10. Authentication Strategy
 
-v1 should use API-key or bearer-token access only:
+Phase 1 requires no API key and must not expose API-key-required calls. Later paid phases should use API-key or bearer-token access only after separate design and tests:
 
 - Load credentials from local environment variables or an MCP host secret mechanism.
 - Never store secrets in repository files, docs examples, snapshots, logs, or test fixtures.
@@ -155,7 +163,7 @@ x402-aware mode should be a later phase. The future mode may inspect API 402 pre
 
 - Version this MCP server independently with semantic versioning.
 - Treat the Stock Trends API `/v1` path and `/v1/openapi.json` as the external contract baseline.
-- Include the API base URL, API version, MCP server version, and tools manifest version in startup diagnostics.
+- Include the API base URL, API version, MCP server version, and tools manifest version in diagnostics where available, but Phase 1 must not require startup-time API fetches.
 - Keep MCP tool names stable once released; add new tools instead of changing behavior in place where possible.
 - Record compatibility notes whenever `/v1/ai/tools`, `/v1/openapi.json`, or pricing metadata changes.
 - Fail closed when the API reports a route, pricing rule, or schema shape that the adapter does not understand.
@@ -167,6 +175,7 @@ Documentation-only status means there is no runtime test suite yet. Future imple
 - Contract tests against mocked API responses generated from `/v1/openapi.json`.
 - Snapshot tests for MCP tool/resource/prompt metadata.
 - Public-endpoint integration tests limited to non-paid discovery endpoints.
+- Phase 1 tests proving resources are fetched on request, no tools are registered by default, no prompts are registered, no API key is required, and no normal logs are written to stdout.
 - Paid-endpoint tests using mocks or local fixtures only, not production paid calls.
 - Security tests proving secrets are redacted from logs, errors, snapshots, and exceptions.
 - Spend-control tests for per-call confirmation, per-session caps, and loop prevention.
@@ -180,7 +189,7 @@ The README should remain the human entry point. The MCP server should also expos
 - Clear docs links to this architecture, the capability audit, and the security model.
 - Tool descriptions that include public/paid status, expected auth, pricing-rule metadata when known, and historical-analysis relevance.
 - Resource descriptions that identify the API endpoint and cache policy.
-- Prompt descriptions that state they produce API call plans, not investment advice.
+- Future prompt descriptions that state they produce API call plans, not investment advice.
 - A startup message that points agents to `stocktrends://api/ai-tools`, `stocktrends://api/context`, and `stocktrends://api/openapi`.
 
 Implementation documentation should teach agents to start with the machine-readable tools manifest and to call cost/pricing surfaces before paid workflows.
@@ -190,7 +199,7 @@ Implementation documentation should teach agents to start with the machine-reada
 | Phase | Scope |
 | --- | --- |
 | Phase 0 | Architecture scaffold, capability audit, security model, README status. |
-| Phase 1 | Local stdio MCP server with public discovery resources and no paid tools enabled by default. |
+| Phase 1 | Local stdio MCP server with public resources only, resources-first/zero-tools default, no prompts, no API key requirement, fetch-on-request behavior, no paid/x402/wallet/remote/control-plane/database/reasoning surface. |
 | Phase 2 | API-key authenticated paid tools with explicit spend/rate controls and mocked paid tests. |
 | Phase 3 | Broader historical and published-intelligence coverage, including artifact by-id helpers. |
 | Phase 4 | x402-aware planning mode that can surface 402 previews without wallet custody. |
@@ -198,13 +207,9 @@ Implementation documentation should teach agents to start with the machine-reada
 
 ## 15. Explicit Open Questions
 
-- Confirm the implementation runtime and MCP SDK target before tool/resource naming is finalized.
-- Confirm whether v1 should expose all paid routes immediately or start with public resources plus a smaller paid allowlist.
-- Confirm exact environment variable names for API base URL and API credentials.
-- Confirm whether bearer auth should be supported in v1 alongside `X-API-Key`.
-- Confirm whether MCP prompts should be packaged in v1 or deferred until tool/resource behavior is proven.
-- Confirm whether requested artifact by-id aliases `/v1/intelligence/guidance/latest/by_id` and `/v1/intelligence/research/latest/by_id` should become front-facing API routes, MCP-only aliases, or be dropped in favor of the confirmed observed `{artifact_id}` routes.
-- Confirm whether artifact by-id MCP tool names should use `guidance_by_id`/`research_by_id` even if any HTTP alias is later added.
-- Confirm caching policy for public resources, especially `/v1/ai/tools`, `/v1/ai/context`, `/v1/openapi.json`, `/v1/workflows`, and `/v1/pricing/catalog`.
-- Confirm default spend caps, per-session request caps, and paid-call confirmation UX.
-- Confirm whether any live production endpoint verification is required before implementation; this pass avoided paid calls and did not test x402.
+- Confirm the exact implementation runtime, MCP SDK version, and SDK registration conventions before tool/resource naming is finalized.
+- During Phase 1 implementation, verify `/v1/ai/context` can be read without an API key before exposing it as a public resource.
+- During Phase 1 implementation, recheck that `/v1/intelligence/discovery` and `/v1/intelligence/editorial/latest/preview` remain public/free before exposing them.
+- Confirm the Phase 1 test runner and TypeScript execution path.
+- Confirm schema-tolerance behavior for public resources when `/v1/openapi.json` changes shape but endpoints still respond.
+- For later paid phases, confirm default spend caps, per-session request caps, paid-call confirmation UX, and bearer-token support.

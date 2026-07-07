@@ -20,6 +20,7 @@ Never store API keys, bearer tokens, payment headers, wallet material, database 
 
 ## Documentation
 
+- [Architecture Decisions](docs/ARCHITECTURE_DECISIONS.md)
 - [MCP Server Architecture](docs/MCP_SERVER_ARCHITECTURE.md)
 - [API Capability Coverage Audit](docs/API_CAPABILITY_COVERAGE_AUDIT.md)
 - [Security Model](docs/SECURITY_MODEL.md)
