@@ -102,3 +102,4 @@ Candidate intelligence resources are excluded from the Phase 1 registry until no
 - [Phase 1 Implementation Memo](docs/PHASE1_STDIO_PUBLIC_RESOURCES_IMPLEMENTATION_MEMO.md)
 - [Phase 1 Validation Report](docs/PHASE1_VALIDATION_REPORT.md)
 - [Phase 1 Implementation Notes](docs/PHASE1_IMPLEMENTATION_NOTES.md)
+- [Phase 2 Public Metadata and Paid Tool Boundary Memo](docs/PHASE2_PUBLIC_METADATA_AND_PAID_TOOL_BOUNDARY_MEMO.md)

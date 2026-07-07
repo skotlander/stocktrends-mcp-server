@@ -59,7 +59,9 @@ v1 should be conservative. Phase 1 is the narrowest subset:
 - Fetch resources on request; do not require startup-time API fetches.
 - Avoid caching in Phase 1 unless a narrow reason is documented.
 
-Later paid phases may add API-key authentication, paid tools, spend/rate safeguards, and historical endpoints. Those phases must include history endpoints alongside latest endpoints so clients do not overfit to current snapshots.
+The accepted Phase 2 recommendation is public metadata resource expansion first. The next implementation increment should remain local stdio only, public-resource only, zero tools, zero prompts, no API key, no auth headers, no paid endpoints, no x402, no wallet handling, no OAuth, no remote MCP, and no database or control-plane dependency.
+
+Paid tools remain deferred. Before any paid tool is exposed, API-key handling, pricing/cost preflight, paid endpoint allowlisting, spend/rate caps, and history-beside-latest policy must be designed and tested. Later paid phases must include history endpoints alongside latest endpoints so clients do not overfit to current snapshots.
 
 Recommended v1 categories:
 
@@ -114,7 +116,7 @@ Implementation rule: a tool must declare whether it is public, paid, or unknown 
 
 ## 7. Proposed MCP Resources
 
-Resources should represent low-risk, mostly static or discovery-oriented API outputs. Phase 1 should register only reviewed public resources, fetch them on request, and avoid caching unless a narrow reason is documented. Suggested URIs for the broader resource plan:
+Resources should represent low-risk, mostly static or discovery-oriented API outputs. Phase 1 registers only reviewed public resources, fetches them on request, and avoids caching unless a narrow reason is documented. The Phase 2 public metadata increment may add only verified no-key public resources and should remain zero-tool, zero-prompt, no-auth, and no-paid-endpoint. Suggested URIs for the broader resource plan:
 
 - `stocktrends://api/ai-tools` -> `/v1/ai/tools`
 - `stocktrends://api/context` -> `/v1/ai/context` after implementation-time no-key verification
@@ -200,16 +202,18 @@ Implementation documentation should teach agents to start with the machine-reada
 | --- | --- |
 | Phase 0 | Architecture scaffold, capability audit, security model, README status. |
 | Phase 1 | Local stdio MCP server with public resources only, resources-first/zero-tools default, no prompts, no API key requirement, fetch-on-request behavior, no paid/x402/wallet/remote/control-plane/database/reasoning surface. |
-| Phase 2 | API-key authenticated paid tools with explicit spend/rate controls and mocked paid tests. |
-| Phase 3 | Broader historical and published-intelligence coverage, including artifact by-id helpers. |
-| Phase 4 | x402-aware planning mode that can surface 402 previews without wallet custody. |
-| Phase 5 | Remote HTTP/SSE transport only after separate security review and production controls. |
+| Phase 2 | Public metadata resource expansion only: local stdio, public resources, zero tools, zero prompts, no API key, no auth headers, no paid endpoints, no x402, no wallet handling, no OAuth, no remote MCP, no database access, and no control-plane access. |
+| Phase 3 | Paid-tool auth and spend foundation: design and test API-key handling, pricing/cost preflight, paid endpoint allowlisting, per-session and per-tool caps, optional spend caps, and history-beside-latest policy before any paid tool is exposed. |
+| Phase 4 | Read-only paid tool exposure only after Phase 3 controls are implemented and tested, with history endpoints presented beside latest endpoints and paid calls covered by mocked tests. |
+| Phase 5 | x402-aware planning mode that can surface 402 previews without wallet custody. Wallet signing and payment authorization require a separate design review. |
+| Phase 6 | Remote HTTP/SSE transport only after separate security review and production controls. |
 
 ## 15. Explicit Open Questions
 
 - Confirm the exact implementation runtime, MCP SDK version, and SDK registration conventions before tool/resource naming is finalized.
-- During Phase 1 implementation, verify `/v1/ai/context` can be read without an API key before exposing it as a public resource.
-- During Phase 1 implementation, recheck that `/v1/intelligence/discovery` and `/v1/intelligence/editorial/latest/preview` remain public/free before exposing them.
-- Confirm the Phase 1 test runner and TypeScript execution path.
+- During Phase 2 public metadata implementation, verify `/v1/meta/indicators` and `/v1/meta/inference` can be read without an API key before exposing them.
+- During Phase 2 public metadata implementation, recheck that `/v1/intelligence/discovery` and `/v1/intelligence/editorial/latest/preview` remain public/free before exposing them.
+- Confirm whether `/v1/pricing/catalog` is an existing public front-facing endpoint before considering it for any MCP resource.
+- Confirm the status and safe MCP classification of `/v1/ai/proof/market-edge` before considering it for any MCP resource or tool.
 - Confirm schema-tolerance behavior for public resources when `/v1/openapi.json` changes shape but endpoints still respond.
 - For later paid phases, confirm default spend caps, per-session request caps, paid-call confirmation UX, and bearer-token support.
