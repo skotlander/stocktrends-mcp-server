@@ -246,24 +246,40 @@ must agree before any call:
   data. Redaction (§2, §9) remains in force; tests assert the key never appears.
 - The `X-API-Key` header is constructed **only** inside the coupled paid
   boundary (`buildPaidAuthHeaders`), **only after every preflight gate passes**,
-  and **only** for the approved origin + allowlisted endpoint. Public resources
-  and the `stocktrends_estimate_workflow_cost` planning tool stay credential-free.
+  and **only** for the approved origin + a **narrow auth-capable allowlist**
+  (`/v1/stim/latest`, `/v1/stim/history` — see §15.7). Public resources and the
+  `stocktrends_estimate_workflow_cost` planning tool stay credential-free.
 
 ### 15.3 Pricing/preflight contract
 
 - Preflight is **mandatory and non-skippable**. Endpoint cost is resolved from a
   **static, in-repo endpoint pricing policy** mirroring the catalog rule ids
-  (`stim_latest_paid`, `stim_history_paid`); no pricing network call is made and
-  `/v1/cost-estimate` is **not** an endpoint-level authorization input.
+  (`stim_latest_paid`, `stim_history_paid`); `/v1/cost-estimate` and the
+  `stocktrends_estimate_workflow_cost` planning tool remain **workflow-level
+  planning only** and are **not** endpoint-level authorization inputs.
+- **Static pricing alone cannot authorize a paid call.** Before any auth header
+  is constructed or any ST-IM fetch occurs, the static mirror must pass a
+  **fail-closed reconciliation** against the live `GET /v1/pricing/catalog`
+  metadata (`reconcileStaticPricingWithCatalog`). The catalog is read via the
+  **credential-free** public path (no `X-API-Key`) and is treated as **metadata
+  reconciliation only, never authorization by itself**. Reconciliation fails
+  closed (`pricing_catalog_reconciliation_failed`, no auth/fetch) when the
+  catalog is unavailable, malformed, ambiguous (duplicate rule), missing a
+  required rule id, missing/mismatched cost, has an unsupported unit, or has a
+  mismatched endpoint/rule id. A successful reconciliation is cached per server
+  session; failures are not cached. Catalog-derived cost is used only as an
+  estimated/static cost, **never** as `observed_cost`.
+- Static pricing policy **+** catalog reconciliation **+** local caps are all
+  required together before auth/fetch.
 - Consistent with `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` (default `true`): live
   execution **fails closed** (`pricing_preflight_unavailable`) whenever the
   required pricing/preflight determination is unavailable, ambiguous, malformed,
   or disabled below the required posture. Setting
   `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT=false` denies execution; it never
   weakens the requirement for these tools.
-- The static amounts are a conservative **local mirror pending reconciliation**
-  against `/v1/pricing/catalog`; they are nonzero, so a budget cap is
-  effectively mandatory (there is no zero-cost path for ST-IM).
+- The static amounts are a conservative **local mirror**; they are nonzero, so a
+  budget cap is effectively mandatory (there is no zero-cost path for ST-IM), and
+  they cannot authorize a call until the catalog confirms them (above).
 
 ### 15.4 Cap defaults and accounting
 
@@ -311,3 +327,17 @@ reinterprets ST-IM data or produces investment advice. **Live API validation is
 performed only under separate, explicit operator authorization after merge —
 never inside the automated test suite, and never with credentials committed to
 the repository.**
+
+### 15.7 Narrowed credential-bearing endpoint allowlist
+
+The credential-bearing execution boundary can authorize an `X-API-Key` header
+and a fetch for **only** `GET /v1/stim/latest` and `GET /v1/stim/history`. The
+single policy resolver used by the auth-capable path (`findPaidEndpointPolicy`,
+feeding `evaluatePaidPreflight`, `evaluatePaidInvocationPreflight`,
+`buildPaidAuthHeaders`, `assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`)
+reads only `AUTH_CAPABLE_PAID_ENDPOINT_POLICIES`. Broader descriptive metadata
+(`PAID_ENDPOINT_POLICIES`, which still lists the indicators endpoints and may
+list future paid routes) is **not** reachable by the auth path: indicator and
+any other non-promoted endpoints are denied `endpoint_not_allowlisted` before
+any auth header or fetch. Making a future endpoint executable requires an
+explicit, separately reviewed promotion into the auth-capable allowlist.

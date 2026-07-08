@@ -37,16 +37,45 @@ separate, explicitly authorized post-merge step.
     → approved host → paid mode configured → pricing-preflight posture →
     authoritative static pricing present → cost authoritative for the rule →
     caps → terminal execution gate (runtime flag **and** both build indicators).
-    The terminal gate is evaluated last so a denied decision still carries
-    authoritative cost/cap metadata; ordering never weakens fail-closed behavior
-    because no auth header or fetch happens on any denial.
+    Ordering never weakens fail-closed behavior because no auth header or fetch
+    happens on any denial.
   - The structural invocation preflight (`evaluatePaidInvocationPreflight`) now
     gates on the runtime execution flag and returns `structurallyAuthorized`
     (no longer always denies). Handlers use it as the first, side-effect-free
-    gate before pricing/caps.
+    gate before pricing/caps. **Note on denial metadata:** when the execution
+    flag is off (or a structural gate fails), the handler denies at this
+    structural stage with `paid_execution_disabled`, so its wrapper carries the
+    cap **limits** but a `null` estimated cost and `pricing_reconciliation.status
+    = not_evaluated` — the authoritative cost/cap-projection metadata is
+    populated only for denials that reach the full `evaluatePaidPreflight`
+    pricing/cap stage (e.g. `spend_cap_exceeded`). No denial constructs an auth
+    header or sends a paid request.
 - **Static endpoint pricing policy** (`src/paidPricing.ts`): a local, in-repo
-  mirror of the catalog rule costs (`stim_latest_paid` = 0.25 STC,
-  `stim_history_paid` = 0.5 STC), resolved with no network access.
+  mirror of the catalog rule costs (`stim_latest_paid` = 0.25 STC, `/v1/stim/latest`;
+  `stim_history_paid` = 0.5 STC, `/v1/stim/history`), resolved with no network
+  access. **Static pricing alone cannot authorize a paid call** (see the catalog
+  reconciliation gate below).
+- **Catalog reconciliation gate** (`src/paidPricing.ts`
+  `reconcileStaticPricingWithCatalog`, `src/tools/stimTools.ts`): before any
+  auth header or ST-IM fetch, the static mirror is reconciled against the live
+  `GET /v1/pricing/catalog` metadata via the **credential-free** public fetch
+  path (no `X-API-Key`). It fails closed (`pricing_catalog_reconciliation_failed`)
+  when the catalog is unavailable, malformed, ambiguous (duplicate rule),
+  missing a required rule id, missing/mismatched cost, has an unsupported unit,
+  or has a mismatched endpoint/rule id. The catalog is **metadata reconciliation
+  only, never authorization by itself** — local caps and the full preflight
+  still gate the call. A successful reconciliation is cached per server session;
+  failures are not cached. Catalog-derived cost is only ever used as an
+  estimated/static cost, never as `observed_cost`.
+- **Narrowed credential-bearing allowlist** (`src/paidPolicy.ts`): the
+  auth-capable boundary (`findPaidEndpointPolicy` →
+  `evaluatePaidPreflight`/`evaluatePaidInvocationPreflight`/`buildPaidAuthHeaders`/
+  `assertPaidEndpointAllowed`/`getPaidEndpointPolicy`) now resolves policies ONLY
+  from `AUTH_CAPABLE_PAID_ENDPOINT_POLICIES` = `/v1/stim/latest` and
+  `/v1/stim/history`. The broader `PAID_ENDPOINT_POLICIES` (which still lists the
+  indicators endpoints) is descriptive future metadata only and is **not**
+  reachable by the credential-bearing path; indicator endpoints are denied
+  `endpoint_not_allowlisted` before any auth/fetch.
 - **Gated paid fetch** (`src/stocktrendsClient.ts` `fetchPaid`): `GET`-only,
   single attempt, no retries, `redirect: "manual"`, existing timeout,
   `X-API-Key` merged over public headers, captures optional ST response headers
@@ -104,13 +133,19 @@ Prompts: always **0**. Public resources: always **9**.
 
 ## Cost/Budget Model
 
-Authorization basis is **static endpoint pricing policy + local MCP caps**.
-`/v1/cost-estimate` and `stocktrends_estimate_workflow_cost` are **not** on the
-authorization path, and `/v1/pricing/catalog` is not called. Pricing is resolved
-from the static mirror; if a rule cannot be resolved authoritatively, execution
-fails closed (`pricing_preflight_unavailable`). The static amounts are a
-conservative local mirror pending post-merge reconciliation with the live
-catalog.
+Authorization basis is **static endpoint pricing policy + a fail-closed catalog
+reconciliation + local MCP caps** — all three are required before auth/fetch.
+Static pricing **cannot authorize a call by itself**: it must reconcile against
+the live `GET /v1/pricing/catalog` metadata (credential-free read) before any
+auth header or fetch. `/v1/pricing/catalog` is treated as **metadata
+reconciliation only, never authorization by itself**. `/v1/cost-estimate` and
+`stocktrends_estimate_workflow_cost` remain **workflow-level planning only** and
+are **not** on the authorization path. Pricing resolves from the static mirror;
+if a rule cannot be resolved authoritatively, execution fails closed
+(`pricing_preflight_unavailable`), and if the catalog disagrees with (or cannot
+confirm) the mirror, execution fails closed
+(`pricing_catalog_reconciliation_failed`). Catalog-derived cost is used only as
+an estimated/static cost, never as `observed_cost`.
 
 ## Auth Behavior
 
@@ -122,13 +157,28 @@ appears in errors, denials, snapshots, or returned data (asserted by tests). No
 auth is built on validation errors, failed preflight, cap denial, or for public
 resources / the cost-estimate tool.
 
+## Auth-Capable Endpoint Allowlist
+
+The credential-bearing execution path can only ever authorize `GET /v1/stim/latest`
+and `GET /v1/stim/history`. `findPaidEndpointPolicy` (the single resolver used by
+`evaluatePaidPreflight`, `evaluatePaidInvocationPreflight`, `buildPaidAuthHeaders`,
+`assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`) reads only
+`AUTH_CAPABLE_PAID_ENDPOINT_POLICIES`. The broader `PAID_ENDPOINT_POLICIES`
+(indicators + future) is descriptive metadata that is never reachable by the
+auth path. Indicator endpoints are denied `endpoint_not_allowlisted` before any
+auth header or fetch — tests assert `getPaidEndpointPolicy`, the structural and
+full preflights, and `buildPaidAuthHeaders` all refuse them.
+
 ## Fetch Behavior
 
-Exactly one `GET`, no request body, approved origin + exact allowlisted path,
-query from validated inputs only, `redirect: "manual"`, existing timeout, no
-automatic retries, no alternate endpoint, no auth-switch. Deterministic errors
-for network failure, timeout, non-2xx (status-mapped), `402` (surfaced as safe
-metadata, no x402), and malformed/non-JSON responses.
+Exactly one credential-bearing `GET`, no request body, approved origin + exact
+allowlisted path, query from validated inputs only, `redirect: "manual"`,
+existing timeout, no automatic retries, no alternate endpoint, no auth-switch.
+(The catalog reconciliation read is a separate, credential-free public `GET` and
+is not the paid request: on a reconciliation failure `api_request_sent` /
+`auth_header_sent` remain `false`.) Deterministic errors for network failure,
+timeout, non-2xx (status-mapped), `402` (surfaced as safe metadata, no x402),
+and malformed/non-JSON responses.
 
 ## Response Wrapper Behavior
 
@@ -159,7 +209,8 @@ returned hyphen form is preserved.
 Deterministic, fail-closed, secret-free, and explicit about whether fetch/auth
 occurred: `paid_tools_disabled`, `paid_auth_blocked_missing_api_key`,
 `invalid_tool_input`, `endpoint_not_allowlisted`, `tool_endpoint_mismatch`,
-`host_not_approved`, `pricing_preflight_unavailable`, `cost_unavailable`,
+`host_not_approved`, `pricing_preflight_unavailable`,
+`pricing_catalog_reconciliation_failed`, `cost_unavailable`,
 `unsupported_cost_unit`, `spend_cap_exceeded`, `paid_execution_disabled`,
 `unexpected_auth_attempt` (impossible by construction), and API-phase codes
 `api_request_failed`, `api_timeout`, `api_auth_required`, `api_payment_required`,
@@ -168,24 +219,35 @@ occurred: `paid_tools_disabled`, `paid_auth_blocked_missing_api_key`,
 
 ## Tests Added/Updated
 
-- Added `tests/phase4-paid-stim-live-execution.test.ts` (26 tests): tool-surface
-  and execution-flag matrix, successful latest/history, hyphen-identity contract,
-  X-API-Key-only/no-Bearer/no-payment, cap accounting (increment + per-tool cap +
-  no advance on denial), one-attempt/no-retry deterministic failures (network,
-  timeout, 402 with no x402, 401, 404, malformed), pricing-preflight-disabled
-  fail-closed, secret redaction, and public/planning credential-free regression.
-- Updated `tests/config.test.ts` (new flags, execution matrix, build constant),
-  `tests/phase3-paid-foundation.test.ts` and
-  `tests/phase4-pricing-preflight-foundation.test.ts` (build constant now `true`,
-  runtime flag still gates), and `tests/phase4-paid-stim-foundation.test.ts`
-  (build execution-capable, runtime gate, `structurallyAuthorized`).
+- `tests/phase4-paid-stim-live-execution.test.ts` (40 tests, mock-only, path-aware
+  fetch routing that serves the credential-free catalog read and the
+  credential-bearing ST-IM fetch separately):
+  - Tool-surface and execution-flag matrix; successful latest/history;
+    hyphen-identity contract; X-API-Key-only / no-Bearer / no-payment;
+    cap accounting; one-attempt/no-retry deterministic failures (network,
+    timeout, 402 with no x402, 401, 404, malformed); pricing-preflight-disabled
+    fail-closed; secret redaction; public/planning credential-free regression.
+  - **Catalog reconciliation gate:** denied before auth/fetch when the catalog
+    is unavailable, malformed, missing `stim_latest_paid`, missing
+    `stim_history_paid`, cost-mismatched, endpoint-mismatched, or rule-id-
+    conflicted; proceeds to a mock ST-IM fetch only when reconciliation passes;
+    reconciliation call is credential-free (no `X-API-Key` to
+    `/v1/pricing/catalog`); `observed_cost` not fabricated from catalog data.
+  - **Credential-bearing allowlist:** `/v1/indicators/latest` and
+    `/v1/indicators/history` cannot pass `getPaidEndpointPolicy`,
+    `assertPaidEndpointAllowed`, the structural preflight, the full preflight, or
+    `buildPaidAuthHeaders`; ST-IM latest/history still pass the allowlist check.
+- Updated `tests/config.test.ts`, `tests/phase3-paid-foundation.test.ts`,
+  `tests/phase4-pricing-preflight-foundation.test.ts`, and
+  `tests/phase4-paid-stim-foundation.test.ts` for the execution-capable build and
+  runtime gate.
 
 ## Validation Results
 
 | Command | Result |
 | --- | --- |
 | `npm run typecheck` | Passed |
-| `npm test` | Passed (10 files, 164 tests) |
+| `npm test` | Passed (10 files, 178 tests) |
 | `npm run build` | Passed |
 | `git diff --check` | Passed |
 
@@ -207,19 +269,31 @@ no MCP prompts. Local caps are in-memory only and reset on restart.
 
 ## Known Limitations
 
-- Static pricing amounts are an **unconfirmed local mirror** pending
-  reconciliation with `/v1/pricing/catalog`; a drift check against the live
-  catalog is a recommended follow-up. Live execution is exercised mock-only until
-  then.
-- In-memory caps do not persist across restarts.
+- Static pricing amounts are a local mirror; they can no longer authorize a call
+  on their own — the fail-closed catalog reconciliation gate requires the live
+  `/v1/pricing/catalog` to confirm the same rule id, endpoint, cost, and unit
+  before any auth/fetch. The expected catalog shape
+  (`rules[].pricing_rule_id` / `endpoint_pattern` (or `endpoint_path`) /
+  `stc_cost` / optional `unit`) is a documented assumption; if the live catalog
+  uses a different shape, reconciliation fails closed (execution stays blocked)
+  until the parser is reconciled in a follow-up. Live execution is exercised
+  mock-only until then.
+- Reconciliation success is cached per server session (no time-based staleness
+  check); it resets on restart. In-memory caps also do not persist across
+  restarts.
+- The catalog read is a separate credential-free public `GET`; it is metadata
+  reconciliation only, never authorization by itself.
 - Subscription mode returns no observed per-call cost and no payment settlement;
-  the wrapper never fabricates them.
+  the wrapper never fabricates them (catalog cost is only an estimated/static
+  cost, never `observed_cost`).
 
 ## Recommended Next Step
 
 After merge, perform a separately authorized, operator-run live validation: set
 an API key, `STOCKTRENDS_ENABLE_PAID_EXECUTION=true`, and small explicit caps;
+confirm the reconciliation gate passes against the operator's live
+`/v1/pricing/catalog` (adjusting the documented catalog-shape parser if the real
+response differs, and reconciling the static mirror amounts to the catalog), then
 confirm one live `GET /v1/stim/latest` and one `GET /v1/stim/history` return the
-expected wrapper and that the static pricing mirror matches
-`/v1/pricing/catalog` (reconcile or add a catalog drift check if it diverges).
-Record results in a follow-up validation report; do not commit credentials.
+expected wrapper. Record results in a follow-up validation report; do not commit
+credentials.

@@ -1,5 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Env } from "../src/config.js";
+import { parseConfig, type Env } from "../src/config.js";
+import { StockTrendsMcpError } from "../src/errors.js";
+import {
+  AUTH_CAPABLE_PAID_ENDPOINT_POLICIES,
+  assertPaidEndpointAllowed,
+  buildPaidAuthHeaders,
+  evaluatePaidInvocationPreflight,
+  evaluatePaidPreflight,
+  getPaidEndpointPolicy,
+  PAID_ENDPOINT_POLICIES,
+  type PaidAuthConfig,
+  type PaidCostEstimate,
+  type PaidPreflightEvaluationInput
+} from "../src/paidPolicy.js";
 import { PHASE1_PROMPT_DEFINITIONS } from "../src/resources/index.js";
 import type { FetchLike } from "../src/stocktrendsClient.js";
 import { COST_ESTIMATE_TOOL_NAME } from "../src/tools/index.js";
@@ -7,6 +20,7 @@ import { STIM_HISTORY_TOOL_NAME, STIM_LATEST_TOOL_NAME } from "../src/tools/stim
 import { connectMcp, jsonResponse, textResponse } from "./helpers.js";
 
 const MOCK_KEY = "mock-live-secret-must-never-be-sent-in-plaintext";
+const PUBLIC_HEADERS = { Accept: "application/json", "User-Agent": "stocktrends-mcp-server/1.0" };
 
 // Execution fully enabled: paid tools + key + execution flag + nonzero caps.
 const EXEC_ENV: Env = {
@@ -41,7 +55,7 @@ const STIM_HEADERS = {
 
 describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix", () => {
   it("exposes exactly 3 tools, 9 resources, 0 prompts with the execution flag set", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody()));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
@@ -58,7 +72,7 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
   });
 
   it("exposes only the planning tool when the execution flag is set without the paid-tools flag", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody()));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, {
       STOCKTRENDS_ENABLE_PAID_EXECUTION: "true",
       STOCKTRENDS_API_KEY: MOCK_KEY
@@ -71,8 +85,8 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
     await server.close();
   });
 
-  it("denies execution (no fetch) when tools are exposed but the execution flag is unset", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody()));
+  it("denies execution (no fetch of any kind) when tools are exposed but the execution flag is unset", async () => {
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, {
       STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
       STOCKTRENDS_API_KEY: MOCK_KEY,
@@ -87,14 +101,15 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
     expect(body.api_request_sent).toBe(false);
     expect(body.auth_header_sent).toBe(false);
     expect(body.payment_header_sent).toBe(false);
+    // Denied before pricing/reconciliation: no catalog read and no stim fetch.
     expect(fetchFn).not.toHaveBeenCalled();
 
     await client.close();
     await server.close();
   });
 
-  it("denies execution (no fetch) when the execution flag is set but no caps are configured", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody()));
+  it("denies execution (no fetch of any kind) when the execution flag is set but no caps are configured", async () => {
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, {
       STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
       STOCKTRENDS_API_KEY: MOCK_KEY,
@@ -104,8 +119,7 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
     const body = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
 
     expect(body.error.error_code).toBe("spend_cap_exceeded");
-    expect(body.api_request_sent).toBe(false);
-    expect(body.auth_header_sent).toBe(false);
+    // Cap denial happens before reconciliation: no catalog read, no stim fetch.
     expect(fetchFn).not.toHaveBeenCalled();
 
     await client.close();
@@ -113,7 +127,7 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
   });
 
   it("denies execution when call caps are set but no budget cap covers the nonzero cost", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody()));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, {
       STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
       STOCKTRENDS_API_KEY: MOCK_KEY,
@@ -132,7 +146,7 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
   });
 
   it("fails closed when the pricing-preflight posture is disabled below required", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody()));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, {
       ...EXEC_ENV,
       STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT: "false"
@@ -148,9 +162,127 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
   });
 });
 
+describe("Phase 4 paid ST-IM live execution — catalog reconciliation gate (blocker)", () => {
+  it.each([
+    {
+      label: "catalog unavailable",
+      routes: { catalog: () => jsonResponse({ detail: "down" }, 503) }
+    },
+    {
+      label: "catalog malformed (no rules array)",
+      routes: { catalog: () => jsonResponse({ unexpected: true }) }
+    },
+    {
+      label: "stim_latest_paid missing",
+      routes: { catalog: () => jsonResponse({ rules: [catalogRule("stim_history_paid", "/v1/stim/history", 0.5)] }) }
+    },
+    {
+      label: "stim_history_paid missing",
+      routes: { catalog: () => jsonResponse({ rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.25)] }) }
+    },
+    {
+      label: "catalog cost differs from static mirror",
+      routes: {
+        catalog: () =>
+          jsonResponse({
+            rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.99), catalogRule("stim_history_paid", "/v1/stim/history", 0.5)]
+          })
+      }
+    },
+    {
+      label: "catalog endpoint/path differs",
+      routes: {
+        catalog: () =>
+          jsonResponse({
+            rules: [catalogRule("stim_latest_paid", "/v1/stim/latest-wrong", 0.25), catalogRule("stim_history_paid", "/v1/stim/history", 0.5)]
+          })
+      }
+    },
+    {
+      label: "catalog pricing rule id conflicts on the endpoint",
+      routes: {
+        catalog: () =>
+          jsonResponse({
+            rules: [
+              catalogRule("stim_latest_paid", "/v1/stim/latest", 0.25),
+              catalogRule("stim_history_paid", "/v1/stim/history", 0.5),
+              catalogRule("stim_latest_legacy", "/v1/stim/latest", 0.25)
+            ]
+          })
+      }
+    }
+  ])("denies before auth/fetch when $label", async ({ routes }) => {
+    const fetchFn = routedFetch(routes);
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    const body = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
+
+    expect(body.error.error_code).toBe("pricing_catalog_reconciliation_failed");
+    expect(body.api_request_sent).toBe(false);
+    expect(body.auth_header_sent).toBe(false);
+    expect(body.payment_header_sent).toBe(false);
+    expect(body.mcp_metadata.pricing_reconciliation.status).toBe("failed");
+    // The catalog read may have occurred (credential-free), but no ST-IM paid
+    // fetch and no auth header ever happened.
+    expect(stimCalls(fetchFn)).toHaveLength(0);
+    for (const [, init] of fetchFn.mock.calls) {
+      expect(hasApiKey(init)).toBe(false);
+    }
+
+    await client.close();
+    await server.close();
+  });
+
+  it("proceeds to a mock ST-IM fetch only when catalog reconciliation passes", async () => {
+    const fetchFn = routedFetch();
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    const body = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
+
+    expect(body.paid_execution_authorized).toBe(true);
+    expect(body.mcp_metadata.pricing_reconciliation.status).toBe("reconciled");
+    expect(body.mcp_metadata.pricing_reconciliation.source).toBe("pricing_catalog");
+    expect(catalogCalls(fetchFn)).toHaveLength(1);
+    expect(stimCalls(fetchFn)).toHaveLength(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("reconciles credential-free: no X-API-Key is sent to /v1/pricing/catalog", async () => {
+    const fetchFn = routedFetch();
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } });
+
+    const catalog = catalogCalls(fetchFn);
+    expect(catalog).toHaveLength(1);
+    expect(catalog[0][1].headers).toEqual(PUBLIC_HEADERS);
+    expect(hasApiKey(catalog[0][1])).toBe(false);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("does not fabricate observed_cost from catalog data on success", async () => {
+    const fetchFn = routedFetch();
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    const body = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
+
+    expect(body.mcp_metadata.response_metadata.observed_cost).toBeNull();
+    expect(body.mcp_metadata.observed_cost).toBeNull();
+    // The static/catalog cost may appear only as an estimated/static cost.
+    expect(body.mcp_metadata.preflight_decision_summary.estimated_cost).toEqual({ amount: 0.25, unit: "STC" });
+
+    await client.close();
+    await server.close();
+  });
+});
+
 describe("Phase 4 paid ST-IM live execution — successful latest", () => {
   it("performs exactly one authorized fetch and wraps the API response", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody(), 200, STIM_HEADERS));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     const result = await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } });
@@ -162,13 +294,12 @@ describe("Phase 4 paid ST-IM live execution — successful latest", () => {
     expect(body.api_request_sent).toBe(true);
     expect(body.auth_header_sent).toBe(true);
     expect(body.payment_header_sent).toBe(false);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    // Exactly one credential-bearing ST-IM fetch (the catalog read is separate).
+    expect(stimCalls(fetchFn)).toHaveLength(1);
 
-    // API-authored payload preserved verbatim, including hyphen symbol_exchange.
     expect(body.api_data.symbol_exchange).toBe("AAPL-Q");
     expect(body.api_data.request_id).toBe("req-latest-1");
 
-    // Response metadata captured when present; observed cost / payment null.
     const meta = body.mcp_metadata.response_metadata;
     expect(meta.request_id).toBe("req-latest-1");
     expect(meta.pricing_rule).toBe("stim_latest_paid");
@@ -180,7 +311,6 @@ describe("Phase 4 paid ST-IM live execution — successful latest", () => {
     expect(meta.payment_status).toBeNull();
 
     expect(body.mcp_metadata.preflight_decision_summary.local_authorization_decision).toBe("allow");
-    expect(body.mcp_metadata.preflight_decision_summary.estimated_cost).toEqual({ amount: 0.25, unit: "STC" });
     expect(body.mcp_metadata.local_budget_cap_status.paid_calls_this_session).toBe(1);
     expect(body.mcp_metadata.local_budget_cap_status.paid_calls_this_tool).toBe(1);
 
@@ -189,15 +319,14 @@ describe("Phase 4 paid ST-IM live execution — successful latest", () => {
   });
 
   it("sends X-API-Key only, to the approved endpoint, with hyphen identity and no Authorization/payment header", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody(), 200, STIM_HEADERS));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } });
 
-    const [url, init] = fetchFn.mock.calls[0];
+    const [url, init] = stimCalls(fetchFn)[0];
     expect(url.origin).toBe("https://api.stocktrends.com");
     expect(url.pathname).toBe("/v1/stim/latest");
-    // Hyphen form sent; underscore canonical form never forwarded.
     expect(url.searchParams.get("symbol_exchange")).toBe("AAPL-Q");
     expect(url.toString()).not.toContain("AAPL_Q");
 
@@ -215,12 +344,12 @@ describe("Phase 4 paid ST-IM live execution — successful latest", () => {
   });
 
   it("accepts decomposed symbol + exchange and still sends hyphen identity", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody(), 200, STIM_HEADERS));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol: "AAPL", exchange: "Q" } });
 
-    const [url] = fetchFn.mock.calls[0];
+    const [url] = stimCalls(fetchFn)[0];
     expect(url.searchParams.get("symbol_exchange")).toBe("AAPL-Q");
 
     await client.close();
@@ -228,7 +357,7 @@ describe("Phase 4 paid ST-IM live execution — successful latest", () => {
   });
 
   it("never leaks the API key into the returned wrapper", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody(), 200, STIM_HEADERS));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     const body = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
@@ -244,7 +373,7 @@ describe("Phase 4 paid ST-IM live execution — successful latest", () => {
 
 describe("Phase 4 paid ST-IM live execution — successful history", () => {
   it("forwards supplied params (hyphen identity) and preserves the API history payload", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(historyBody(), 200, { ...STIM_HEADERS, "x-stocktrends-pricing-rule": "stim_history_paid" }));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     const body = structured(
@@ -255,9 +384,9 @@ describe("Phase 4 paid ST-IM live execution — successful history", () => {
     );
 
     expect(body.paid_execution_authorized).toBe(true);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(stimCalls(fetchFn)).toHaveLength(1);
 
-    const [url] = fetchFn.mock.calls[0];
+    const [url] = stimCalls(fetchFn)[0];
     expect(url.pathname).toBe("/v1/stim/history");
     expect(url.searchParams.get("symbol_exchange")).toBe("AAPL-Q");
     expect(url.searchParams.get("start")).toBe("2026-01-01");
@@ -274,12 +403,12 @@ describe("Phase 4 paid ST-IM live execution — successful history", () => {
   });
 
   it("omits limit and include_gaps when not supplied so API defaults apply", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(historyBody(), 200, STIM_HEADERS));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     await client.callTool({ name: STIM_HISTORY_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } });
 
-    const [url] = fetchFn.mock.calls[0];
+    const [url] = stimCalls(fetchFn)[0];
     expect(url.searchParams.get("symbol_exchange")).toBe("AAPL-Q");
     expect(url.searchParams.has("limit")).toBe(false);
     expect(url.searchParams.has("include_gaps")).toBe(false);
@@ -297,7 +426,7 @@ describe("Phase 4 paid ST-IM live execution — input validation before any fetc
     { label: "history start after end", tool: STIM_HISTORY_TOOL_NAME, args: { symbol_exchange: "AAPL_Q", start: "2026-02-01", end: "2026-01-01" } },
     { label: "history invalid calendar date", tool: STIM_HISTORY_TOOL_NAME, args: { symbol_exchange: "AAPL_Q", start: "2026-13-40" } }
   ])("rejects $label before preflight/auth/fetch", async ({ tool, args }) => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody()));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     const body = structured(await client.callTool({ name: tool, arguments: args }));
@@ -314,7 +443,7 @@ describe("Phase 4 paid ST-IM live execution — input validation before any fetc
 
 describe("Phase 4 paid ST-IM live execution — cap accounting", () => {
   it("increments in-memory usage and blocks once the per-tool cap is reached", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody(), 200, STIM_HEADERS));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, {
       STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
       STOCKTRENDS_API_KEY: MOCK_KEY,
@@ -330,22 +459,22 @@ describe("Phase 4 paid ST-IM live execution — cap accounting", () => {
 
     const second = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
     expect(second.error.error_code).toBe("spend_cap_exceeded");
-    // Only the first call reached the network; the denied call sent nothing.
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    // Only the first call reached the ST-IM endpoint; the denied call sent nothing.
+    expect(stimCalls(fetchFn)).toHaveLength(1);
 
     await client.close();
     await server.close();
   });
 
   it("does not advance usage on a denied (invalid input) call", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody(), 200, STIM_HEADERS));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: {} }); // invalid, no increment
     const ok = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
 
     expect(ok.mcp_metadata.local_budget_cap_status.paid_calls_this_session).toBe(1);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(stimCalls(fetchFn)).toHaveLength(1);
 
     await client.close();
     await server.close();
@@ -356,37 +485,37 @@ describe("Phase 4 paid ST-IM live execution — deterministic fetch failures (no
   it.each([
     {
       label: "network failure",
-      fetchImpl: async () => {
+      route: () => {
         throw new Error("connection refused");
       },
       expected: "api_request_failed"
     },
     {
       label: "timeout",
-      fetchImpl: async () => {
+      route: () => {
         const error = new Error("aborted");
         error.name = "AbortError";
         throw error;
       },
       expected: "api_timeout"
     },
-    { label: "402 payment required", fetchImpl: async () => jsonResponse({ detail: "payment required" }, 402), expected: "api_payment_required" },
-    { label: "404 not found", fetchImpl: async () => jsonResponse({ detail: "stim_not_found" }, 404), expected: "api_not_found" },
-    { label: "401 unauthorized", fetchImpl: async () => jsonResponse({ detail: "unauthorized" }, 401), expected: "api_auth_required" },
-    { label: "malformed body", fetchImpl: async () => textResponse("not json", 200, { "content-type": "text/plain" }), expected: "malformed_api_response" }
-  ])("maps $label to a deterministic error with exactly one attempt", async ({ fetchImpl, expected }) => {
-    const fetchFn = vi.fn<FetchLike>(fetchImpl as FetchLike);
+    { label: "402 payment required", route: () => jsonResponse({ detail: "payment required" }, 402), expected: "api_payment_required" },
+    { label: "404 not found", route: () => jsonResponse({ detail: "stim_not_found" }, 404), expected: "api_not_found" },
+    { label: "401 unauthorized", route: () => jsonResponse({ detail: "unauthorized" }, 401), expected: "api_auth_required" },
+    { label: "malformed body", route: () => textResponse("not json", 200, { "content-type": "text/plain" }), expected: "malformed_api_response" }
+  ])("maps $label to a deterministic error with exactly one ST-IM attempt", async ({ route, expected }) => {
+    const fetchFn = routedFetch({ latest: route as () => Response });
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     const body = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
 
     expect(body.error.error_code).toBe(expected);
-    // Authorized call was sent, but no successful execution and no retry.
     expect(body.paid_execution_authorized).toBe(false);
     expect(body.api_request_sent).toBe(true);
     expect(body.auth_header_sent).toBe(true);
     expect(body.payment_header_sent).toBe(false);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    // Exactly one ST-IM attempt; no retry.
+    expect(stimCalls(fetchFn)).toHaveLength(1);
 
     const serialized = JSON.stringify(body).toLowerCase();
     expect(serialized).not.toContain(MOCK_KEY.toLowerCase());
@@ -397,17 +526,16 @@ describe("Phase 4 paid ST-IM live execution — deterministic fetch failures (no
   });
 
   it("surfaces a 402 as safe metadata without any x402 payment or retry", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ detail: "payment required" }, 402));
+    const fetchFn = routedFetch({ latest: () => jsonResponse({ detail: "payment required" }, 402) });
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     const body = structured(await client.callTool({ name: STIM_LATEST_TOOL_NAME, arguments: { symbol_exchange: "AAPL_Q" } }));
 
     expect(body.error.error_code).toBe("api_payment_required");
     expect(body.payment_header_sent).toBe(false);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(stimCalls(fetchFn)).toHaveLength(1);
 
-    // No payment header was sent on the single attempt.
-    const [, init] = fetchFn.mock.calls[0];
+    const [, init] = stimCalls(fetchFn)[0];
     const headerKeys = Object.keys(init.headers as Record<string, string>).map((key) => key.toLowerCase());
     expect(headerKeys).not.toContain("payment-signature");
     expect(headerKeys).not.toContain("x-payment");
@@ -417,19 +545,73 @@ describe("Phase 4 paid ST-IM live execution — deterministic fetch failures (no
   });
 });
 
+describe("Phase 4 paid ST-IM live execution — credential-bearing endpoint allowlist", () => {
+  const authConfig = (): PaidAuthConfig => {
+    const config = parseConfig({ ...EXEC_ENV });
+    return { apiBaseUrl: config.apiBaseUrl, paidTools: config.paidTools };
+  };
+
+  it("narrows the auth-capable allowlist to ST-IM latest/history only, keeping broad metadata separate", () => {
+    expect(AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toEqual(["/v1/stim/latest", "/v1/stim/history"]);
+    // Broad future metadata still lists indicators, but never on the auth path.
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toContain("/v1/indicators/latest");
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toContain("/v1/indicators/history");
+  });
+
+  it.each(["/v1/indicators/latest", "/v1/indicators/history"])("refuses indicator endpoint %s on the auth-capable boundary", (endpointPath) => {
+    const config = authConfig();
+    const toolName = endpointPath.endsWith("latest") ? "stocktrends_get_indicators_latest" : "stocktrends_get_indicators_history";
+    const targetUrl = new URL(`https://api.stocktrends.com${endpointPath}`);
+
+    // Not resolvable as an auth-capable policy.
+    expect(getPaidEndpointPolicy(endpointPath)).toBeUndefined();
+    expect(() => assertPaidEndpointAllowed(endpointPath)).toThrow(StockTrendsMcpError);
+
+    // Structural invocation preflight denies before pricing/auth.
+    expect(
+      evaluatePaidInvocationPreflight(config, { toolName, endpointPath, httpMethod: "GET", targetUrl }).denialReason
+    ).toBe("endpoint_not_allowlisted");
+
+    // Full preflight (even with a valid-looking cost estimate) denies.
+    const input: PaidPreflightEvaluationInput = {
+      toolName,
+      endpointPath,
+      httpMethod: "GET",
+      targetUrl,
+      costEstimate: indicatorCost()
+    };
+    expect(evaluatePaidPreflight(config, input).denialReason).toBe("endpoint_not_allowlisted");
+
+    // buildPaidAuthHeaders refuses to construct an X-API-Key header.
+    expect(() => buildPaidAuthHeaders(config, input)).toThrow(StockTrendsMcpError);
+    try {
+      buildPaidAuthHeaders(config, input);
+    } catch (error) {
+      expect(error).toBeInstanceOf(StockTrendsMcpError);
+      expect(serializedSafeError(error)).not.toContain(MOCK_KEY);
+    }
+  });
+
+  it("still allows the ST-IM endpoints through the auth-capable allowlist check", () => {
+    expect(getPaidEndpointPolicy("/v1/stim/latest")?.pricingRuleId).toBe("stim_latest_paid");
+    expect(getPaidEndpointPolicy("/v1/stim/history")?.pricingRuleId).toBe("stim_history_paid");
+    expect(() => assertPaidEndpointAllowed("/v1/stim/latest")).not.toThrow();
+    expect(() => assertPaidEndpointAllowed("/v1/stim/history")).not.toThrow();
+  });
+});
+
 describe("Phase 4 paid ST-IM live execution — public safety regression", () => {
   it("keeps public resources and the cost-estimate tool credential-free under execution mode", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(costEstimateBody()));
+    const fetchFn = routedFetch({ other: (url) => (url.pathname === "/v1/cost-estimate" ? jsonResponse(costEstimateBody()) : jsonResponse({ ok: true })) });
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     await client.readResource({ uri: "stocktrends://api/openapi" });
-    expect(fetchFn.mock.calls[0]?.[1].headers).toEqual({
-      Accept: "application/json",
-      "User-Agent": "stocktrends-mcp-server/1.0"
-    });
+    const openapiCall = fetchFn.mock.calls.find(([url]) => url.pathname === "/v1/openapi.json");
+    expect(openapiCall?.[1].headers).toEqual(PUBLIC_HEADERS);
 
     await client.callTool({ name: COST_ESTIMATE_TOOL_NAME, arguments: { workflow_id: "stim_forecast_review" } });
-    const planningHeaders = JSON.stringify(fetchFn.mock.calls[1]?.[1].headers).toLowerCase();
+    const costCall = fetchFn.mock.calls.find(([url]) => url.pathname === "/v1/cost-estimate");
+    const planningHeaders = JSON.stringify(costCall?.[1].headers).toLowerCase();
     expect(planningHeaders).not.toContain("api-key");
     expect(planningHeaders).not.toContain("authorization");
     expect(planningHeaders).not.toContain(MOCK_KEY.toLowerCase());
@@ -439,7 +621,7 @@ describe("Phase 4 paid ST-IM live execution — public safety regression", () =>
   });
 
   it("keeps prompt count at zero", async () => {
-    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(latestBody()));
+    const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     expect(client.getServerCapabilities()?.prompts).toBeUndefined();
@@ -449,6 +631,52 @@ describe("Phase 4 paid ST-IM live execution — public safety regression", () =>
     await server.close();
   });
 });
+
+// --- Fetch routing (catalog reconciliation read + credential-bearing ST-IM fetch) ---
+
+interface FetchRoutes {
+  catalog?: (url: URL) => Response | Promise<Response>;
+  latest?: (url: URL) => Response | Promise<Response>;
+  history?: (url: URL) => Response | Promise<Response>;
+  other?: (url: URL) => Response | Promise<Response>;
+}
+
+function routedFetch(routes: FetchRoutes = {}): ReturnType<typeof vi.fn<FetchLike>> {
+  return vi.fn<FetchLike>(async (url) => {
+    switch (url.pathname) {
+      case "/v1/pricing/catalog":
+        return (routes.catalog ?? (() => jsonResponse(validCatalogBody())))(url);
+      case "/v1/stim/latest":
+        return (routes.latest ?? (() => jsonResponse(latestBody(), 200, STIM_HEADERS)))(url);
+      case "/v1/stim/history":
+        return (routes.history ?? (() => jsonResponse(historyBody(), 200, { ...STIM_HEADERS, "x-stocktrends-pricing-rule": "stim_history_paid" })))(url);
+      default:
+        return (routes.other ?? (() => jsonResponse({ ok: true })))(url);
+    }
+  });
+}
+
+function stimCalls(fetchFn: ReturnType<typeof vi.fn<FetchLike>>): Array<[URL, RequestInit]> {
+  return fetchFn.mock.calls.filter(([url]) => url.pathname.startsWith("/v1/stim/")) as Array<[URL, RequestInit]>;
+}
+
+function catalogCalls(fetchFn: ReturnType<typeof vi.fn<FetchLike>>): Array<[URL, RequestInit]> {
+  return fetchFn.mock.calls.filter(([url]) => url.pathname === "/v1/pricing/catalog") as Array<[URL, RequestInit]>;
+}
+
+function hasApiKey(init: RequestInit): boolean {
+  return Object.keys((init.headers as Record<string, string>) ?? {}).some((key) => key.toLowerCase() === "x-api-key");
+}
+
+function catalogRule(pricingRuleId: string, endpointPattern: string, stcCost: number): Record<string, unknown> {
+  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, stc_cost: stcCost, unit: "STC" };
+}
+
+function validCatalogBody(): Record<string, unknown> {
+  return {
+    rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.25), catalogRule("stim_history_paid", "/v1/stim/history", 0.5)]
+  };
+}
 
 function latestBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -493,6 +721,25 @@ function costEstimateBody(): Record<string, unknown> {
     steps: [],
     notes: ["Mock estimate."]
   };
+}
+
+function indicatorCost(): PaidCostEstimate {
+  return {
+    amount: 0.25,
+    unit: "STC",
+    authoritative: true,
+    pricingSource: "pricing_catalog",
+    pricingRuleId: "indicators_latest_paid",
+    fetchedAt: "2026-07-08T00:00:00.000Z"
+  };
+}
+
+function serializedSafeError(error: unknown): string {
+  if (error instanceof StockTrendsMcpError) {
+    return `${error.message} ${JSON.stringify(error.toSafeData())}`;
+  }
+
+  return String(error);
 }
 
 function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/sdk/client/index.js").Client["callTool"]>>): Record<string, any> {

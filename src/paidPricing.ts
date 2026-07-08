@@ -1,44 +1,59 @@
 import type { PaidCostEstimate } from "./paidPolicy.js";
+import type { JsonObject, StockTrendsClient } from "./stocktrendsClient.js";
 
 // --- Static endpoint pricing policy (local catalog mirror) ---
 //
 // Live paid ST-IM execution authorizes on a STATIC, in-repo endpoint pricing
-// policy plus local caps (see PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md
-// §8). This module is the local mirror of the `/v1/pricing/catalog` rule costs
-// for the two paid ST-IM rules. It performs NO network access: the cost basis
-// is resolved entirely from these static entries.
+// policy PLUS a fail-closed reconciliation of that mirror against the live
+// `/v1/pricing/catalog` metadata PLUS local caps (see
+// PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md §8 and SECURITY_MODEL.md §15).
+// This module resolves the static cost basis (no network) and, separately,
+// reconciles it against the catalog (credential-free network read).
 //
-// IMPORTANT — the numeric amounts below are a conservative LOCAL STATIC MIRROR
-// and are NOT confirmed against the live pricing catalog. They exist so the
-// pricing/preflight gate has an authoritative, deterministic cost basis for
-// mock-only validation. Before any real live call, an operator must reconcile
-// these against `/v1/pricing/catalog` (a drift check may be added later); until
-// then live execution is exercised mock-only. The amounts are intentionally
+// IMPORTANT — the numeric amounts below are a conservative LOCAL STATIC MIRROR.
+// They are NOT sufficient to authorize a paid call on their own: before any
+// live auth header is built or any ST-IM fetch occurs, they must be reconciled
+// against the live pricing catalog by `reconcileStaticPricingWithCatalog`. If
+// the catalog is unavailable, malformed, ambiguous, or disagrees with the
+// mirror (missing rule id, missing/mismatched cost, unsupported unit, mismatched
+// endpoint/rule id), execution fails closed. The amounts are intentionally
 // nonzero, which makes a configured budget cap effectively mandatory for these
 // tools (there is no zero-cost path). The unit is STC.
 //
 // The version date lets the wrapper/notes record which static-policy snapshot
-// authorized a decision without implying a network fetch occurred.
+// was used, without implying a fetch occurred for the static resolution.
 export const STATIC_PRICING_POLICY_VERSION = "2026-07-08";
+
+// The public catalog resource path. Read credential-free (no X-API-Key) for
+// metadata reconciliation only — never as an authorization source by itself.
+export const PRICING_CATALOG_ENDPOINT_PATH = "/v1/pricing/catalog";
+export const PRICING_CATALOG_RESOURCE_URI = "stocktrends://pricing/catalog";
 
 export interface StaticEndpointPricingEntry {
   pricingRuleId: string;
+  endpointPath: string;
   amount: number;
   unit: "STC";
 }
 
-// Keyed by the catalog pricing rule id used in PAID_ENDPOINT_POLICIES.
+// Keyed by the catalog pricing rule id. Each entry also records the endpoint it
+// prices, so reconciliation can verify the catalog assigns the same rule id to
+// the same endpoint at the same cost/unit.
 const STATIC_ENDPOINT_PRICING: Readonly<Record<string, StaticEndpointPricingEntry>> = Object.freeze({
-  stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", amount: 0.25, unit: "STC" }),
-  stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", amount: 0.5, unit: "STC" })
+  stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", endpointPath: "/v1/stim/latest", amount: 0.25, unit: "STC" }),
+  stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", amount: 0.5, unit: "STC" })
 });
+
+// The rules that must be confirmed by the live catalog before any paid ST-IM
+// auth/fetch. Exactly the two auth-capable ST-IM rules — nothing broader.
+const RECONCILIATION_SPECS: readonly StaticEndpointPricingEntry[] = Object.freeze(Object.values(STATIC_ENDPOINT_PRICING));
 
 // Resolve the static, authoritative cost basis for a paid endpoint pricing rule.
 // Returns `null` when no static rule exists (ambiguous/missing pricing), which
 // the preflight treats as `missing_pricing` and fails closed. The estimate is
 // marked `pricing_catalog`-sourced because it mirrors the catalog rule cost; it
 // carries `estimatedAt` (the static-policy version) rather than a `fetchedAt`,
-// since no network fetch occurs.
+// since no network fetch occurs for the static resolution.
 export function resolveStaticEndpointPricing(pricingRuleId: string): PaidCostEstimate | null {
   const entry = STATIC_ENDPOINT_PRICING[pricingRuleId];
 
@@ -54,4 +69,166 @@ export function resolveStaticEndpointPricing(pricingRuleId: string): PaidCostEst
     pricingRuleId: entry.pricingRuleId,
     estimatedAt: `${STATIC_PRICING_POLICY_VERSION}T00:00:00.000Z`
   };
+}
+
+// --- Catalog reconciliation gate (credential-free, fail-closed) ---
+
+export type PricingReconciliationFailureReason =
+  | "catalog_unavailable"
+  | "catalog_malformed"
+  | "rule_missing"
+  | "rule_ambiguous"
+  | "cost_missing"
+  | "unsupported_unit"
+  | "cost_mismatch"
+  | "endpoint_mismatch"
+  | "rule_id_mismatch";
+
+export interface PricingReconciliationResult {
+  ok: boolean;
+  reason: PricingReconciliationFailureReason | null;
+  detail: string | null;
+  source: "pricing_catalog" | null;
+  cached: boolean;
+}
+
+// Per-server reconciliation state. A successful reconciliation is cached for the
+// lifetime of the server instance (the catalog is stable metadata; no hidden
+// background refresh). Failures are NOT cached, so a transient catalog outage
+// fails the current call closed but does not permanently poison the session.
+export interface PaidPricingReconciliationState {
+  reconciled: boolean;
+}
+
+export function createPaidPricingReconciliationState(): PaidPricingReconciliationState {
+  return { reconciled: false };
+}
+
+// Reconcile the static local pricing mirror against the live `/v1/pricing/catalog`
+// metadata. Runs a single credential-free public read (no X-API-Key) and fails
+// closed on any discrepancy. This is metadata reconciliation only — the catalog
+// is never treated as an authorization source by itself; local caps and the
+// full preflight still gate the call, and the auth header is constructed only
+// after this reconciliation passes.
+export async function reconcileStaticPricingWithCatalog(
+  client: StockTrendsClient,
+  state: PaidPricingReconciliationState
+): Promise<PricingReconciliationResult> {
+  if (state.reconciled) {
+    return {
+      ok: true,
+      reason: null,
+      detail: "Static pricing already reconciled against the live pricing catalog for this session.",
+      source: "pricing_catalog",
+      cached: true
+    };
+  }
+
+  let data: JsonObject;
+
+  try {
+    // Credential-free read via the public fetch path (Accept + User-Agent only).
+    const response = await client.fetchJson({
+      endpointPath: PRICING_CATALOG_ENDPOINT_PATH,
+      resourceUri: PRICING_CATALOG_RESOURCE_URI
+    });
+    data = response.data;
+  } catch {
+    return fail("catalog_unavailable", "The pricing catalog could not be fetched; live paid ST-IM execution fails closed.");
+  }
+
+  const rules = extractCatalogRules(data);
+
+  if (!rules) {
+    return fail("catalog_malformed", "The pricing catalog response did not contain a usable rules array.");
+  }
+
+  for (const spec of RECONCILIATION_SPECS) {
+    const ruleResult = reconcileRule(rules, spec);
+
+    if (!ruleResult.ok) {
+      return ruleResult;
+    }
+  }
+
+  state.reconciled = true;
+  return {
+    ok: true,
+    reason: null,
+    detail: "Static pricing reconciled against the live pricing catalog.",
+    source: "pricing_catalog",
+    cached: false
+  };
+}
+
+function reconcileRule(rules: readonly unknown[], spec: StaticEndpointPricingEntry): PricingReconciliationResult {
+  const entries = rules.filter((rule): rule is JsonObject => isJsonObject(rule) && rule.pricing_rule_id === spec.pricingRuleId);
+
+  if (entries.length === 0) {
+    return fail("rule_missing", `Pricing catalog is missing required rule ${spec.pricingRuleId}.`);
+  }
+
+  if (entries.length > 1) {
+    return fail("rule_ambiguous", `Pricing catalog has ambiguous duplicate entries for rule ${spec.pricingRuleId}.`);
+  }
+
+  const entry = entries[0];
+  const endpoint = readString(entry.endpoint_pattern) ?? readString(entry.endpoint_path);
+
+  if (endpoint !== spec.endpointPath) {
+    return fail("endpoint_mismatch", `Pricing catalog rule ${spec.pricingRuleId} endpoint did not match ${spec.endpointPath}.`);
+  }
+
+  // Any catalog entry that claims this endpoint but assigns a different rule id
+  // is a rule-id/endpoint conflict — fail closed.
+  const conflicting = rules.filter(
+    (rule) =>
+      isJsonObject(rule) &&
+      (readString(rule.endpoint_pattern) === spec.endpointPath || readString(rule.endpoint_path) === spec.endpointPath) &&
+      rule.pricing_rule_id !== spec.pricingRuleId
+  );
+
+  if (conflicting.length > 0) {
+    return fail("rule_id_mismatch", `Pricing catalog assigns a different rule id to endpoint ${spec.endpointPath}.`);
+  }
+
+  const unit = readString(entry.unit);
+
+  if (unit !== undefined && unit.toUpperCase() !== spec.unit) {
+    return fail("unsupported_unit", `Pricing catalog rule ${spec.pricingRuleId} unit is not supported for local budgeting.`);
+  }
+
+  const cost = readCatalogStcCost(entry);
+
+  if (cost === null) {
+    return fail("cost_missing", `Pricing catalog rule ${spec.pricingRuleId} is missing a non-negative numeric STC cost.`);
+  }
+
+  if (Math.abs(cost - spec.amount) > 1e-9) {
+    return fail("cost_mismatch", `Pricing catalog rule ${spec.pricingRuleId} cost did not match the static local mirror.`);
+  }
+
+  return { ok: true, reason: null, detail: null, source: "pricing_catalog", cached: false };
+}
+
+function extractCatalogRules(data: JsonObject): readonly unknown[] | null {
+  const candidate = data.rules ?? data.pricing_rules ?? data.catalog;
+  return Array.isArray(candidate) ? candidate : null;
+}
+
+function readCatalogStcCost(entry: JsonObject): number | null {
+  const value = entry.stc_cost ?? entry.cost_stc;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function fail(reason: PricingReconciliationFailureReason, detail: string): PricingReconciliationResult {
+  return { ok: false, reason, detail, source: "pricing_catalog", cached: false };
 }

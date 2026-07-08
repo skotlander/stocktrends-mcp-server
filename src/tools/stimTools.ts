@@ -18,7 +18,13 @@ import {
   type PaidSpendPolicy,
   type PaidUsageTracker
 } from "../paidPolicy.js";
-import { resolveStaticEndpointPricing, STATIC_PRICING_POLICY_VERSION } from "../paidPricing.js";
+import {
+  reconcileStaticPricingWithCatalog,
+  resolveStaticEndpointPricing,
+  STATIC_PRICING_POLICY_VERSION,
+  type PaidPricingReconciliationState,
+  type PricingReconciliationResult
+} from "../paidPricing.js";
 import type { PaidEndpointResponse, StockTrendsClient } from "../stocktrendsClient.js";
 
 // --- Confirmed contract constants (see PHASE4_FIRST_PAID_STIM_TOOL_PREFLIGHT_DESIGN_MEMO.md) ---
@@ -135,6 +141,7 @@ export type StimToolErrorCode =
   | "tool_endpoint_mismatch"
   | "host_not_approved"
   | "pricing_preflight_unavailable"
+  | "pricing_catalog_reconciliation_failed"
   | "cost_unavailable"
   | "unsupported_cost_unit"
   | "spend_cap_exceeded"
@@ -222,6 +229,13 @@ export interface PaidStimSymbolIdentity {
   identity_source: "symbol_exchange" | "symbol_and_exchange";
 }
 
+export interface PaidStimPricingReconciliation {
+  required: true;
+  status: "reconciled" | "failed" | "not_evaluated";
+  source: "pricing_catalog" | null;
+  detail: string | null;
+}
+
 export interface PaidStimResponseMetadata {
   request_id: string | null;
   pricing_rule: string | null;
@@ -244,6 +258,7 @@ export interface PaidStimToolMetadata {
   request_parameters: Record<string, unknown>;
   api_request_parameters: Record<string, unknown>;
   preflight_decision_summary: PaidStimPreflightSummary;
+  pricing_reconciliation: PaidStimPricingReconciliation;
   local_budget_cap_status: PaidStimLocalCapStatus;
   response_metadata: PaidStimResponseMetadata;
   request_id: string | null;
@@ -294,7 +309,8 @@ export function registerPaidStimTools(
   server: McpServer,
   client: StockTrendsClient,
   config: StockTrendsMcpConfig,
-  usage: PaidUsageTracker
+  usage: PaidUsageTracker,
+  reconciliation: PaidPricingReconciliationState
 ): void {
   // Paired paid ST-IM tool *definitions* are only exposed when paid mode is
   // explicitly enabled AND an API key is configured (Phase 3/4 paid-mode
@@ -328,7 +344,7 @@ export function registerPaidStimTools(
         pairedWith: STIM_HISTORY_TOOL_NAME
       }
     },
-    async (input) => handleStimLatestTool(config, client, usage, input as StimLatestInput)
+    async (input) => handleStimLatestTool(config, client, usage, reconciliation, input as StimLatestInput)
   );
 
   server.registerTool(
@@ -352,7 +368,7 @@ export function registerPaidStimTools(
         pairedWith: STIM_LATEST_TOOL_NAME
       }
     },
-    async (input) => handleStimHistoryTool(config, client, usage, input as StimHistoryInput)
+    async (input) => handleStimHistoryTool(config, client, usage, reconciliation, input as StimHistoryInput)
   );
 }
 
@@ -374,13 +390,14 @@ async function handleStimLatestTool(
   config: StockTrendsMcpConfig,
   client: StockTrendsClient,
   usage: PaidUsageTracker,
+  reconciliation: PaidPricingReconciliationState,
   input: StimLatestInput
 ): Promise<CallToolResult> {
   try {
     const identity = resolveSymbolIdentity(input);
     const requestParameters = { symbol_exchange: identity.symbol_exchange };
     const apiRequestParameters = { symbol_exchange: identity.api_symbol_exchange };
-    return await executePaidStim(config, client, usage, {
+    return await executePaidStim(config, client, usage, reconciliation, {
       toolName: STIM_LATEST_TOOL_NAME,
       endpointPath: STIM_LATEST_ENDPOINT_PATH,
       pricingRuleId: "stim_latest_paid",
@@ -400,13 +417,14 @@ async function handleStimHistoryTool(
   config: StockTrendsMcpConfig,
   client: StockTrendsClient,
   usage: PaidUsageTracker,
+  reconciliation: PaidPricingReconciliationState,
   input: StimHistoryInput
 ): Promise<CallToolResult> {
   try {
     const identity = resolveSymbolIdentity(input);
     const requestParameters = buildHistoryRequestParameters(identity, input, identity.symbol_exchange);
     const apiRequestParameters = buildHistoryRequestParameters(identity, input, identity.api_symbol_exchange);
-    return await executePaidStim(config, client, usage, {
+    return await executePaidStim(config, client, usage, reconciliation, {
       toolName: STIM_HISTORY_TOOL_NAME,
       endpointPath: STIM_HISTORY_ENDPOINT_PATH,
       pricingRuleId: "stim_history_paid",
@@ -431,12 +449,14 @@ interface StimExecutionContext {
 }
 
 // The single coupled paid-execution path. Runs the structural gate, then the
-// full pricing/cap preflight, then — only on approval — builds the X-API-Key
-// header, records the attempt, performs exactly one fetch, and wraps the result.
+// full pricing/cap preflight, then the fail-closed catalog reconciliation gate,
+// then — only on approval — builds the X-API-Key header, records the attempt,
+// performs exactly one fetch, and wraps the result.
 async function executePaidStim(
   config: StockTrendsMcpConfig,
   client: StockTrendsClient,
   usage: PaidUsageTracker,
+  reconciliation: PaidPricingReconciliationState,
   context: StimExecutionContext
 ): Promise<CallToolResult> {
   const paidAuthConfig: PaidAuthConfig = { apiBaseUrl: config.apiBaseUrl, paidTools: config.paidTools };
@@ -447,7 +467,7 @@ async function executePaidStim(
   // Structural gate: endpoint/tool/host allowlist, paid mode, API key, runtime
   // execution flag. No pricing is resolved and no side effects occur here. When
   // execution is not runtime-enabled (or a structural gate fails) we deny before
-  // touching pricing/caps/auth.
+  // touching pricing/caps/reconciliation/auth.
   const structural = evaluatePaidInvocationPreflight(paidAuthConfig, {
     toolName: context.toolName,
     endpointPath: context.endpointPath,
@@ -466,7 +486,8 @@ async function executePaidStim(
       estimatedCost: null,
       pricingSource: null,
       pricingRule: null,
-      capUsage: snapshotPaidUsage(usage)
+      capUsage: snapshotPaidUsage(usage),
+      reconciliation: reconciliationNotEvaluated()
     });
   }
 
@@ -495,16 +516,41 @@ async function executePaidStim(
       estimatedCost: decision.estimatedCost,
       pricingSource: decision.pricingSource,
       pricingRule: decision.estimatedCost?.pricingRuleId ?? null,
-      capUsage: usageSnapshot
+      capUsage: usageSnapshot,
+      reconciliation: reconciliationNotEvaluated()
     });
   }
 
-  // APPROVED. Construct the X-API-Key header inside the coupled boundary (this
-  // re-runs and re-asserts the full preflight as defense in depth), record the
-  // attempt against in-memory caps, then perform exactly one fetch.
+  // Catalog reconciliation gate (credential-free, fail-closed). The static local
+  // pricing mirror must be confirmed against the live `/v1/pricing/catalog`
+  // metadata BEFORE any auth header is constructed or any ST-IM fetch occurs.
+  // Static pricing alone can never authorize a paid call. This read sends no
+  // X-API-Key and is not an authorization source by itself.
+  const reconciliationResult = await reconcileStaticPricingWithCatalog(client, reconciliation);
+
+  if (!reconciliationResult.ok) {
+    return denyStimInvocation(config, context, "pricing_catalog_reconciliation_failed", {
+      endpointAllowlisted: true,
+      toolAllowlisted: true,
+      hostApproved: true,
+      paidModeConfigured: true,
+      hardExecutionGateEnabled: structural.hardExecutionGateEnabled,
+      estimatedCost: decision.estimatedCost,
+      pricingSource: decision.pricingSource,
+      pricingRule: decision.estimatedCost?.pricingRuleId ?? null,
+      capUsage: usageSnapshot,
+      reconciliation: reconciliationFromResult(reconciliationResult)
+    });
+  }
+
+  // APPROVED (local policy + catalog reconciliation). Construct the X-API-Key
+  // header inside the coupled boundary (this re-runs and re-asserts the full
+  // preflight as defense in depth), record the attempt against in-memory caps,
+  // then perform exactly one fetch.
   const authHeaders = buildPaidAuthHeaders(paidAuthConfig, preflightInput);
   recordPaidCallAttempt(usage, context.toolName, estimatedCost);
   const capUsageAfter = snapshotPaidUsage(usage);
+  const reconciliationSummary = reconciliationFromResult(reconciliationResult);
 
   let response: PaidEndpointResponse;
 
@@ -516,10 +562,23 @@ async function executePaidStim(
       authHeaders
     });
   } catch (error) {
-    return apiErrorResult(config, context, decision, estimatedCost, capUsageAfter, error);
+    return apiErrorResult(config, context, decision, estimatedCost, capUsageAfter, reconciliationSummary, error);
   }
 
-  return successResult(config, context, decision, estimatedCost, capUsageAfter, response);
+  return successResult(config, context, decision, estimatedCost, capUsageAfter, reconciliationSummary, response);
+}
+
+function reconciliationNotEvaluated(): PaidStimPricingReconciliation {
+  return { required: true, status: "not_evaluated", source: null, detail: null };
+}
+
+function reconciliationFromResult(result: PricingReconciliationResult): PaidStimPricingReconciliation {
+  return {
+    required: true,
+    status: result.ok ? "reconciled" : "failed",
+    source: result.source,
+    detail: result.detail
+  };
 }
 
 interface DenialPreflightFacts {
@@ -532,6 +591,7 @@ interface DenialPreflightFacts {
   pricingSource: string | null;
   pricingRule: string | null;
   capUsage: ReturnType<typeof snapshotPaidUsage>;
+  reconciliation: PaidStimPricingReconciliation;
 }
 
 function denyStimInvocation(
@@ -552,6 +612,7 @@ function denyStimInvocation(
     pricingSource: facts.pricingSource,
     pricingRule: facts.pricingRule,
     capUsage: facts.capUsage,
+    reconciliation: facts.reconciliation,
     responseMetadata: emptyResponseMetadata(),
     fetchedAt: null,
     paidExecutionAuthorized: false,
@@ -584,6 +645,7 @@ function successResult(
   decision: PaidPreflightDecision,
   estimatedCost: PaidCostEstimate | null,
   capUsage: ReturnType<typeof snapshotPaidUsage>,
+  reconciliation: PaidStimPricingReconciliation,
   response: PaidEndpointResponse
 ): CallToolResult {
   const responseMetadata: PaidStimResponseMetadata = {
@@ -611,6 +673,7 @@ function successResult(
     pricingSource: decision.pricingSource,
     pricingRule: response.headers.pricingRule ?? estimatedCost?.pricingRuleId ?? null,
     capUsage,
+    reconciliation,
     responseMetadata,
     fetchedAt: new Date().toISOString(),
     paidExecutionAuthorized: true,
@@ -648,6 +711,7 @@ function apiErrorResult(
   decision: PaidPreflightDecision,
   estimatedCost: PaidCostEstimate | null,
   capUsage: ReturnType<typeof snapshotPaidUsage>,
+  reconciliation: PaidStimPricingReconciliation,
   error: unknown
 ): CallToolResult {
   const errorCode = mapClientErrorToStimCode(error);
@@ -663,6 +727,7 @@ function apiErrorResult(
     pricingSource: decision.pricingSource,
     pricingRule: estimatedCost?.pricingRuleId ?? null,
     capUsage,
+    reconciliation,
     responseMetadata: emptyResponseMetadata(),
     fetchedAt: new Date().toISOString(),
     paidExecutionAuthorized: false,
@@ -702,6 +767,7 @@ interface ToolMetadataFacts {
   pricingSource: string | null;
   pricingRule: string | null;
   capUsage: ReturnType<typeof snapshotPaidUsage>;
+  reconciliation: PaidStimPricingReconciliation;
   responseMetadata: PaidStimResponseMetadata;
   fetchedAt: string | null;
   paidExecutionAuthorized: boolean;
@@ -729,6 +795,7 @@ function buildToolMetadata(spendPolicy: PaidSpendPolicy, context: StimExecutionC
       local_authorization_decision: facts.decision,
       denial_reason: facts.denialReason
     },
+    pricing_reconciliation: facts.reconciliation,
     local_budget_cap_status: buildCapStatus(spendPolicy, context.toolName, facts.capUsage),
     response_metadata: facts.responseMetadata,
     request_id: facts.responseMetadata.request_id,
@@ -743,6 +810,7 @@ function buildToolMetadata(spendPolicy: PaidSpendPolicy, context: StimExecutionC
     warnings: facts.extraWarnings,
     limitations: [
       "This tool returns Stock Trends API-authored ST-IM data; it does not compute or reinterpret ST-IM distributions or produce buy/sell/hold/allocation conclusions.",
+      "Static local pricing cannot authorize a paid call by itself; it must reconcile against the live /v1/pricing/catalog metadata (credential-free) before any auth header or fetch. The catalog is metadata reconciliation only, never authorization by itself.",
       "Subscription/API-key mode returns no observed per-call cost and no payment settlement; observed_cost and payment_status are null and never fabricated.",
       "x402, wallets, OAuth, remote MCP, and Bearer-header fallback remain deferred; local spend caps are in-memory only and reset on server restart."
     ]
@@ -908,6 +976,8 @@ function denialMessage(errorCode: StimToolErrorCode): string {
       return "The target host is not the approved Stock Trends API origin. No API request was sent.";
     case "pricing_preflight_unavailable":
       return "Required pricing/preflight could not be resolved authoritatively. No API request was sent.";
+    case "pricing_catalog_reconciliation_failed":
+      return "Static pricing could not be reconciled against the live pricing catalog. Live paid execution fails closed; no auth header was constructed and no API request was sent.";
     case "cost_unavailable":
       return "The endpoint cost could not be determined. No API request was sent.";
     case "unsupported_cost_unit":
@@ -928,6 +998,10 @@ function denialWarning(errorCode: StimToolErrorCode): string {
 
   if (errorCode === "paid_execution_disabled") {
     return "Paid ST-IM execution is not enabled (STOCKTRENDS_ENABLE_PAID_EXECUTION is not true, or the build is not execution-capable). No API request was sent and no auth or payment header was constructed.";
+  }
+
+  if (errorCode === "pricing_catalog_reconciliation_failed") {
+    return "Static local pricing did not reconcile against the live /v1/pricing/catalog metadata (unavailable, malformed, ambiguous, or mismatched rule id/endpoint/cost/unit). Static pricing alone cannot authorize a paid call; execution fails closed before any auth header or fetch.";
   }
 
   return "Paid ST-IM execution was denied before any request; no API request was sent and no auth or payment header was constructed.";

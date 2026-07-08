@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { parseConfig, type Env, type StockTrendsMcpConfig } from "./config.js";
 import { createLogger, safeErrorMessage } from "./logging.js";
 import { createPaidUsageTracker } from "./paidPolicy.js";
+import { createPaidPricingReconciliationState } from "./paidPricing.js";
 import { registerPublicResources } from "./resources/index.js";
 import { StockTrendsClient, type FetchLike } from "./stocktrendsClient.js";
 import { registerPublicPlanningTools } from "./tools/index.js";
@@ -37,14 +38,19 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // only and resets on restart (no persistence). Shared by the paired paid
   // ST-IM tools so caps are enforced across both.
   const paidUsage = createPaidUsageTracker();
+  // Per-server pricing-catalog reconciliation state. A successful reconciliation
+  // is cached for the server lifetime; failures fail the call closed and are not
+  // cached. Resets on restart.
+  const paidReconciliation = createPaidPricingReconciliationState();
 
   registerPublicResources(server, client);
   registerPublicPlanningTools(server, client);
   // Paired paid ST-IM tools. These register only when paid mode is explicitly
   // enabled with an API key. Live subscription/API-key execution runs only when
-  // the execution flag, authoritative static pricing/preflight, and nonzero
-  // local caps additionally pass; otherwise every invocation fails closed.
-  registerPaidStimTools(server, client, config, paidUsage);
+  // the execution flag, authoritative static pricing/preflight, a passing
+  // credential-free catalog reconciliation, and nonzero local caps additionally
+  // pass; otherwise every invocation fails closed.
+  registerPaidStimTools(server, client, config, paidUsage, paidReconciliation);
 
   return {
     server,

@@ -168,7 +168,14 @@ export const DEFAULT_PAID_SPEND_POLICY: PaidSpendPolicy = Object.freeze({
   paidCallsAuthorizedInThisBuild: PAID_CALLS_AUTHORIZED_IN_THIS_BUILD
 });
 
-export const PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.freeze([
+// The ONLY endpoints the credential-bearing execution boundary may authorize.
+// `findPaidEndpointPolicy` (used by `evaluatePaidPreflight`,
+// `evaluatePaidInvocationPreflight`, `buildPaidAuthHeaders`,
+// `assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`) resolves policies
+// ONLY from this narrow list. Nothing here — or anywhere in the auth-capable
+// path — may authorize an `X-API-Key` header or fetch for any endpoint that is
+// not one of these two ST-IM routes.
+export const AUTH_CAPABLE_PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.freeze([
   {
     toolName: "stocktrends_get_stim_latest",
     endpointPath: "/v1/stim/latest",
@@ -187,7 +194,17 @@ export const PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.free
     pricingRuleId: "stim_history_paid",
     requiresPricingPreflight: true,
     supportsLongitudinalAnalysis: true
-  },
+  }
+]);
+
+// Broader, NON-auth-capable future paid endpoint metadata. This is descriptive
+// catalog/planning metadata only. Indicator (and any future) entries here are
+// deliberately NOT reachable by the credential-bearing auth/fetch path: the
+// auth boundary reads only AUTH_CAPABLE_PAID_ENDPOINT_POLICIES. Adding an entry
+// here never grants execution; a future branch must explicitly promote a route
+// into the auth-capable list (with its own review) to make it executable.
+export const PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.freeze([
+  ...AUTH_CAPABLE_PAID_ENDPOINT_POLICIES,
   {
     toolName: "stocktrends_get_indicators_latest",
     endpointPath: "/v1/indicators/latest",
@@ -451,8 +468,14 @@ function isApprovedAuthTarget(apiBaseUrl: URL, targetUrl: URL): boolean {
   );
 }
 
+// The auth-capable boundary resolves policies ONLY from the narrow ST-IM
+// allowlist. Indicator (and any future non-promoted) endpoints therefore return
+// `undefined` here and are denied `endpoint_not_allowlisted` before any auth
+// header or fetch — they can never pass the credential-bearing path.
 function findPaidEndpointPolicy(endpointPath: string, httpMethod: PaidHttpMethod): PaidEndpointPolicy | undefined {
-  return PAID_ENDPOINT_POLICIES.find((policy) => policy.endpointPath === endpointPath && policy.httpMethod === httpMethod);
+  return AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.find(
+    (policy) => policy.endpointPath === endpointPath && policy.httpMethod === httpMethod
+  );
 }
 
 function hasValidEstimatedCost(costEstimate: PaidCostEstimate | null | undefined): costEstimate is PaidCostEstimate {
