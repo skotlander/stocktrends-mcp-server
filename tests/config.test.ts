@@ -92,7 +92,7 @@ describe("config", () => {
     expect(config.paidTools).toMatchObject({
       requested: true,
       apiKeyConfigured: true,
-      status: "configured_no_tools_registered",
+      status: "configured_foundation_no_execution",
       runtimeToolsRegistered: false,
       spendPolicy: {
         maxPaidCallsPerSession: 3,

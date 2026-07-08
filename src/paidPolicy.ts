@@ -1,6 +1,6 @@
 import { StockTrendsMcpError } from "./errors.js";
 
-export type PaidModeStatus = "disabled" | "blocked_missing_api_key" | "configured_no_tools_registered";
+export type PaidModeStatus = "disabled" | "blocked_missing_api_key" | "configured_foundation_no_execution";
 export type PaidHttpMethod = "GET";
 export type PaidPricingSource = "pricing_catalog" | "cost_estimate" | "explicit_test_estimate";
 export type PaidCostUnit = "STC" | "USD";
@@ -124,6 +124,12 @@ export interface PaidPreflightDecision {
 
 export const PHASE3_PAID_TOOLS_REGISTERED = false;
 export const PHASE4_PAID_EXECUTION_ENABLED = false;
+
+// The paired paid ST-IM tool *definitions* are registered as MCP tools in this
+// foundation build, but they never perform paid execution: every invocation
+// fails closed at the hard paid-execution-disabled gate below. This constant
+// documents that the tool surface exists; it does NOT authorize execution.
+export const PHASE4_PAID_STIM_FOUNDATION_TOOLS_REGISTERED = true;
 
 export const DEFAULT_PAID_SPEND_POLICY: PaidSpendPolicy = Object.freeze({
   pricingPreflightRequired: true,
@@ -476,4 +482,116 @@ function capWouldBeExceeded(capState: PaidCapState): boolean {
 
 function nonNegative(value: number | undefined): number {
   return Number.isFinite(value) && value && value > 0 ? value : 0;
+}
+
+// --- Paid ST-IM invocation preflight (foundation, no execution) ---
+//
+// This is the structural preflight the registered ST-IM tool handlers use. It
+// records the endpoint/tool/host/paid-mode gate results for transparent wrapper
+// metadata and returns a deterministic denial reason. It never constructs an
+// auth header and never returns an authorized decision: in this build every
+// path terminates at the hard paid-execution-disabled gate. A future,
+// separately reviewed execution branch is what flips the hard gate on and adds
+// the pricing/cap/auth/fetch path; until then this function fails closed.
+
+export type PaidInvocationDenialReason =
+  | "paid_tools_disabled"
+  | "paid_auth_blocked_missing_api_key"
+  | "endpoint_not_allowlisted"
+  | "tool_endpoint_mismatch"
+  | "host_not_approved"
+  | "paid_execution_disabled";
+
+export interface PaidInvocationPreflightInput {
+  toolName: string;
+  endpointPath: string;
+  httpMethod: PaidHttpMethod;
+  targetUrl: URL;
+}
+
+export interface PaidInvocationPreflightResult {
+  toolName: string;
+  endpointPath: string;
+  httpMethod: PaidHttpMethod;
+  endpointAllowlisted: boolean;
+  toolAllowlisted: boolean;
+  hostApproved: boolean;
+  paidModeConfigured: boolean;
+  hardExecutionGateEnabled: boolean;
+  authorized: false;
+  denialReason: PaidInvocationDenialReason;
+}
+
+export function isPaidExecutionEnabledInBuild(config: PaidAuthConfig): boolean {
+  return PHASE4_PAID_EXECUTION_ENABLED && config.paidTools.spendPolicy.paidCallsAuthorizedInThisBuild;
+}
+
+export function getPaidEndpointPolicy(endpointPath: string, httpMethod: PaidHttpMethod = "GET"): PaidEndpointPolicy | undefined {
+  return findPaidEndpointPolicy(endpointPath, httpMethod);
+}
+
+export function isApprovedPaidAuthTarget(apiBaseUrl: URL, targetUrl: URL): boolean {
+  return isApprovedAuthTarget(apiBaseUrl, targetUrl);
+}
+
+export function evaluatePaidInvocationPreflight(
+  config: PaidAuthConfig,
+  input: PaidInvocationPreflightInput
+): PaidInvocationPreflightResult {
+  const policy = findPaidEndpointPolicy(input.endpointPath, input.httpMethod);
+  const endpointAllowlisted = Boolean(policy);
+  const toolAllowlisted = Boolean(policy && policy.toolName === input.toolName);
+  const hostApproved = isApprovedAuthTarget(config.apiBaseUrl, input.targetUrl) && input.targetUrl.pathname === input.endpointPath;
+  const paidModeConfigured = config.paidTools.requested && config.paidTools.apiKeyConfigured;
+  const hardExecutionGateEnabled = isPaidExecutionEnabledInBuild(config);
+
+  return Object.freeze({
+    toolName: input.toolName,
+    endpointPath: input.endpointPath,
+    httpMethod: input.httpMethod,
+    endpointAllowlisted,
+    toolAllowlisted,
+    hostApproved,
+    paidModeConfigured,
+    hardExecutionGateEnabled,
+    authorized: false,
+    denialReason: resolveInvocationDenialReason({
+      config,
+      endpointAllowlisted,
+      toolAllowlisted,
+      hostApproved
+    })
+  });
+}
+
+function resolveInvocationDenialReason(args: {
+  config: PaidAuthConfig;
+  endpointAllowlisted: boolean;
+  toolAllowlisted: boolean;
+  hostApproved: boolean;
+}): PaidInvocationDenialReason {
+  if (!args.endpointAllowlisted) {
+    return "endpoint_not_allowlisted";
+  }
+
+  if (!args.toolAllowlisted) {
+    return "tool_endpoint_mismatch";
+  }
+
+  if (!args.hostApproved) {
+    return "host_not_approved";
+  }
+
+  if (!args.config.paidTools.requested) {
+    return "paid_tools_disabled";
+  }
+
+  if (!args.config.paidTools.apiKeyConfigured) {
+    return "paid_auth_blocked_missing_api_key";
+  }
+
+  // Every structural gate passed. The only thing standing between this call and
+  // a real paid request is the hard paid-execution-disabled build gate, which
+  // is OFF. Fail closed here — no pricing is fetched and no auth header is built.
+  return "paid_execution_disabled";
 }

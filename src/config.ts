@@ -127,7 +127,7 @@ function parsePaidToolsConfig(env: Env): PaidToolsConfig {
   return createPaidToolsConfig({
     requested: true,
     apiKey,
-    status: "configured_no_tools_registered",
+    status: "configured_foundation_no_execution",
     spendPolicy
   });
 }
