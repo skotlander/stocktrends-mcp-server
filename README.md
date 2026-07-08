@@ -153,3 +153,4 @@ These two tools are always registered together (history-beside-latest rule). Eve
 - [Phase 4 Paid ST-IM Foundation (No Execution) Validation Report](docs/PHASE4_PAID_STIM_FOUNDATION_NO_EXECUTION_VALIDATION_REPORT.md)
 - [Phase 4 Paid ST-IM Live Execution Design Memo](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md)
 - [Phase 4 Paid ST-IM Live Execution (Subscription) Implementation Notes](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_SUBSCRIPTION_IMPLEMENTATION_NOTES.md)
+- [Phase 4 Paid ST-IM Live Execution (Subscription) Validation Report](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_SUBSCRIPTION_VALIDATION_REPORT.md)
