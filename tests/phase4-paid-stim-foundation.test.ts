@@ -7,6 +7,7 @@ import {
   evaluatePaidInvocationPreflight,
   evaluatePaidPreflight,
   isPaidExecutionEnabledInBuild,
+  isPaidExecutionRuntimeEnabled,
   PHASE4_PAID_EXECUTION_ENABLED,
   PHASE4_PAID_STIM_FOUNDATION_TOOLS_REGISTERED,
   type PaidAuthConfig,
@@ -89,10 +90,12 @@ describe("Phase 4 paid ST-IM foundation — tool surface", () => {
     await server.close();
   });
 
-  it("keeps the latest/history pair coupled and marks the foundation registered without execution", () => {
+  it("keeps the latest/history pair coupled and marks the build execution-capable", () => {
     expect(PAID_STIM_TOOL_NAMES).toEqual([STIM_LATEST_TOOL_NAME, STIM_HISTORY_TOOL_NAME]);
     expect(PHASE4_PAID_STIM_FOUNDATION_TOOLS_REGISTERED).toBe(true);
-    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(false);
+    // The build now contains the live execution path; runtime env gates still
+    // control whether any call actually executes.
+    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(true);
   });
 });
 
@@ -208,8 +211,11 @@ describe("Phase 4 paid ST-IM foundation — preflight and caps", () => {
     return { apiBaseUrl: config.apiBaseUrl, paidTools: config.paidTools };
   };
 
-  it("keeps the hard build gate off and unable to authorize execution", () => {
-    expect(isPaidExecutionEnabledInBuild(paidAuthConfig())).toBe(false);
+  it("is execution-capable in the build but not runtime-enabled without the execution flag", () => {
+    // Build capability is on; the effective runtime gate stays off because this
+    // config (paid tools + key, no execution flag) never sets executionEnabled.
+    expect(isPaidExecutionEnabledInBuild(paidAuthConfig())).toBe(true);
+    expect(isPaidExecutionRuntimeEnabled(paidAuthConfig())).toBe(false);
   });
 
   it.each([STIM_LATEST_ENDPOINT_PATH, STIM_HISTORY_ENDPOINT_PATH])(
@@ -227,7 +233,7 @@ describe("Phase 4 paid ST-IM foundation — preflight and caps", () => {
       expect(decision.toolAllowlisted).toBe(true);
       expect(decision.hostApproved).toBe(true);
       expect(decision.paidModeConfigured).toBe(true);
-      expect(decision.authorized).toBe(false);
+      expect(decision.structurallyAuthorized).toBe(false);
       expect(decision.denialReason).toBe("paid_execution_disabled");
     }
   );

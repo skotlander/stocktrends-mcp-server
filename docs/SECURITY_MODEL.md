@@ -193,3 +193,151 @@ Before any runtime code is merged:
 - [ ] Confirm no direct database access is introduced.
 - [ ] Confirm x402/wallet behavior remains deferred.
 - [ ] Complete a separate review before any remote HTTP/SSE transport.
+
+## 15. Paid ST-IM Live Execution (Subscription/API-Key)
+
+This section is the reconfirmation required by
+[`PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md`](PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md)
+§17.1 (consistent with the Phase 3 paid-tool process requirement) before live
+subscription/API-key execution of the paired paid ST-IM tools
+(`stocktrends_get_stim_latest` → `GET /v1/stim/latest`,
+`stocktrends_get_stim_history` → `GET /v1/stim/history`) is implemented and
+enabled. It updates and does not relax sections 2–13. Everything in this section
+is validated **mock-only**; no live API call runs in the automated test suite.
+
+### 15.1 Final paid enablement flags (exposure vs. execution split)
+
+Exposure and execution are separate. Both build-level and runtime indicators
+must agree before any call:
+
+- **Build-level (compile-time) kill switch.** `PHASE4_PAID_EXECUTION_ENABLED`
+  and the mirrored spend-policy `paidCallsAuthorizedInThisBuild` are `true` in
+  this build, meaning the build *contains* the execution path. This is a
+  cross-build kill switch only: an older, non-execution build (constant `false`)
+  can never execute regardless of environment. Flipping the constants does not
+  by itself authorize any call.
+- **`STOCKTRENDS_ENABLE_PAID_TOOLS` (exposure).** When `true` with a configured
+  `STOCKTRENDS_API_KEY`, registers the paired paid ST-IM tool *definitions*
+  (total tools become 3). This flag, or the API key, alone never exposes or
+  executes anything.
+- **`STOCKTRENDS_ENABLE_PAID_EXECUTION` (execution).** A distinct runtime flag.
+  Live execution additionally requires it to be `true`. Exposure is independent
+  of it: the tools appear whether or not it is set; only execution is gated.
+- **Fail-closed matrix (enforced and tested):**
+
+  | Configuration | Exposure | Execution |
+  | --- | --- | --- |
+  | API key only | none (1 planning tool) | none |
+  | Paid-tools flag only (no key) | none (1 planning tool) | none |
+  | Execution flag only (no tools flag / no key) | none (1 planning tool) | none |
+  | Paid-tools flag + key, no execution flag | 3 tools | none (`paid_execution_disabled`) |
+  | Paid-tools flag + key + execution flag, no caps | 3 tools | none (`spend_cap_exceeded`) |
+  | Paid-tools flag + key + execution flag + ≥1 nonzero call cap + a budget cap covering the nonzero cost | 3 tools | permitted after full preflight |
+
+  There is no dry-run flag in this build; a not-yet-enabled configuration simply
+  fails closed with `paid_execution_disabled` and sends no request.
+
+### 15.2 API-key handling
+
+- **`X-API-Key` only.** No `Authorization: Bearer` header is ever sent; Bearer
+  fallback remains deferred. No payment header is ever sent.
+- The key is read only under paid mode, kept process-local (non-enumerable), and
+  **never logged and never exposed** in errors, denials, snapshots, or returned
+  data. Redaction (§2, §9) remains in force; tests assert the key never appears.
+- The `X-API-Key` header is constructed **only** inside the coupled paid
+  boundary (`buildPaidAuthHeaders`), **only after every preflight gate passes**,
+  and **only** for the approved origin + a **narrow auth-capable allowlist**
+  (`/v1/stim/latest`, `/v1/stim/history` — see §15.7). Public resources and the
+  `stocktrends_estimate_workflow_cost` planning tool stay credential-free.
+
+### 15.3 Pricing/preflight contract
+
+- Preflight is **mandatory and non-skippable**. Endpoint cost is resolved from a
+  **static, in-repo endpoint pricing policy** mirroring the catalog rule ids
+  (`stim_latest_paid`, `stim_history_paid`); `/v1/cost-estimate` and the
+  `stocktrends_estimate_workflow_cost` planning tool remain **workflow-level
+  planning only** and are **not** endpoint-level authorization inputs.
+- **Static pricing alone cannot authorize a paid call.** Before any auth header
+  is constructed or any ST-IM fetch occurs, the static mirror must pass a
+  **fail-closed reconciliation** against the live `GET /v1/pricing/catalog`
+  metadata (`reconcileStaticPricingWithCatalog`). The catalog is read via the
+  **credential-free** public path (no `X-API-Key`) and is treated as **metadata
+  reconciliation only, never authorization by itself**. Reconciliation fails
+  closed (`pricing_catalog_reconciliation_failed`, no auth/fetch) when the
+  catalog is unavailable, malformed, ambiguous (duplicate rule), missing a
+  required rule id, missing/mismatched cost, has an unsupported unit, or has a
+  mismatched endpoint/rule id. A successful reconciliation is cached per server
+  session; failures are not cached. Catalog-derived cost is used only as an
+  estimated/static cost, **never** as `observed_cost`.
+- Static pricing policy **+** catalog reconciliation **+** local caps are all
+  required together before auth/fetch.
+- Consistent with `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` (default `true`): live
+  execution **fails closed** (`pricing_preflight_unavailable`) whenever the
+  required pricing/preflight determination is unavailable, ambiguous, malformed,
+  or disabled below the required posture. Setting
+  `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT=false` denies execution; it never
+  weakens the requirement for these tools.
+- The static amounts are a conservative **local mirror**; they are nonzero, so a
+  budget cap is effectively mandatory (there is no zero-cost path for ST-IM), and
+  they cannot authorize a call until the catalog confirms them (above).
+
+### 15.4 Cap defaults and accounting
+
+- **Per-session call cap** (`STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION`) and
+  **per-tool call cap** (`STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL`): default `0`,
+  which **denies** all paid calls. Live execution requires explicit nonzero
+  values.
+- **Budget caps** (`STOCKTRENDS_MAX_STC_PER_SESSION` /
+  `STOCKTRENDS_MAX_USD_PER_SESSION`): unset by default. A nonzero cost with no
+  matching budget cap is **denied** (`spend_cap_exceeded`); because ST-IM rules
+  are nonzero, a budget cap is effectively mandatory.
+- **Accounting is in-memory per MCP server session** only. Counters increment
+  **only when an authorized paid call is actually attempted** (after all gates
+  pass and the header is built, immediately before the single fetch); denied or
+  invalid invocations never advance usage. **No persistence**; state **resets on
+  server restart**. History `limit` remains bounded `1`–`2600` and is omitted
+  when unsupplied so the API default (`260`) applies.
+
+### 15.5 Live execution constraints
+
+- **Exactly one fetch** per authorized call. **No automatic retries**, no
+  fallback paid endpoint, no auth-switch retry, no fallback to Bearer or public
+  data. `GET` only, no request body, approved origin + exact allowlisted path
+  only, query params only from validated inputs.
+- **Symbol identity** is sent to the API in **hyphen form** (`SYMBOL-EXCHANGE`,
+  e.g. `AAPL-Q`); the MCP underscore canonical form is never forwarded. The
+  API-returned hyphen `symbol_exchange` is preserved verbatim in `api_data`.
+- **No observed-cost fabrication.** Subscription mode returns no per-call charge
+  and no payment settlement; `observed_cost` and `payment_status` stay `null`.
+  Optional response metadata (`request_id`, pricing-rule, payment-required,
+  accepted methods, quota limit/period) is captured only when present.
+- **402 / x402 deferral.** A `402` is surfaced as safe metadata
+  (`api_payment_required`); nothing is signed, paid, or retried.
+- Errors are deterministic, fail-closed, and secret-free, and clearly indicate
+  whether a fetch/auth occurred.
+
+### 15.6 Explicitly still deferred / out of scope
+
+Unchanged from the conservative baseline and reconfirmed: **no x402, no wallet,
+no OAuth, no remote MCP transport, no `Authorization: Bearer` fallback, no
+payment header, no database access, no control-plane access, and no dynamic
+registration** from `/v1/ai/tools` or `/v1/workflows`. The MCP server remains a
+thin adapter over the front-facing Stock Trends API and never computes or
+reinterprets ST-IM data or produces investment advice. **Live API validation is
+performed only under separate, explicit operator authorization after merge —
+never inside the automated test suite, and never with credentials committed to
+the repository.**
+
+### 15.7 Narrowed credential-bearing endpoint allowlist
+
+The credential-bearing execution boundary can authorize an `X-API-Key` header
+and a fetch for **only** `GET /v1/stim/latest` and `GET /v1/stim/history`. The
+single policy resolver used by the auth-capable path (`findPaidEndpointPolicy`,
+feeding `evaluatePaidPreflight`, `evaluatePaidInvocationPreflight`,
+`buildPaidAuthHeaders`, `assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`)
+reads only `AUTH_CAPABLE_PAID_ENDPOINT_POLICIES`. Broader descriptive metadata
+(`PAID_ENDPOINT_POLICIES`, which still lists the indicators endpoints and may
+list future paid routes) is **not** reachable by the auth path: indicator and
+any other non-promoted endpoints are denied `endpoint_not_allowlisted` before
+any auth header or fetch. Making a future endpoint executable requires an
+explicit, separately reviewed promotion into the auth-capable allowlist.

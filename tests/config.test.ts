@@ -22,9 +22,11 @@ describe("config", () => {
         maxStcPerSession: null,
         maxUsdPerSession: null,
         automaticPaidRetries: false,
-        paidCallsAuthorizedInThisBuild: false
+        paidCallsAuthorizedInThisBuild: true
       }
     });
+    expect(config.paidTools.executionEnabled).toBe(false);
+    expect(config.paidTools.requirePricingPreflight).toBe(true);
   });
 
   it("supports a configured Stock Trends API base URL", () => {
@@ -101,11 +103,69 @@ describe("config", () => {
         maxUsdPerSession: null,
         pricingPreflightRequired: true,
         automaticPaidRetries: false,
-        paidCallsAuthorizedInThisBuild: false
+        paidCallsAuthorizedInThisBuild: true
       }
     });
+    expect(config.paidTools.executionEnabled).toBe(false);
+    expect(config.paidTools.status).toBe("configured_foundation_no_execution");
     expect(config.paidTools.apiKey).toBe("phase3-test-secret");
     expect(JSON.stringify(config.paidTools)).not.toContain("phase3-test-secret");
+  });
+
+  it("enables execution only when the paid-execution flag is set with a key, and never from the flag alone", () => {
+    const enabled = parseConfig({
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+      STOCKTRENDS_API_KEY: "phase4-test-secret",
+      STOCKTRENDS_ENABLE_PAID_EXECUTION: "true",
+      STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION: "2",
+      STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL: "2",
+      STOCKTRENDS_MAX_STC_PER_SESSION: "5"
+    });
+
+    expect(enabled.paidTools.executionEnabled).toBe(true);
+    expect(enabled.paidTools.status).toBe("configured_execution_enabled");
+
+    // Execution flag with paid tools but NO key: blocked, execution impossible.
+    const noKey = parseConfig({
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+      STOCKTRENDS_ENABLE_PAID_EXECUTION: "true"
+    });
+    expect(noKey.paidTools.status).toBe("blocked_missing_api_key");
+    expect(noKey.paidTools.executionEnabled).toBe(false);
+
+    // Execution flag WITHOUT the paid-tools flag: paid mode not requested at all.
+    const noPaidFlag = parseConfig({
+      STOCKTRENDS_ENABLE_PAID_EXECUTION: "true",
+      STOCKTRENDS_API_KEY: "phase4-test-secret"
+    });
+    expect(noPaidFlag.paidTools.requested).toBe(false);
+    expect(noPaidFlag.paidTools.executionEnabled).toBe(false);
+    expect(noPaidFlag.paidTools.status).toBe("disabled");
+  });
+
+  it("defaults the pricing-preflight posture to required and rejects invalid values", () => {
+    const explicitFalse = parseConfig({
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+      STOCKTRENDS_API_KEY: "phase4-test-secret",
+      STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT: "false"
+    });
+    expect(explicitFalse.paidTools.requirePricingPreflight).toBe(false);
+
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+        STOCKTRENDS_API_KEY: "phase4-test-secret",
+        STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT: "maybe"
+      })
+    ).toThrow(StockTrendsMcpError);
+
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
+        STOCKTRENDS_API_KEY: "phase4-test-secret",
+        STOCKTRENDS_ENABLE_PAID_EXECUTION: "sometimes"
+      })
+    ).toThrow(StockTrendsMcpError);
   });
 
   it("rejects unsupported transports", () => {

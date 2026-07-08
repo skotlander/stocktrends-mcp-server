@@ -4,6 +4,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { parseConfig, type Env, type StockTrendsMcpConfig } from "./config.js";
 import { createLogger, safeErrorMessage } from "./logging.js";
+import { createPaidUsageTracker } from "./paidPolicy.js";
+import { createPaidPricingReconciliationState } from "./paidPricing.js";
 import { registerPublicResources } from "./resources/index.js";
 import { StockTrendsClient, type FetchLike } from "./stocktrendsClient.js";
 import { registerPublicPlanningTools } from "./tools/index.js";
@@ -32,12 +34,23 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
     version: SERVER_VERSION
   });
 
+  // Per-server in-memory paid usage accounting. Lives for this server instance
+  // only and resets on restart (no persistence). Shared by the paired paid
+  // ST-IM tools so caps are enforced across both.
+  const paidUsage = createPaidUsageTracker();
+  // Per-server pricing-catalog reconciliation state. A successful reconciliation
+  // is cached for the server lifetime; failures fail the call closed and are not
+  // cached. Resets on restart.
+  const paidReconciliation = createPaidPricingReconciliationState();
+
   registerPublicResources(server, client);
   registerPublicPlanningTools(server, client);
-  // Paired paid ST-IM tool foundation. These register only when paid mode is
-  // explicitly enabled with an API key; even then, every invocation fails
-  // closed at the hard paid-execution-disabled gate (no live paid call).
-  registerPaidStimTools(server, client, config);
+  // Paired paid ST-IM tools. These register only when paid mode is explicitly
+  // enabled with an API key. Live subscription/API-key execution runs only when
+  // the execution flag, authoritative static pricing/preflight, a passing
+  // credential-free catalog reconciliation, and nonzero local caps additionally
+  // pass; otherwise every invocation fails closed.
+  registerPaidStimTools(server, client, config, paidUsage, paidReconciliation);
 
   return {
     server,
@@ -57,6 +70,16 @@ export async function startStdioServer(env: Env = process.env): Promise<void> {
 
   if (config.paidTools.status === "blocked_missing_api_key") {
     logger.warn("STOCKTRENDS_ENABLE_PAID_TOOLS=true but no API key is configured; paid mode is blocked and no paid tools are registered.");
+  }
+
+  if (config.paidTools.status === "configured_execution_enabled") {
+    logger.warn(
+      "Paid ST-IM live execution is ENABLED (STOCKTRENDS_ENABLE_PAID_EXECUTION=true with an API key). Live subscription/API-key calls to GET /v1/stim/latest and /v1/stim/history can occur when static pricing/preflight and nonzero local caps pass. No API key is logged."
+    );
+  } else if (config.paidTools.status === "configured_foundation_no_execution") {
+    logger.warn(
+      "Paid ST-IM tools are exposed but paid execution is NOT enabled (STOCKTRENDS_ENABLE_PAID_EXECUTION is not true); every invocation fails closed with no request."
+    );
   }
 
   await runtime.server.connect(new StdioServerTransport());
