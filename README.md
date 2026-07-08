@@ -4,7 +4,7 @@ Local Model Context Protocol (MCP) adapter for public Stock Trends API resources
 
 ## Current Status
 
-Phase 3 implements a conservative local stdio MCP server for public-resource access plus an internal no-tools paid-auth/spend-control foundation.
+Phase 4 implements a conservative local stdio MCP server for public-resource access plus an internal no-tools paid-auth, spend-control, and pricing/preflight foundation.
 
 Included:
 
@@ -14,7 +14,7 @@ Included:
 - Zero MCP tools by default.
 - Zero MCP prompts.
 - No API key requirement.
-- Internal paid-mode configuration, host enforcement, redaction, paid endpoint policy metadata, and spend/preflight policy scaffolding for a future branch.
+- Internal paid-mode configuration, host enforcement, endpoint allowlist/auth coupling, redaction, paid endpoint policy metadata, spend caps, and mock-only pricing/preflight policy scaffolding for a future branch.
 
 Excluded:
 
@@ -78,8 +78,8 @@ Do not run the stdio server directly in a terminal expecting human-readable outp
 | `STOCKTRENDS_API_KEY` | No | None | Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; never sent for public resources and not used by any current runtime tool path. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | No | `0` | Future local paid-call cap scaffold only; no paid calls are authorized in this build. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | No | `0` | Future per-tool paid-call cap scaffold only; no paid tools are registered in this build. |
-| `STOCKTRENDS_MAX_STC_PER_SESSION` | No | None | Future STC budget placeholder only; no executable pricing preflight exists in this build. |
-| `STOCKTRENDS_MAX_USD_PER_SESSION` | No | None | Future USD budget placeholder only; no executable pricing preflight exists in this build. |
+| `STOCKTRENDS_MAX_STC_PER_SESSION` | No | None | Future STC budget cap scaffold only; no pricing/preflight network calls or paid execution are authorized in this build. |
+| `STOCKTRENDS_MAX_USD_PER_SESSION` | No | None | Future USD budget cap scaffold only; no pricing/preflight network calls or paid execution are authorized in this build. |
 
 ## Public Resources
 
@@ -119,3 +119,4 @@ Candidate intelligence resources remain excluded until no-key public verificatio
 - [Phase 3 Paid Auth Foundation Implementation Notes](docs/PHASE3_PAID_AUTH_FOUNDATION_IMPLEMENTATION_NOTES.md)
 - [Phase 4 First Paid Tool Contract Memo](docs/PHASE4_FIRST_PAID_TOOL_CONTRACT_MEMO.md)
 - [Phase 4 API Contract Confirmation Memo](docs/PHASE4_API_CONTRACT_CONFIRMATION_MEMO.md)
+- [Phase 4 Pricing/Preflight Foundation Implementation Notes](docs/PHASE4_PRICING_PREFLIGHT_FOUNDATION_IMPLEMENTATION_NOTES.md)

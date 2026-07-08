@@ -16,6 +16,10 @@ export type StockTrendsErrorCode =
   | "api_unexpected_status"
   | "paid_auth_unavailable"
   | "paid_policy_denied"
+  | "paid_pricing_missing"
+  | "paid_pricing_non_authoritative"
+  | "paid_spend_cap_exceeded"
+  | "paid_execution_disabled"
   | "unapproved_auth_host"
   | "unapproved_paid_endpoint";
 
@@ -25,6 +29,10 @@ export interface SafeErrorData {
   endpointPath?: string;
   status?: number;
   upstreamRequestId?: string;
+  toolName?: string;
+  httpMethod?: string;
+  denialReason?: string;
+  pricingSource?: string;
   detail?: string;
 }
 
@@ -44,6 +52,10 @@ const ERROR_MESSAGES: Record<StockTrendsErrorCode, string> = {
   api_unexpected_status: "Stock Trends API returned an unexpected status for this public resource.",
   paid_auth_unavailable: "Paid Stock Trends authentication is not available.",
   paid_policy_denied: "Paid Stock Trends call is not authorized by local policy.",
+  paid_pricing_missing: "Paid Stock Trends call is missing required pricing preflight.",
+  paid_pricing_non_authoritative: "Paid Stock Trends pricing preflight is not authoritative enough for execution.",
+  paid_spend_cap_exceeded: "Paid Stock Trends call would exceed local spend policy.",
+  paid_execution_disabled: "Paid Stock Trends execution is disabled in this build.",
   unapproved_auth_host: "Refusing to create auth headers for an unapproved Stock Trends API host.",
   unapproved_paid_endpoint: "Refusing to authorize an unapproved Stock Trends paid endpoint."
 };
