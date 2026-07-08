@@ -12,6 +12,7 @@ import {
   type PaidPreflightEvaluationInput
 } from "../src/paidPolicy.js";
 import { PHASE1_PROMPT_DEFINITIONS, PHASE1_TOOL_DEFINITIONS, PUBLIC_RESOURCES } from "../src/resources/index.js";
+import { PUBLIC_PLANNING_TOOL_DEFINITIONS } from "../src/tools/index.js";
 
 describe("Phase 4 pricing/preflight foundation", () => {
   it("models a complete synthetic preflight decision while paid execution stays disabled", () => {
@@ -245,7 +246,10 @@ describe("Phase 4 pricing/preflight foundation", () => {
 
     const publicResourceEndpoints = PUBLIC_RESOURCES.map((resource) => resource.endpointPath);
     const publicResourceUris = PUBLIC_RESOURCES.map((resource) => resource.uri);
-    const serializedTools = JSON.stringify(PHASE1_TOOL_DEFINITIONS);
+    const serializedTools = JSON.stringify({
+      phase1Tools: PHASE1_TOOL_DEFINITIONS,
+      publicPlanningTools: PUBLIC_PLANNING_TOOL_DEFINITIONS
+    });
     const serializedPrompts = JSON.stringify(PHASE1_PROMPT_DEFINITIONS);
 
     expect(publicResourceEndpoints).not.toContain("/v1/stim/latest");
@@ -257,14 +261,15 @@ describe("Phase 4 pricing/preflight foundation", () => {
     expect(serializedPrompts).toBe("[]");
   });
 
-  it("does not introduce x402, wallet, OAuth, remote, database, or control-plane behavior into the visible MCP surface", () => {
+  it("does not introduce wallet, OAuth, remote, database, control-plane, or paid execution behavior into the visible MCP surface", () => {
     const visibleSurface = JSON.stringify({
       resources: PUBLIC_RESOURCES,
       tools: PHASE1_TOOL_DEFINITIONS,
+      publicPlanningTools: PUBLIC_PLANNING_TOOL_DEFINITIONS,
       prompts: PHASE1_PROMPT_DEFINITIONS
     }).toLowerCase();
 
-    for (const forbidden of ["x402", "wallet", "oauth", "database", "control-plane", "control_plane", "remote", "streamable", "sse"]) {
+    for (const forbidden of ["wallet", "oauth", "database", "control-plane", "control_plane", "remote", "streamable", "sse", "paid_execution_authorized"]) {
       expect(visibleSurface).not.toContain(forbidden);
     }
   });

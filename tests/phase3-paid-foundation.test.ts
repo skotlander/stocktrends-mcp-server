@@ -14,6 +14,7 @@ import {
 import { redactSensitiveText } from "../src/redaction.js";
 import { listPublicResourceUris, PHASE1_PROMPT_DEFINITIONS, PHASE1_TOOL_DEFINITIONS, PUBLIC_RESOURCES } from "../src/resources/index.js";
 import type { FetchLike } from "../src/stocktrendsClient.js";
+import { COST_ESTIMATE_TOOL_NAME, PAID_RUNTIME_TOOL_DEFINITIONS } from "../src/tools/index.js";
 import { connectMcp, jsonResponse } from "./helpers.js";
 
 const EXPECTED_PUBLIC_RESOURCE_URIS = [
@@ -38,18 +39,21 @@ const PAID_ENV_MATRIX: Array<{ label: string; env: Env }> = [
 ];
 
 describe("Phase 3 paid-auth foundation", () => {
-  it.each(PAID_ENV_MATRIX)("keeps resources unchanged and tools/prompts zero when $label", async ({ env }) => {
+  it.each(PAID_ENV_MATRIX)("keeps resources unchanged with one public planning tool and zero prompts when $label", async ({ env }) => {
     const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
     const { client, server } = await connectMcp(fetchFn, env);
 
     const resources = await client.listResources();
+    const tools = await client.listTools();
 
     expect(fetchFn).not.toHaveBeenCalled();
     expect(resources.resources.map((resource) => resource.uri)).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
     expect(listPublicResourceUris()).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
     expect(PHASE1_TOOL_DEFINITIONS).toEqual([]);
+    expect(PAID_RUNTIME_TOOL_DEFINITIONS).toEqual([]);
+    expect(tools.tools.map((tool) => tool.name)).toEqual([COST_ESTIMATE_TOOL_NAME]);
     expect(PHASE1_PROMPT_DEFINITIONS).toEqual([]);
-    expect(client.getServerCapabilities()?.tools).toBeUndefined();
+    expect(client.getServerCapabilities()?.tools).toBeDefined();
     expect(client.getServerCapabilities()?.prompts).toBeUndefined();
 
     await client.close();

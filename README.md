@@ -4,14 +4,14 @@ Local Model Context Protocol (MCP) adapter for public Stock Trends API resources
 
 ## Current Status
 
-Phase 4 implements a conservative local stdio MCP server for public-resource access plus an internal no-tools paid-auth, spend-control, and pricing/preflight foundation.
+Phase 4 implements a conservative local stdio MCP server for public-resource access, one public/free workflow cost-estimate planning tool, and an internal no-paid-tools auth, spend-control, and pricing/preflight foundation.
 
 Included:
 
 - Local stdio transport only.
-- Public Stock Trends API resources only.
+- Public Stock Trends API resources and public/free planning tool only.
 - Fetch-on-request behavior; no startup API fetch is required.
-- Zero MCP tools by default.
+- One public/free MCP planning tool: `stocktrends_estimate_workflow_cost`.
 - Zero MCP prompts.
 - No API key requirement.
 - Internal paid-mode configuration, host enforcement, endpoint allowlist/auth coupling, redaction, paid endpoint policy metadata, spend caps, and mock-only pricing/preflight policy scaffolding for a future branch.
@@ -75,7 +75,7 @@ Do not run the stdio server directly in a terminal expecting human-readable outp
 | `STOCKTRENDS_MCP_TRANSPORT` | No | `stdio` | Only `stdio` is supported. |
 | `STOCKTRENDS_MCP_LOG_LEVEL` | No | `warn` | Normal logs go to stderr, never stdout. |
 | `STOCKTRENDS_ENABLE_PAID_TOOLS` | No | `false` | Enables internal paid-mode configuration only. No paid tools are registered in this build. |
-| `STOCKTRENDS_API_KEY` | No | None | Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; never sent for public resources and not used by any current runtime tool path. |
+| `STOCKTRENDS_API_KEY` | No | None | Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; never sent for public resources or the public cost-estimate planning tool. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | No | `0` | Future local paid-call cap scaffold only; no paid calls are authorized in this build. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | No | `0` | Future per-tool paid-call cap scaffold only; no paid tools are registered in this build. |
 | `STOCKTRENDS_MAX_STC_PER_SESSION` | No | None | Future STC budget cap scaffold only; no pricing/preflight network calls or paid execution are authorized in this build. |
@@ -104,6 +104,16 @@ Candidate intelligence resources remain excluded until no-key public verificatio
 | `GET /v1/intelligence/discovery` | No-key verification returned `503 application/json` during Phase 1 and Phase 2 checks on 2026-07-07. |
 | `GET /v1/intelligence/editorial/latest/preview` | No-key verification returned `503 application/json` during Phase 1 and Phase 2 checks on 2026-07-07. |
 
+## Public Planning Tools
+
+The server registers one public/free MCP planning tool:
+
+| MCP tool | Backing endpoint | Purpose |
+| --- | --- | --- |
+| `stocktrends_estimate_workflow_cost` | `GET /v1/cost-estimate` | Estimate workflow-level cost for budgeting/planning before paid execution. |
+
+This tool sends no API key or auth header, does not call paid endpoints, does not call `/v1/pricing/catalog`, does not authorize paid execution or payment, and does not implement x402, wallet, OAuth, remote MCP, database, or control-plane behavior.
+
 ## Documentation
 
 - [Architecture Decisions](docs/ARCHITECTURE_DECISIONS.md)
@@ -121,3 +131,5 @@ Candidate intelligence resources remain excluded until no-key public verificatio
 - [Phase 4 API Contract Confirmation Memo](docs/PHASE4_API_CONTRACT_CONFIRMATION_MEMO.md)
 - [Phase 4 Pricing/Preflight Foundation Implementation Notes](docs/PHASE4_PRICING_PREFLIGHT_FOUNDATION_IMPLEMENTATION_NOTES.md)
 - [Phase 4 Pricing/Preflight Foundation Validation Report](docs/PHASE4_PRICING_PREFLIGHT_FOUNDATION_VALIDATION_REPORT.md)
+- [Phase 4 Cost Estimate MCP Integration Memo](docs/PHASE4_COST_ESTIMATE_MCP_INTEGRATION_MEMO.md)
+- [Phase 4 Cost Estimate Planning Tool Implementation Notes](docs/PHASE4_COST_ESTIMATE_PLANNING_TOOL_IMPLEMENTATION_NOTES.md)
