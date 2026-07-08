@@ -148,3 +148,4 @@ These two tools are always registered together (history-beside-latest rule). Inv
 - [Phase 4 Cost Estimate Planning Tool Validation Report](docs/PHASE4_COST_ESTIMATE_PLANNING_TOOL_VALIDATION_REPORT.md)
 - [Phase 4 First Paid ST-IM Tool Preflight Design Memo](docs/PHASE4_FIRST_PAID_STIM_TOOL_PREFLIGHT_DESIGN_MEMO.md)
 - [Phase 4 Paid ST-IM Foundation (No Execution) Implementation Notes](docs/PHASE4_PAID_STIM_FOUNDATION_NO_EXECUTION_IMPLEMENTATION_NOTES.md)
+- [Phase 4 Paid ST-IM Foundation (No Execution) Validation Report](docs/PHASE4_PAID_STIM_FOUNDATION_NO_EXECUTION_VALIDATION_REPORT.md)
