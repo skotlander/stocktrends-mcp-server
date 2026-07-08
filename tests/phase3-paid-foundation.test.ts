@@ -7,7 +7,9 @@ import {
   assertPaidEndpointAllowed,
   buildPaidAuthHeaders,
   PAID_ENDPOINT_POLICIES,
-  PHASE3_PAID_TOOLS_REGISTERED
+  PHASE3_PAID_TOOLS_REGISTERED,
+  PHASE4_PAID_EXECUTION_ENABLED,
+  type PaidPreflightEvaluationInput
 } from "../src/paidPolicy.js";
 import { redactSensitiveText } from "../src/redaction.js";
 import { listPublicResourceUris, PHASE1_PROMPT_DEFINITIONS, PHASE1_TOOL_DEFINITIONS, PUBLIC_RESOURCES } from "../src/resources/index.js";
@@ -75,16 +77,19 @@ describe("Phase 3 paid-auth foundation", () => {
     await server.close();
   });
 
-  it("keeps the paid auth helper scoped to the configured Stock Trends API origin", () => {
+  it("keeps the paid auth helper scoped to the configured Stock Trends API origin and policy gate", () => {
     const config = parseConfig({
       STOCKTRENDS_API_BASE_URL: "https://staging.stocktrends.com",
       STOCKTRENDS_ENABLE_PAID_TOOLS: "true",
-      STOCKTRENDS_API_KEY: "phase3-helper-secret"
+      STOCKTRENDS_API_KEY: "phase3-helper-secret",
+      STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION: "1",
+      STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL: "1",
+      STOCKTRENDS_MAX_STC_PER_SESSION: "1"
     });
+    const allowedInput = paidPreflightInput("https://staging.stocktrends.com/v1/stim/latest?symbol_exchange=AAPL_XNAS");
 
-    expect(buildPaidAuthHeaders(config, new URL("https://staging.stocktrends.com/v1/stim/latest?symbol_exchange=AAPL_XNAS"))).toEqual({
-      "X-API-Key": "phase3-helper-secret"
-    });
+    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(false);
+    expect(() => buildPaidAuthHeaders(config, allowedInput)).toThrow(StockTrendsMcpError);
 
     for (const target of [
       "https://api.stocktrends.com/v1/stim/latest",
@@ -93,10 +98,10 @@ describe("Phase 3 paid-auth foundation", () => {
       "https://user:pass@staging.stocktrends.com/v1/stim/latest",
       "https://staging.stocktrends.com/v1/stim/latest#fragment"
     ]) {
-      expect(() => buildPaidAuthHeaders(config, new URL(target))).toThrow(StockTrendsMcpError);
+      expect(() => buildPaidAuthHeaders(config, paidPreflightInput(target))).toThrow(StockTrendsMcpError);
 
       try {
-        buildPaidAuthHeaders(config, new URL(target));
+        buildPaidAuthHeaders(config, paidPreflightInput(target));
       } catch (error) {
         expect(serializedSafeError(error)).not.toContain("phase3-helper-secret");
       }
@@ -108,10 +113,10 @@ describe("Phase 3 paid-auth foundation", () => {
       STOCKTRENDS_API_KEY: "key-alone-must-not-enable-auth"
     });
 
-    expect(() => buildPaidAuthHeaders(config, new URL("https://api.stocktrends.com/v1/stim/latest"))).toThrow(StockTrendsMcpError);
+    expect(() => buildPaidAuthHeaders(config, paidPreflightInput("https://api.stocktrends.com/v1/stim/latest"))).toThrow(StockTrendsMcpError);
 
     try {
-      buildPaidAuthHeaders(config, new URL("https://api.stocktrends.com/v1/stim/latest"));
+      buildPaidAuthHeaders(config, paidPreflightInput("https://api.stocktrends.com/v1/stim/latest"));
     } catch (error) {
       expect(serializedSafeError(error)).not.toContain("key-alone-must-not-enable-auth");
     }
@@ -125,7 +130,10 @@ describe("Phase 3 paid-auth foundation", () => {
       "/v1/indicators/latest",
       "/v1/indicators/history"
     ]);
+    expect(PAID_ENDPOINT_POLICIES.every((policy) => policy.httpMethod === "GET")).toBe(true);
     expect(PAID_ENDPOINT_POLICIES.every((policy) => policy.requiresPricingPreflight)).toBe(true);
+    expect(PAID_ENDPOINT_POLICIES.find((policy) => policy.endpointPath === "/v1/stim/latest")?.pricingRuleId).toBe("stim_latest_paid");
+    expect(PAID_ENDPOINT_POLICIES.find((policy) => policy.endpointPath === "/v1/stim/history")?.pricingRuleId).toBe("stim_history_paid");
     expect(PAID_ENDPOINT_POLICIES.find((policy) => policy.endpointPath === "/v1/stim/latest")?.requiredHistoryPair).toBe(
       "stocktrends_get_stim_history"
     );
@@ -170,7 +178,7 @@ describe("Phase 3 paid-auth foundation", () => {
       assertPaidCallPolicySatisfied(config, paidCallAttempt);
     } catch (error) {
       expect(error).toMatchObject({
-        errorCode: "paid_policy_denied"
+        errorCode: "paid_execution_disabled"
       });
       expect(serializedSafeError(error)).not.toContain("phase3-policy-secret");
     }
@@ -231,6 +239,23 @@ describe("Phase 3 paid-auth foundation", () => {
     }
   });
 });
+
+function paidPreflightInput(target: string): PaidPreflightEvaluationInput {
+  return {
+    toolName: "stocktrends_get_stim_latest",
+    endpointPath: "/v1/stim/latest",
+    httpMethod: "GET",
+    targetUrl: new URL(target),
+    costEstimate: {
+      amount: 0.25,
+      unit: "STC",
+      authoritative: true,
+      pricingSource: "pricing_catalog",
+      pricingRuleId: "stim_latest_paid",
+      fetchedAt: "2026-07-07T00:00:00.000Z"
+    }
+  };
+}
 
 function serializedSafeError(error: unknown): string {
   if (error instanceof StockTrendsMcpError) {
