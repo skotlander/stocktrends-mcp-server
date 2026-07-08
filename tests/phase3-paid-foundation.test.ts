@@ -39,19 +39,28 @@ const PAID_ENV_MATRIX: Array<{ label: string; env: Env }> = [
 ];
 
 describe("Phase 3 paid-auth foundation", () => {
-  it.each(PAID_ENV_MATRIX)("keeps resources unchanged with one public planning tool and zero prompts when $label", async ({ env }) => {
+  it.each(PAID_ENV_MATRIX)("keeps resources unchanged with the public planning tool and zero prompts when $label", async ({ env }) => {
     const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
     const { client, server } = await connectMcp(fetchFn, env);
 
     const resources = await client.listResources();
     const tools = await client.listTools();
 
+    // The paired paid ST-IM tool *definitions* are only exposed when paid mode
+    // is enabled with an API key (Phase 4 foundation, no-execution). Every other
+    // env keeps the single public planning tool. See
+    // PHASE4_PAID_STIM_FOUNDATION_NO_EXECUTION_IMPLEMENTATION_NOTES.md.
+    const paidStimExposed = env.STOCKTRENDS_ENABLE_PAID_TOOLS === "true" && Boolean(env.STOCKTRENDS_API_KEY);
+    const expectedToolNames = paidStimExposed
+      ? [COST_ESTIMATE_TOOL_NAME, "stocktrends_get_stim_latest", "stocktrends_get_stim_history"].sort()
+      : [COST_ESTIMATE_TOOL_NAME];
+
     expect(fetchFn).not.toHaveBeenCalled();
     expect(resources.resources.map((resource) => resource.uri)).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
     expect(listPublicResourceUris()).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
     expect(PHASE1_TOOL_DEFINITIONS).toEqual([]);
     expect(PAID_RUNTIME_TOOL_DEFINITIONS).toEqual([]);
-    expect(tools.tools.map((tool) => tool.name)).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual(expectedToolNames);
     expect(PHASE1_PROMPT_DEFINITIONS).toEqual([]);
     expect(client.getServerCapabilities()?.tools).toBeDefined();
     expect(client.getServerCapabilities()?.prompts).toBeUndefined();

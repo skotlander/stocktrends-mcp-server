@@ -7,6 +7,7 @@ import { createLogger, safeErrorMessage } from "./logging.js";
 import { registerPublicResources } from "./resources/index.js";
 import { StockTrendsClient, type FetchLike } from "./stocktrendsClient.js";
 import { registerPublicPlanningTools } from "./tools/index.js";
+import { registerPaidStimTools } from "./tools/stimTools.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
 export const SERVER_VERSION = "1.0.0";
@@ -33,6 +34,10 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
 
   registerPublicResources(server, client);
   registerPublicPlanningTools(server, client);
+  // Paired paid ST-IM tool foundation. These register only when paid mode is
+  // explicitly enabled with an API key; even then, every invocation fails
+  // closed at the hard paid-execution-disabled gate (no live paid call).
+  registerPaidStimTools(server, client, config);
 
   return {
     server,
