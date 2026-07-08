@@ -20,7 +20,9 @@ describe("Phase 4 pricing/preflight foundation", () => {
     const input = stimLatestInput();
     const decision = evaluatePaidPreflight(config, input);
 
-    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(false);
+    // The build is now execution-capable, but this config has no runtime
+    // execution flag, so the terminal gate still denies with paid_execution_disabled.
+    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(true);
     expect(decision).toMatchObject({
       toolName: "stocktrends_get_stim_latest",
       endpointPath: "/v1/stim/latest",
@@ -140,7 +142,7 @@ describe("Phase 4 pricing/preflight foundation", () => {
     });
     const decision = evaluatePaidPreflight(config, input);
 
-    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(false);
+    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(true);
     expect(decision.denialReason).toBe("cap_exceeded");
     expect(decision.capState.usdBudgetCap).toMatchObject({
       limit: 1,

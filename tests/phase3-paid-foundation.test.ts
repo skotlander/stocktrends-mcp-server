@@ -101,7 +101,9 @@ describe("Phase 3 paid-auth foundation", () => {
     });
     const allowedInput = paidPreflightInput("https://staging.stocktrends.com/v1/stim/latest?symbol_exchange=AAPL_XNAS");
 
-    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(false);
+    // Build is execution-capable, but this config sets no runtime execution
+    // flag, so the coupled auth boundary still refuses to construct a header.
+    expect(PHASE4_PAID_EXECUTION_ENABLED).toBe(true);
     expect(() => buildPaidAuthHeaders(config, allowedInput)).toThrow(StockTrendsMcpError);
 
     for (const target of [
@@ -175,7 +177,7 @@ describe("Phase 3 paid-auth foundation", () => {
       maxPaidCallsPerSession: 1,
       maxPaidCallsPerTool: 1,
       automaticPaidRetries: false,
-      paidCallsAuthorizedInThisBuild: false
+      paidCallsAuthorizedInThisBuild: true
     });
 
     const paidCallAttempt = {

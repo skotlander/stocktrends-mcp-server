@@ -4,27 +4,27 @@ Local Model Context Protocol (MCP) adapter for public Stock Trends API resources
 
 ## Current Status
 
-Phase 4 implements a conservative local stdio MCP server for public-resource access, one public/free workflow cost-estimate planning tool, an internal auth/spend-control/pricing-preflight foundation, and the paired paid ST-IM tool *foundation* with paid execution hard-disabled.
+Phase 4 implements a conservative local stdio MCP server for public-resource access, one public/free workflow cost-estimate planning tool, an internal auth/spend-control/pricing-preflight foundation, and the paired paid ST-IM tools with gated live subscription/API-key execution.
 
 Included:
 
 - Local stdio transport only.
-- Public Stock Trends API resources and public/free planning tool only.
+- Public Stock Trends API resources and public/free planning tool.
 - Fetch-on-request behavior; no startup API fetch is required.
 - One public/free MCP planning tool: `stocktrends_estimate_workflow_cost`.
-- Conditional paired paid ST-IM tool *definitions* (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`) that are exposed only when paid mode is explicitly enabled with an API key, and whose every invocation fails closed at the hard paid-execution-disabled gate (no live paid call, no auth header). See the [Conditional Paid ST-IM Tool Foundation](#conditional-paid-st-im-tool-foundation-no-execution) section.
+- Conditional paired paid ST-IM tools (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`), exposed only when paid mode is explicitly enabled with an API key. Live subscription/API-key execution (`X-API-Key` only) runs **only** behind the two-gate policy — the paid-tools flag, an API key, the distinct `STOCKTRENDS_ENABLE_PAID_EXECUTION` runtime flag, authoritative static pricing/preflight, and nonzero local caps — and otherwise fails closed with no request and no auth/payment header. See the [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution) section.
 - Zero MCP prompts.
 - No API key requirement for the default/public surface.
-- Internal paid-mode configuration, host enforcement, endpoint allowlist/auth coupling, redaction, paid endpoint policy metadata, spend caps, and mock-only pricing/preflight policy scaffolding for a future branch.
+- Internal paid-mode configuration, host enforcement, endpoint/tool allowlist coupling, `X-API-Key`-only auth construction, redaction, static endpoint pricing policy, in-memory per-session spend caps, single-attempt fetch with no retries, and mock-only validation.
 
 Excluded:
 
-- Live paid execution (the hard paid-execution-disabled gate remains active).
-- Paid endpoints.
-- API-key-required calls or API-key forwarding.
-- x402, wallets, payment retries, and OAuth.
+- Live API validation in automated tests (execution paths exist in code but are exercised mock-only; live validation requires separate operator authorization after merge).
+- x402, wallets, payment retries, payment headers, and OAuth.
+- `Authorization: Bearer` fallback.
 - Remote HTTP/SSE/Streamable HTTP hosting.
 - Database or control-plane access.
+- Dynamic MCP registration from `/v1/ai/tools` or `/v1/workflows`.
 - Intelligence Agent recomputation, generated guidance, generated research, or a parallel reasoning layer.
 
 ## Authority Boundary
@@ -75,12 +75,14 @@ Do not run the stdio server directly in a terminal expecting human-readable outp
 | `STOCKTRENDS_API_BASE_URL` | No | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. |
 | `STOCKTRENDS_MCP_TRANSPORT` | No | `stdio` | Only `stdio` is supported. |
 | `STOCKTRENDS_MCP_LOG_LEVEL` | No | `warn` | Normal logs go to stderr, never stdout. |
-| `STOCKTRENDS_ENABLE_PAID_TOOLS` | No | `false` | When `true` with a configured API key, exposes the paired paid ST-IM tool *definitions* only. Paid execution stays hard-disabled: every invocation fails closed and sends no request. |
-| `STOCKTRENDS_API_KEY` | No | None | Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local and never sent — not for public resources, not for the cost-estimate planning tool, and not for the paid ST-IM foundation tools (execution is disabled). |
-| `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | No | `0` | Future local paid-call cap scaffold only; no paid calls are authorized in this build. |
-| `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | No | `0` | Future per-tool paid-call cap scaffold only; no paid tools are registered in this build. |
-| `STOCKTRENDS_MAX_STC_PER_SESSION` | No | None | Future STC budget cap scaffold only; no pricing/preflight network calls or paid execution are authorized in this build. |
-| `STOCKTRENDS_MAX_USD_PER_SESSION` | No | None | Future USD budget cap scaffold only; no pricing/preflight network calls or paid execution are authorized in this build. |
+| `STOCKTRENDS_ENABLE_PAID_TOOLS` | No | `false` | Exposure flag. When `true` with a configured API key, exposes the paired paid ST-IM tool *definitions* (total tools become 3). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. |
+| `STOCKTRENDS_ENABLE_PAID_EXECUTION` | No | `false` | Execution flag. Live subscription/API-key calls to `GET /v1/stim/latest` and `GET /v1/stim/history` require this to be `true` **and** the paid-tools flag, an API key, authoritative static pricing/preflight, and ≥1 nonzero call cap plus a budget cap covering the nonzero cost. The flag alone (no tools flag / no key) exposes and executes nothing. |
+| `STOCKTRENDS_API_KEY` | No | None | Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as `X-API-Key` to the approved origin + allowlisted paid ST-IM endpoint after every gate passes. Never sent for public resources or the cost-estimate planning tool; never logged or exposed in errors/denials/returned data. |
+| `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` | No | `true` | Pricing/preflight posture. Preflight is mandatory; setting this `false` denies paid execution (fail closed) rather than weakening the requirement. |
+| `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | No | `0` | Per-session paid-call cap. `0` denies all paid calls; live execution requires an explicit nonzero value. In-memory per session; resets on restart. |
+| `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | No | `0` | Per-tool paid-call cap. `0` denies; requires an explicit nonzero value. In-memory per session; resets on restart. |
+| `STOCKTRENDS_MAX_STC_PER_SESSION` | No | None | STC budget cap. A nonzero STC cost with no STC cap is denied. Because ST-IM rules are nonzero, a budget cap is effectively mandatory. |
+| `STOCKTRENDS_MAX_USD_PER_SESSION` | No | None | USD budget cap. A nonzero USD cost with no USD cap is denied. |
 
 ## Public Resources
 
@@ -115,16 +117,16 @@ The server registers one public/free MCP planning tool:
 
 This tool sends no API key or auth header, does not call paid endpoints, does not call `/v1/pricing/catalog`, does not authorize paid execution or payment, and does not implement x402, wallet, OAuth, remote MCP, database, or control-plane behavior.
 
-## Conditional Paid ST-IM Tool Foundation (no execution)
+## Conditional Paid ST-IM Tools (subscription/API-key execution)
 
-When `STOCKTRENDS_ENABLE_PAID_TOOLS=true` and `STOCKTRENDS_API_KEY` is configured, the server additionally registers the paired paid ST-IM tool *definitions* (total tools become 3). Otherwise only the public planning tool is registered.
+When `STOCKTRENDS_ENABLE_PAID_TOOLS=true` and `STOCKTRENDS_API_KEY` is configured, the server additionally registers the paired paid ST-IM tool *definitions* (total tools become 3). Otherwise only the public planning tool is registered. Exposure is independent of the execution flag.
 
-| MCP tool | Intended endpoint | Status in this build |
+| MCP tool | Endpoint | Execution |
 | --- | --- | --- |
-| `stocktrends_get_stim_latest` | `GET /v1/stim/latest` | Foundation only; invocation fails closed at the hard paid-execution-disabled gate. |
-| `stocktrends_get_stim_history` | `GET /v1/stim/history` | Foundation only; invocation fails closed at the hard paid-execution-disabled gate. |
+| `stocktrends_get_stim_latest` | `GET /v1/stim/latest` | Live subscription/API-key call only when all gates pass; otherwise fails closed. |
+| `stocktrends_get_stim_history` | `GET /v1/stim/history` | Live subscription/API-key call only when all gates pass; otherwise fails closed. |
 
-These two tools are always registered together (history-beside-latest rule). Invocation validates input strictly (symbol identity with `symbol_exchange` precedence, exchange in `N,Q,A,B,T,I`, history date/limit bounds) before any preflight, then returns a deterministic fail-closed response that makes explicit: `paid_execution_authorized: false`, no API request was sent, and no auth or payment header was constructed. No real `X-API-Key` can be sent in this build. See the [Phase 4 Paid ST-IM Foundation (No Execution) Implementation Notes](docs/PHASE4_PAID_STIM_FOUNDATION_NO_EXECUTION_IMPLEMENTATION_NOTES.md).
+These two tools are always registered together (history-beside-latest rule). Every invocation validates input strictly (symbol identity with `symbol_exchange` precedence, exchange in `N,Q,A,B,T,I`, history date/`limit` bounds `1`–`2600`) **before** any preflight, auth, or fetch. A live call occurs **only** when `STOCKTRENDS_ENABLE_PAID_EXECUTION=true`, an API key is configured, authoritative static pricing/preflight resolves, and nonzero local caps (plus a budget cap covering the nonzero cost) pass — then exactly one `GET` is sent with `X-API-Key` only (no `Authorization: Bearer`, no payment header, no automatic retries, no x402). The symbol identity is sent to the API in hyphen form (`SYMBOL-EXCHANGE`); the underscore canonical form is never forwarded. Successful responses are wrapped with transparent MCP metadata (`paid_execution_authorized: true`, `api_request_sent: true`, `auth_header_sent: true`, `payment_header_sent: false`, `observed_cost: null`, `payment_status: null`) and preserve the API payload verbatim in `api_data`. Any gate failure returns a deterministic, secret-free denial with `paid_execution_authorized: false` and no request/auth/payment header. Automated validation is **mock-only**; no live API call runs in tests. See the [Phase 4 Paid ST-IM Live Execution (Subscription) Implementation Notes](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_SUBSCRIPTION_IMPLEMENTATION_NOTES.md) and [`docs/SECURITY_MODEL.md` §15](docs/SECURITY_MODEL.md).
 
 ## Documentation
 
@@ -150,3 +152,4 @@ These two tools are always registered together (history-beside-latest rule). Inv
 - [Phase 4 Paid ST-IM Foundation (No Execution) Implementation Notes](docs/PHASE4_PAID_STIM_FOUNDATION_NO_EXECUTION_IMPLEMENTATION_NOTES.md)
 - [Phase 4 Paid ST-IM Foundation (No Execution) Validation Report](docs/PHASE4_PAID_STIM_FOUNDATION_NO_EXECUTION_VALIDATION_REPORT.md)
 - [Phase 4 Paid ST-IM Live Execution Design Memo](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md)
+- [Phase 4 Paid ST-IM Live Execution (Subscription) Implementation Notes](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_SUBSCRIPTION_IMPLEMENTATION_NOTES.md)

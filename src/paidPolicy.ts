@@ -1,6 +1,10 @@
 import { StockTrendsMcpError } from "./errors.js";
 
-export type PaidModeStatus = "disabled" | "blocked_missing_api_key" | "configured_foundation_no_execution";
+export type PaidModeStatus =
+  | "disabled"
+  | "blocked_missing_api_key"
+  | "configured_foundation_no_execution"
+  | "configured_execution_enabled";
 export type PaidHttpMethod = "GET";
 export type PaidPricingSource = "pricing_catalog" | "cost_estimate" | "explicit_test_estimate";
 export type PaidCostUnit = "STC" | "USD";
@@ -30,6 +34,15 @@ export interface PaidToolsConfig {
   apiKeyConfigured: boolean;
   status: PaidModeStatus;
   runtimeToolsRegistered: false;
+  // Runtime paid-execution flag (STOCKTRENDS_ENABLE_PAID_EXECUTION). Only ever
+  // `true` when paid mode is requested with a configured API key AND the
+  // operator explicitly enabled execution. Never enabled by the paid-tools
+  // flag or the API key alone.
+  executionEnabled: boolean;
+  // Runtime pricing/preflight posture (STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT).
+  // Defaults to `true`; live paid ST-IM execution fails closed when this is
+  // below the required posture.
+  requirePricingPreflight: boolean;
   spendPolicy: PaidSpendPolicy;
   readonly apiKey?: string;
 }
@@ -123,13 +136,27 @@ export interface PaidPreflightDecision {
 }
 
 export const PHASE3_PAID_TOOLS_REGISTERED = false;
-export const PHASE4_PAID_EXECUTION_ENABLED = false;
 
-// The paired paid ST-IM tool *definitions* are registered as MCP tools in this
-// foundation build, but they never perform paid execution: every invocation
-// fails closed at the hard paid-execution-disabled gate below. This constant
-// documents that the tool surface exists; it does NOT authorize execution.
+// Compile-time / build-level paid-execution capability. This build CONTAINS the
+// live subscription/API-key execution path for the paired paid ST-IM tools, so
+// the constant is `true`. Flipping it on does NOT by itself authorize any call:
+// every live call additionally requires the runtime execution flag
+// (STOCKTRENDS_ENABLE_PAID_EXECUTION=true), the paid-tools flag, an API key,
+// authoritative static pricing/preflight, and at least one satisfied nonzero
+// cap. Its operative role is a cross-build kill switch: an older, non-execution
+// build (constant `false`) can never execute regardless of environment.
+export const PHASE4_PAID_EXECUTION_ENABLED = true;
+
+// The paired paid ST-IM tool *definitions* are registered as MCP tools when
+// paid mode is enabled with an API key. Execution occurs only when every gate
+// in `evaluatePaidPreflight` passes; otherwise every invocation fails closed.
 export const PHASE4_PAID_STIM_FOUNDATION_TOOLS_REGISTERED = true;
+
+// The build-level authorization constant mirrored into the default spend
+// policy. `paidCallsAuthorizedInThisBuild` reflects the execution-capable state
+// of the build (equal to PHASE4_PAID_EXECUTION_ENABLED); it is one of the two
+// build-level indicators that must agree with the runtime gates before a call.
+export const PAID_CALLS_AUTHORIZED_IN_THIS_BUILD = PHASE4_PAID_EXECUTION_ENABLED;
 
 export const DEFAULT_PAID_SPEND_POLICY: PaidSpendPolicy = Object.freeze({
   pricingPreflightRequired: true,
@@ -138,7 +165,7 @@ export const DEFAULT_PAID_SPEND_POLICY: PaidSpendPolicy = Object.freeze({
   maxStcPerSession: null,
   maxUsdPerSession: null,
   automaticPaidRetries: false,
-  paidCallsAuthorizedInThisBuild: false
+  paidCallsAuthorizedInThisBuild: PAID_CALLS_AUTHORIZED_IN_THIS_BUILD
 });
 
 export const PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.freeze([
@@ -187,12 +214,20 @@ export function createPaidToolsConfig(input: {
   apiKey?: string;
   status: PaidModeStatus;
   spendPolicy?: PaidSpendPolicy;
+  executionEnabled?: boolean;
+  requirePricingPreflight?: boolean;
 }): PaidToolsConfig {
+  // Execution can only be enabled when paid mode is fully configured (requested
+  // + API key). The flag alone, or with a missing key, must never enable it.
+  const executionEnabled = Boolean(input.executionEnabled && input.requested && input.apiKey);
+
   const config: PaidToolsConfig = {
     requested: input.requested,
     apiKeyConfigured: Boolean(input.apiKey),
     status: input.status,
     runtimeToolsRegistered: PHASE3_PAID_TOOLS_REGISTERED,
+    executionEnabled,
+    requirePricingPreflight: input.requirePricingPreflight ?? true,
     spendPolicy: input.spendPolicy ?? DEFAULT_PAID_SPEND_POLICY
   };
 
@@ -287,6 +322,14 @@ export function evaluatePaidPreflight(config: PaidAuthConfig, input: PaidPreflig
     return deny(baseDecision, "paid_auth_unavailable");
   }
 
+  // Pricing/preflight posture must remain at (or above) its required default.
+  // If an operator disables it (STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT=false),
+  // live paid ST-IM execution fails closed rather than proceeding without a
+  // mandatory preflight.
+  if (!config.paidTools.requirePricingPreflight) {
+    return deny(baseDecision, "missing_pricing");
+  }
+
   if (!hasValidEstimatedCost(input.costEstimate)) {
     return deny(baseDecision, "missing_pricing");
   }
@@ -299,7 +342,16 @@ export function evaluatePaidPreflight(config: PaidAuthConfig, input: PaidPreflig
     return deny(baseDecision, "cap_exceeded");
   }
 
-  if (!config.paidTools.spendPolicy.paidCallsAuthorizedInThisBuild || !PHASE4_PAID_EXECUTION_ENABLED) {
+  // Terminal execution gate: both build-level indicators AND the runtime
+  // execution flag must agree. The runtime flag is deliberately evaluated here,
+  // after pricing/cap gates, so a denied decision still carries authoritative
+  // cost and cap-state metadata; ordering never weakens fail-closed behavior
+  // because no auth header or fetch happens on any denial.
+  if (
+    !config.paidTools.executionEnabled ||
+    !config.paidTools.spendPolicy.paidCallsAuthorizedInThisBuild ||
+    !PHASE4_PAID_EXECUTION_ENABLED
+  ) {
     return deny(baseDecision, "paid_execution_disabled");
   }
 
@@ -517,13 +569,24 @@ export interface PaidInvocationPreflightResult {
   toolAllowlisted: boolean;
   hostApproved: boolean;
   paidModeConfigured: boolean;
+  executionRuntimeEnabled: boolean;
   hardExecutionGateEnabled: boolean;
-  authorized: false;
-  denialReason: PaidInvocationDenialReason;
+  // `true` only when every structural gate passes (endpoint/tool/host allowlist,
+  // paid mode configured, API key present, runtime execution flag). It does NOT
+  // authorize a call: pricing/cap gates in `evaluatePaidPreflight` still apply.
+  structurallyAuthorized: boolean;
+  denialReason: PaidInvocationDenialReason | null;
 }
 
+// Build-level execution capability only (both compile-time indicators).
 export function isPaidExecutionEnabledInBuild(config: PaidAuthConfig): boolean {
   return PHASE4_PAID_EXECUTION_ENABLED && config.paidTools.spendPolicy.paidCallsAuthorizedInThisBuild;
+}
+
+// Effective execution gate: build capability AND the runtime execution flag.
+// Still not a per-call authorization — pricing/caps are enforced separately.
+export function isPaidExecutionRuntimeEnabled(config: PaidAuthConfig): boolean {
+  return isPaidExecutionEnabledInBuild(config) && config.paidTools.executionEnabled;
 }
 
 export function getPaidEndpointPolicy(endpointPath: string, httpMethod: PaidHttpMethod = "GET"): PaidEndpointPolicy | undefined {
@@ -543,7 +606,14 @@ export function evaluatePaidInvocationPreflight(
   const toolAllowlisted = Boolean(policy && policy.toolName === input.toolName);
   const hostApproved = isApprovedAuthTarget(config.apiBaseUrl, input.targetUrl) && input.targetUrl.pathname === input.endpointPath;
   const paidModeConfigured = config.paidTools.requested && config.paidTools.apiKeyConfigured;
-  const hardExecutionGateEnabled = isPaidExecutionEnabledInBuild(config);
+  const executionRuntimeEnabled = isPaidExecutionRuntimeEnabled(config);
+  const denialReason = resolveInvocationDenialReason({
+    config,
+    endpointAllowlisted,
+    toolAllowlisted,
+    hostApproved,
+    executionRuntimeEnabled
+  });
 
   return Object.freeze({
     toolName: input.toolName,
@@ -553,14 +623,10 @@ export function evaluatePaidInvocationPreflight(
     toolAllowlisted,
     hostApproved,
     paidModeConfigured,
-    hardExecutionGateEnabled,
-    authorized: false,
-    denialReason: resolveInvocationDenialReason({
-      config,
-      endpointAllowlisted,
-      toolAllowlisted,
-      hostApproved
-    })
+    executionRuntimeEnabled,
+    hardExecutionGateEnabled: executionRuntimeEnabled,
+    structurallyAuthorized: denialReason === null,
+    denialReason
   });
 }
 
@@ -569,7 +635,8 @@ function resolveInvocationDenialReason(args: {
   endpointAllowlisted: boolean;
   toolAllowlisted: boolean;
   hostApproved: boolean;
-}): PaidInvocationDenialReason {
+  executionRuntimeEnabled: boolean;
+}): PaidInvocationDenialReason | null {
   if (!args.endpointAllowlisted) {
     return "endpoint_not_allowlisted";
   }
@@ -590,8 +657,63 @@ function resolveInvocationDenialReason(args: {
     return "paid_auth_blocked_missing_api_key";
   }
 
-  // Every structural gate passed. The only thing standing between this call and
-  // a real paid request is the hard paid-execution-disabled build gate, which
-  // is OFF. Fail closed here — no pricing is fetched and no auth header is built.
-  return "paid_execution_disabled";
+  // Exposure without the runtime execution flag (or an execution-incapable
+  // build): tools are visible but every call fails closed here — no pricing is
+  // resolved and no auth header is built.
+  if (!args.executionRuntimeEnabled) {
+    return "paid_execution_disabled";
+  }
+
+  // Every structural gate passed and execution is runtime-enabled. Pricing and
+  // cap gates in `evaluatePaidPreflight` still decide whether a call proceeds.
+  return null;
+}
+
+// --- In-memory per-session paid usage accounting ---
+//
+// Counters live for the lifetime of a single MCP server instance (single-user,
+// local stdio) and reset on restart. There is NO persistence. A counter is
+// incremented only when an authorized paid call is actually attempted (i.e.
+// after every gate passed and the auth header was built, immediately before the
+// single fetch), so denied/invalid invocations never advance usage.
+
+export interface PaidUsageTracker {
+  paidCallsThisSession: number;
+  paidCallsByTool: Record<string, number>;
+  stcSpentThisSession: number;
+  usdSpentThisSession: number;
+}
+
+export function createPaidUsageTracker(): PaidUsageTracker {
+  return {
+    paidCallsThisSession: 0,
+    paidCallsByTool: {},
+    stcSpentThisSession: 0,
+    usdSpentThisSession: 0
+  };
+}
+
+export function snapshotPaidUsage(tracker: PaidUsageTracker): PaidUsageSnapshot {
+  return {
+    paidCallsThisSession: tracker.paidCallsThisSession,
+    paidCallsByTool: { ...tracker.paidCallsByTool },
+    stcSpentThisSession: tracker.stcSpentThisSession,
+    usdSpentThisSession: tracker.usdSpentThisSession
+  };
+}
+
+// Record an attempted authorized paid call. Increments the per-session and
+// per-tool call counters and the matching budget counter for the estimated
+// cost. Call this exactly once per authorized fetch attempt, before `fetch`.
+export function recordPaidCallAttempt(tracker: PaidUsageTracker, toolName: string, estimatedCost: PaidCostEstimate | null): void {
+  tracker.paidCallsThisSession += 1;
+  tracker.paidCallsByTool[toolName] = (tracker.paidCallsByTool[toolName] ?? 0) + 1;
+
+  if (estimatedCost && Number.isFinite(estimatedCost.amount) && estimatedCost.amount > 0) {
+    if (estimatedCost.unit === "STC") {
+      tracker.stcSpentThisSession += estimatedCost.amount;
+    } else if (estimatedCost.unit === "USD") {
+      tracker.usdSpentThisSession += estimatedCost.amount;
+    }
+  }
 }

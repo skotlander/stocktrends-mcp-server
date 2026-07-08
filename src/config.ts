@@ -104,7 +104,7 @@ function parseApiBaseUrl(value: string | undefined): URL {
 }
 
 function parsePaidToolsConfig(env: Env): PaidToolsConfig {
-  const paidToolsRequested = parsePaidToolsEnabled(env.STOCKTRENDS_ENABLE_PAID_TOOLS);
+  const paidToolsRequested = parsePaidToolsEnabled(env.STOCKTRENDS_ENABLE_PAID_TOOLS, "STOCKTRENDS_ENABLE_PAID_TOOLS");
 
   if (!paidToolsRequested) {
     return createPaidToolsConfig({
@@ -114,25 +114,50 @@ function parsePaidToolsConfig(env: Env): PaidToolsConfig {
   }
 
   const spendPolicy = parsePaidSpendPolicy(env);
+  const requirePricingPreflight = parseRequirePricingPreflight(env.STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT);
+  const executionRequested = parsePaidToolsEnabled(env.STOCKTRENDS_ENABLE_PAID_EXECUTION, "STOCKTRENDS_ENABLE_PAID_EXECUTION");
   const apiKey = env.STOCKTRENDS_API_KEY?.trim();
 
   if (!apiKey) {
+    // Paid-tools flag (and any execution flag) without a key: blocked. Execution
+    // is impossible; the key is never read for tool registration.
     return createPaidToolsConfig({
       requested: true,
       status: "blocked_missing_api_key",
-      spendPolicy
+      spendPolicy,
+      executionEnabled: false,
+      requirePricingPreflight
     });
   }
 
   return createPaidToolsConfig({
     requested: true,
     apiKey,
-    status: "configured_foundation_no_execution",
-    spendPolicy
+    status: executionRequested ? "configured_execution_enabled" : "configured_foundation_no_execution",
+    spendPolicy,
+    executionEnabled: executionRequested,
+    requirePricingPreflight
   });
 }
 
-function parsePaidToolsEnabled(value: string | undefined): boolean {
+function parseRequirePricingPreflight(value: string | undefined): boolean {
+  const raw = value?.trim().toLowerCase();
+
+  // Default (and unset) is the required posture: true.
+  if (!raw || raw === "true" || raw === "1" || raw === "yes" || raw === "on") {
+    return true;
+  }
+
+  if (raw === "false" || raw === "0" || raw === "no" || raw === "off") {
+    return false;
+  }
+
+  throw new StockTrendsMcpError("invalid_config", {
+    detail: "STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT must be true, false, 1, 0, yes, no, on, or off."
+  });
+}
+
+function parsePaidToolsEnabled(value: string | undefined, variableName: string): boolean {
   const raw = value?.trim().toLowerCase();
 
   if (!raw) {
@@ -148,7 +173,7 @@ function parsePaidToolsEnabled(value: string | undefined): boolean {
   }
 
   throw new StockTrendsMcpError("invalid_config", {
-    detail: "STOCKTRENDS_ENABLE_PAID_TOOLS must be true, false, 0, no, or off."
+    detail: `${variableName} must be true, false, 0, no, or off.`
   });
 }
 
