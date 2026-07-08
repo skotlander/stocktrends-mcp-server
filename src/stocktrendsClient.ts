@@ -4,6 +4,7 @@ import { errorFromHttpStatus, StockTrendsMcpError } from "./errors.js";
 export interface PublicEndpointRequest {
   endpointPath: string;
   resourceUri?: string;
+  toolName?: string;
 }
 
 export interface PublicEndpointResponse {
@@ -117,10 +118,11 @@ export class StockTrendsClient {
   }
 }
 
-function safeRequestData(request: PublicEndpointRequest): { resourceUri?: string; endpointPath?: string } {
+function safeRequestData(request: PublicEndpointRequest): { resourceUri?: string; endpointPath?: string; toolName?: string } {
   return {
     resourceUri: request.resourceUri,
-    endpointPath: request.endpointPath
+    endpointPath: request.endpointPath,
+    toolName: request.toolName
   };
 }
 
