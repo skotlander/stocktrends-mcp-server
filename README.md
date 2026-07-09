@@ -2,6 +2,80 @@
 
 Local Model Context Protocol (MCP) adapter for public Stock Trends API resources.
 
+## Architecture Boundary (What This Server Is)
+
+This repository is a thin local stdio adapter over the front-facing Stock Trends API. It has no independent analytical authority of its own.
+
+Authority flows in one direction only:
+
+```
+Stock Trends dataset
+  -> Stock Trends API
+  -> published Stock Trends API responses/artifacts
+  -> MCP adapter (this repository)
+  -> external MCP clients/agents
+```
+
+The MCP adapter:
+
+- Does not recompute Stock Trends data, ST-IM, or indicators.
+- Does not access the Stock Trends database or control plane directly.
+- Does not generate investment advice, research, or trading guidance.
+- Only translates reviewed, published Stock Trends API responses into MCP resource and tool responses.
+
+Public resources and the default/free mode described below are credential-free: no API key, subscription, or payment credential is required to install, inspect, or use them. The conditional paid ST-IM execution path is a separate, explicitly gated surface that is disabled by default (see [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution)).
+
+## Default / Free Mode Quickstart
+
+This is the recommended first path for installing or inspecting the server. In default mode, the server:
+
+- Requires no API key.
+- Performs no paid execution and creates no spend.
+- Exposes exactly one MCP tool: `stocktrends_estimate_workflow_cost`.
+- Makes all public resources available credential-free.
+- Registers zero MCP prompts.
+
+### Setup
+
+Using only the existing project scripts:
+
+```sh
+git clone <repository-url>
+cd stocktrends-mcp-server
+npm install
+npm run build
+```
+
+No environment variables or `.env` file are required for this path. Do not set `STOCKTRENDS_ENABLE_PAID_TOOLS`, `STOCKTRENDS_API_KEY`, or `STOCKTRENDS_ENABLE_PAID_EXECUTION` while testing default/free mode.
+
+Optional: `npm start` starts the local stdio server process directly and is mainly useful as a manual smoke check (it will sit waiting for JSON-RPC input on stdin). Stop it with Ctrl+C before launching the server via MCP Inspector below.
+
+### Inspect with MCP Inspector (no API key)
+
+After building (`npm run build`), point the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) at the compiled stdio server, with no paid-mode environment variables set:
+
+```sh
+npx @modelcontextprotocol/inspector node dist/server.js
+```
+
+In the Inspector UI, confirm:
+
+- The tool list contains exactly `stocktrends_estimate_workflow_cost`, and the paid tools (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`) are not visible.
+- The prompts list is empty, if the client exposes a prompts panel.
+- Public resources (for example `stocktrends://api/openapi`, `stocktrends://ai/context`) are listed and readable without any credential configured.
+
+This check confirms the free/default boundary without requiring or triggering any paid execution.
+
+### Secret Safety
+
+- Do not paste API keys into README examples, screenshots, terminal recordings, or committed files.
+- Free/default mode should always be tested and demonstrated without an API key.
+- Paid configuration and credential handling are documented separately from this quickstart.
+
+### Paid Mode (Forward Pointer)
+
+Paid tools and paid execution are intentionally disabled by default. Paid-mode setup is governed by [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) and [`docs/PHASE5A_OPERATIONAL_HARDENING_DESIGN_MEMO.md`](docs/PHASE5A_OPERATIONAL_HARDENING_DESIGN_MEMO.md). Detailed paid-mode README instructions will be added in a later PR.
+
 ## Current Status
 
 Phase 4 implements a conservative local stdio MCP server for public-resource access, one public/free workflow cost-estimate planning tool, an internal auth/spend-control/pricing-preflight foundation, and the paired paid ST-IM tools with gated live subscription/API-key execution.
@@ -26,12 +100,6 @@ Excluded:
 - Database or control-plane access.
 - Dynamic MCP registration from `/v1/ai/tools` or `/v1/workflows`.
 - Intelligence Agent recomputation, generated guidance, generated research, or a parallel reasoning layer.
-
-## Authority Boundary
-
-The future server must be a thin adapter over the canonical Stock Trends API. It must not query Stock Trends databases directly, recompute ST-IM or indicators, create selections or rankings, generate research or guidance, bypass API authentication/pricing/metering/payment rules, or create a parallel intelligence layer.
-
-Published Stock Trends API responses and API-served Intelligence Agent artifacts remain authoritative. The MCP adapter only translates reviewed public API resources into MCP resource responses.
 
 ## Local Development
 
