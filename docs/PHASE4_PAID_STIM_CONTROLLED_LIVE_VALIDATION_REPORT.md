@@ -45,6 +45,7 @@ This report builds on and does not supersede:
 | Branch | TBD |
 | Date/time (UTC) | TBD |
 | Operator | TBD |
+| Execution mechanism | TBD (`operator-direct` / `supervised MCP client/agent session`) |
 | Local transport mode | TBD (expected: `stdio`) |
 | Paid tools enabled/disabled | TBD (`STOCKTRENDS_ENABLE_PAID_TOOLS`) |
 | Paid execution enabled/disabled | TBD (`STOCKTRENDS_ENABLE_PAID_EXECUTION`) |
@@ -213,10 +214,14 @@ validation not yet executed).
 > To be completed and signed by the operator **only after** an actual
 > operator-authorized live validation run, not before.
 
-- I performed the controlled live validation run described in
-  [`PHASE4_PAID_STIM_CONTROLLED_LIVE_VALIDATION_PLAN.md`](PHASE4_PAID_STIM_CONTROLLED_LIVE_VALIDATION_PLAN.md)
-  myself, using my own credentials, entirely outside of any automated or agent
-  session: **TBD**
+- I explicitly authorized, configured caps for, supervised, and approved the
+  controlled live validation run described in
+  [`PHASE4_PAID_STIM_CONTROLLED_LIVE_VALIDATION_PLAN.md`](PHASE4_PAID_STIM_CONTROLLED_LIVE_VALIDATION_PLAN.md),
+  using my own locally-supplied credentials. The two bounded tool calls were made
+  either by me directly or through the MCP server by a supervised MCP client/agent
+  session acting under my explicit, contemporaneous authorization — in either case,
+  with no unattended automation, no autonomous recurring execution, no bulk
+  validation, and no automatic retries: **TBD**
 - I confirm no secret value appears anywhere in this report or in any artifact
   produced during the run: **TBD**
 - I confirm the results recorded above reflect actual observed behavior, not
