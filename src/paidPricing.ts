@@ -22,7 +22,7 @@ import type { JsonObject, StockTrendsClient } from "./stocktrendsClient.js";
 //
 // The version date lets the wrapper/notes record which static-policy snapshot
 // was used, without implying a fetch occurred for the static resolution.
-export const STATIC_PRICING_POLICY_VERSION = "2026-07-08";
+export const STATIC_PRICING_POLICY_VERSION = "2026-07-09";
 
 // The public catalog resource path. Read credential-free (no X-API-Key) for
 // metadata reconciliation only — never as an authorization source by itself.
@@ -40,8 +40,8 @@ export interface StaticEndpointPricingEntry {
 // prices, so reconciliation can verify the catalog assigns the same rule id to
 // the same endpoint at the same cost/unit.
 const STATIC_ENDPOINT_PRICING: Readonly<Record<string, StaticEndpointPricingEntry>> = Object.freeze({
-  stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", endpointPath: "/v1/stim/latest", amount: 0.25, unit: "STC" }),
-  stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", amount: 0.5, unit: "STC" })
+  stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", endpointPath: "/v1/stim/latest", amount: 0.0025, unit: "STC" }),
+  stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", amount: 0.0075, unit: "STC" })
 });
 
 // The rules that must be confirmed by the live catalog before any paid ST-IM
