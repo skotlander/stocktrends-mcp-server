@@ -8,9 +8,17 @@ no `package.json`/`package-lock.json` changes, no new scripts, no MCP tools adde
 no MCP prompts added, no tool registration changes, no x402/wallet/OAuth/Bearer
 fallback/remote MCP/database/control-plane work. This plan does not itself call any
 live paid endpoint, does not use or inspect any real API key, and does not record
-the outcome of a live run — it defines the operator-controlled process that a human
-operator must follow, at a later time, entirely outside of any automated or agent
-session, to perform and document the first controlled live validation.
+the outcome of a live run — it defines the operator-controlled process that must be
+followed, at a later time, to perform and document the first controlled live
+validation.
+
+This plan draws a firm distinction between **operator authorization/supervision**
+(mandatory, non-delegable) and the **tool execution mechanism** (which may be a
+supervised MCP client/agent session, since that is the normal way an MCP server's
+tools are invoked). The controlled live run may be carried out through the MCP
+server by a supervised MCP client/agent session only after explicit, contemporaneous
+operator authorization; it may not be carried out as unattended automation,
+autonomous recurring execution, or bulk validation under any circumstance. See §2.
 
 This plan builds on and does not supersede:
 
@@ -32,9 +40,14 @@ This plan builds on and does not supersede:
 - It is a **documentation/operations plan only**. It defines process, checklists,
   assertions, and a report template. It contains no executable validation code.
 - **No live execution occurs in this branch, by this document, or as part of
-  producing it.** The controlled live run described in §7 is a manual operator
-  action performed later, outside of any automated pipeline, using the operator's
-  own credentials.
+  producing it.** The controlled live run described in §7 is performed later, only
+  after explicit operator authorization, using the operator's own locally-supplied
+  credentials. The operator authorizes, configures caps, supervises, and approves
+  the run; the two bounded tool calls themselves may be issued through the MCP
+  server by a supervised MCP client/agent session, since that is the mechanism by
+  which the MCP server's tools are normally invoked. This does not authorize
+  unattended automation, autonomous recurring execution, bulk validation, automatic
+  retries, or any additional paid calls beyond the two described in §7.
 - Architecture boundary reaffirmed (unchanged by this plan):
 
   ```text
@@ -62,6 +75,15 @@ This plan builds on and does not supersede:
 - This plan does not grant, request, or assume authorization for any specific date,
   environment, or operator. Authorization is scoped to a single, deliberate,
   documented run.
+- **Execution mechanism.** The controlled live validation may be executed through
+  the MCP server by a supervised MCP client/agent session only after explicit
+  operator authorization. The operator must configure credentials locally, confirm
+  caps, supervise the run, and approve the bounded validation sequence before either
+  tool call is made. This does not authorize unattended automation, autonomous
+  recurring execution, bulk validation, automatic retries, or any additional paid
+  calls. An agent/client acting under this authorization may check for the presence
+  of `STOCKTRENDS_API_KEY` only as a boolean (set/not set) — it may not read, print,
+  log, or otherwise inspect the secret value.
 
 ## 3. Secret handling rules
 
@@ -160,8 +182,11 @@ dry run. Instead, validation must rely on:
 
 ## 7. Controlled live call sequence
 
-To be performed manually by the operator, later, outside of any automated
-pipeline, only after §2–§6 are satisfied:
+To be performed later, only after explicit operator authorization and only once
+§2–§6 are satisfied. The operator authorizes, configures caps, supervises, and
+approves the run; the two tool calls below may be issued through the MCP server by
+a supervised MCP client/agent session under that authorization, or directly by the
+operator — either way, the bounds in this section apply without exception:
 
 1. **One controlled latest call.** Invoke `stocktrends_get_stim_latest` (→
    `GET /v1/stim/latest`) exactly once, using a minimal, deterministic, low-risk
@@ -304,6 +329,7 @@ as real results.
 
 - Date/time (UTC):
 - Operator:
+- Execution mechanism: (`operator-direct` / `supervised MCP client/agent session`)
 - Commit SHA:
 - Branch:
 - Environment mode: (e.g. paid-tools + execution + caps, per §4)
