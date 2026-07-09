@@ -174,18 +174,18 @@ describe("Phase 4 paid ST-IM live execution — catalog reconciliation gate (blo
     },
     {
       label: "stim_latest_paid missing",
-      routes: { catalog: () => jsonResponse({ rules: [catalogRule("stim_history_paid", "/v1/stim/history", 0.5)] }) }
+      routes: { catalog: () => jsonResponse({ rules: [catalogRule("stim_history_paid", "/v1/stim/history", 0.0075)] }) }
     },
     {
       label: "stim_history_paid missing",
-      routes: { catalog: () => jsonResponse({ rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.25)] }) }
+      routes: { catalog: () => jsonResponse({ rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.0025)] }) }
     },
     {
       label: "catalog cost differs from static mirror",
       routes: {
         catalog: () =>
           jsonResponse({
-            rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.99), catalogRule("stim_history_paid", "/v1/stim/history", 0.5)]
+            rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.99), catalogRule("stim_history_paid", "/v1/stim/history", 0.0075)]
           })
       }
     },
@@ -194,7 +194,7 @@ describe("Phase 4 paid ST-IM live execution — catalog reconciliation gate (blo
       routes: {
         catalog: () =>
           jsonResponse({
-            rules: [catalogRule("stim_latest_paid", "/v1/stim/latest-wrong", 0.25), catalogRule("stim_history_paid", "/v1/stim/history", 0.5)]
+            rules: [catalogRule("stim_latest_paid", "/v1/stim/latest-wrong", 0.0025), catalogRule("stim_history_paid", "/v1/stim/history", 0.0075)]
           })
       }
     },
@@ -204,9 +204,9 @@ describe("Phase 4 paid ST-IM live execution — catalog reconciliation gate (blo
         catalog: () =>
           jsonResponse({
             rules: [
-              catalogRule("stim_latest_paid", "/v1/stim/latest", 0.25),
-              catalogRule("stim_history_paid", "/v1/stim/history", 0.5),
-              catalogRule("stim_latest_legacy", "/v1/stim/latest", 0.25)
+              catalogRule("stim_latest_paid", "/v1/stim/latest", 0.0025),
+              catalogRule("stim_history_paid", "/v1/stim/history", 0.0075),
+              catalogRule("stim_latest_legacy", "/v1/stim/latest", 0.0025)
             ]
           })
       }
@@ -273,7 +273,7 @@ describe("Phase 4 paid ST-IM live execution — catalog reconciliation gate (blo
     expect(body.mcp_metadata.response_metadata.observed_cost).toBeNull();
     expect(body.mcp_metadata.observed_cost).toBeNull();
     // The static/catalog cost may appear only as an estimated/static cost.
-    expect(body.mcp_metadata.preflight_decision_summary.estimated_cost).toEqual({ amount: 0.25, unit: "STC" });
+    expect(body.mcp_metadata.preflight_decision_summary.estimated_cost).toEqual({ amount: 0.0025, unit: "STC" });
 
     await client.close();
     await server.close();
@@ -674,7 +674,7 @@ function catalogRule(pricingRuleId: string, endpointPattern: string, stcCost: nu
 
 function validCatalogBody(): Record<string, unknown> {
   return {
-    rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.25), catalogRule("stim_history_paid", "/v1/stim/history", 0.5)]
+    rules: [catalogRule("stim_latest_paid", "/v1/stim/latest", 0.0025), catalogRule("stim_history_paid", "/v1/stim/history", 0.0075)]
   };
 }
 
