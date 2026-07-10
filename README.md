@@ -142,7 +142,7 @@ These rules apply to every example, screenshot, recording, and shared artifact i
 - **Free/default mode needs no key.** It is fully functional with no API key, and the quickstart must be demonstrated without one.
 - **Public resources and the `stocktrends_estimate_workflow_cost` planning tool never send an API key.** They are credential-free regardless of paid configuration.
 - **Prefer per-session shell environment variables** (for example `export STOCKTRENDS_API_KEY=<your-api-key>` in a single shell) over writing a key into a persistent, machine-wide, or committed location for local inspection.
-- **The API key, when paid tools are enabled, is sent only as the `X-API-Key` header** to the approved paid ST-IM and indicators endpoints, and only after every gate passes. The credential-free instrument resolver (`/v1/instruments/lookup`, `/v1/instruments/resolve`) and the pricing catalog never receive it. There is **no `Authorization: Bearer` fallback**.
+- **The API key, when paid tools are enabled, is sent only as the `X-API-Key` header** to the approved paid ST-IM, indicators, and base `selections/latest` endpoints, and only after every gate passes. The credential-free instrument resolver (`/v1/instruments/lookup`, `/v1/instruments/resolve`) and the pricing catalog never receive it. There is **no `Authorization: Bearer` fallback**.
 - The key is never logged and never appears in errors, denials, or returned data.
 
 Before a release, run the manual secret-safety scan in the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md) to confirm no real key, populated auth header, or secret-bearing artifact was committed. Placeholders like `<your-api-key>` are allowed; real-looking secrets are not.

@@ -685,8 +685,15 @@ function hasApiKey(init: RequestInit): boolean {
   return Object.keys((init.headers as Record<string, string>) ?? {}).some((key) => key.toLowerCase() === "x-api-key");
 }
 
+function endpointFamilyForRule(pricingRuleId: string): string {
+  if (pricingRuleId.startsWith("indicators")) return "indicators";
+  if (pricingRuleId.startsWith("selections_published")) return "selections_published";
+  if (pricingRuleId.startsWith("selections")) return "selections";
+  return "stim";
+}
+
 function catalogRule(pricingRuleId: string, endpointPattern: string, stcCost: number): Record<string, unknown> {
-  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, stc_cost: stcCost, unit: "STC" };
+  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, endpoint_family: endpointFamilyForRule(pricingRuleId), stc_cost: stcCost, unit: "STC" };
 }
 
 function validCatalogBody(): Record<string, unknown> {

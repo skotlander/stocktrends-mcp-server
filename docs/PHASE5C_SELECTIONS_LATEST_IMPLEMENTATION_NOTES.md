@@ -37,6 +37,14 @@ and no MCP prompt is added.
   rule, cost mismatch, or missing/unsupported/**conflicting** `STC` unit fails
   closed (`pricing_catalog_reconciliation_failed`). An
   ST-IM/indicators/`selections_published` mirror can never satisfy it.
+- **`endpoint_family` verification (post-review fix).** Every static mirror entry
+  now carries its expected `endpoint_family` (`stim`, `indicators`, `selections`)
+  and reconciliation fails closed if the catalog row's `endpoint_family` is
+  missing or not exactly the expected family — so a row with the correct rule
+  id/path/cost/unit but the wrong family (e.g. `selections_published`) can no
+  longer reconcile. Where the catalog exposes them, a paid rule's `access_type`
+  must be `paid` and `requires_payment` must be `true` (validated conservatively:
+  an explicit contradiction fails closed; an absent field does not).
 
 ## Behavior
 
@@ -55,11 +63,15 @@ and no MCP prompt is added.
 - **Caps/budget.** Call caps default-deny; the `0.05 STC` nonzero cost requires a
   covering `STOCKTRENDS_MAX_STC_PER_SESSION` or the call is denied
   `spend_cap_exceeded` before auth/fetch.
-- **Repeated-identical-call loop posture.** A per-server signature over the
-  normalized parameters is recorded only when an authorized billable call is
-  attempted; a subsequent identical call fails closed
-  (`repeated_identical_selection_call`) before pricing/auth/fetch/cap debit,
-  rather than silently re-billing. In-memory only; resets on restart.
+- **Repeated-identical-call loop posture (sequential and concurrent).** The
+  normalized signature is **reserved synchronously before the first async
+  boundary** (catalog reconciliation), so a second identical call — sequential
+  **or concurrent** — fails closed (`repeated_identical_selection_call`) before
+  pricing/auth/fetch/cap debit. A pre-billable failure **releases** the
+  reservation (a later retry is not permanently blocked); reaching an authorized
+  billable attempt promotes the signature to **executed**, which persists for the
+  session even on a deterministic API error (no re-bill). In-memory only; resets
+  on restart. (Post-review fix for the concurrent-bypass finding.)
 - **Verbatim forwarding / authority.** API rows are preserved verbatim in
   `api_data`; no local ranking, thresholding, scoring, filtering, or
   base-vs-published relabeling. `mcp_metadata` records base-universe provenance,
@@ -83,9 +95,19 @@ and `selections_published`; default `limit=50`; accepted `1..250`; invalid limit
 failing before pricing/auth/fetch; always-present `limit`; single fetch / no
 retry; caps/budget denial before auth/fetch; the repeated-identical-call loop
 posture; verbatim `api_data`; no local ranking/thresholding/scoring/conflation;
-un-fabricated `observed_cost`/`payment_status`; and zero prompts. Existing
-five-tool surface and non-allowlist placeholder tests were updated for the new
-six-tool surface and the `selections/latest` promotion.
+un-fabricated `observed_cost`/`payment_status`; and zero prompts. Post-review
+additions cover the **concurrent** repeat case (a gated catalog suspends the
+first call after it reserves its signature; the second concurrent identical call
+fails closed before auth/fetch/cap debit, at most one paid fetch, one
+`X-API-Key`, one cap debit), the **release-on-pre-billable-failure** case (a
+reconciliation failure does not permanently block a later identical retry), the
+**executed-persists-on-API-error** case, and `endpoint_family` /
+`access_type` / `requires_payment` reconciliation (wrong/missing family fails
+closed; `selections_published` family never satisfies the base rule; a
+fully-specified paid row still reconciles). Existing five-tool surface and
+non-allowlist placeholder tests were updated for the new six-tool surface and the
+`selections/latest` promotion; the shared test catalog builders now emit
+`endpoint_family`.
 
 ## Still deferred / out of scope (unchanged)
 

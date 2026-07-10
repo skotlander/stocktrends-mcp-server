@@ -334,7 +334,7 @@ describe("Phase 5B indicators — catalog reconciliation gate", () => {
       catalog: () =>
         jsonResponse({
           rules: [
-            { pricing_rule_id: "indicators_latest_paid", endpoint_pattern: "/v1/indicators/latest", stc_cost: 0.0035, cost_unit: "USD" },
+            { pricing_rule_id: "indicators_latest_paid", endpoint_pattern: "/v1/indicators/latest", endpoint_family: "indicators", stc_cost: 0.0035, cost_unit: "USD" },
             catalogRule("indicators_history_paid", "/v1/indicators/history", 0.01)
           ]
         })
@@ -344,7 +344,7 @@ describe("Phase 5B indicators — catalog reconciliation gate", () => {
       catalog: () =>
         jsonResponse({
           rules: [
-            { pricing_rule_id: "indicators_latest_paid", endpoint_pattern: "/v1/indicators/latest", stc_cost: 0.0035 },
+            { pricing_rule_id: "indicators_latest_paid", endpoint_pattern: "/v1/indicators/latest", endpoint_family: "indicators", stc_cost: 0.0035 },
             catalogRule("indicators_history_paid", "/v1/indicators/history", 0.01)
           ]
         })
@@ -612,8 +612,15 @@ function hasApiKey(init: RequestInit): boolean {
   return Object.keys((init.headers as Record<string, string>) ?? {}).some((key) => key.toLowerCase() === "x-api-key");
 }
 
+function endpointFamilyForRule(pricingRuleId: string): string {
+  if (pricingRuleId.startsWith("indicators")) return "indicators";
+  if (pricingRuleId.startsWith("selections_published")) return "selections_published";
+  if (pricingRuleId.startsWith("selections")) return "selections";
+  return "stim";
+}
+
 function catalogRule(pricingRuleId: string, endpointPattern: string, stcCost: number): Record<string, unknown> {
-  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, stc_cost: stcCost, unit: "STC" };
+  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, endpoint_family: endpointFamilyForRule(pricingRuleId), stc_cost: stcCost, unit: "STC" };
 }
 
 function validCatalogBody(): Record<string, unknown> {

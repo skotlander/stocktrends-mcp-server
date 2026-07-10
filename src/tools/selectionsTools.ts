@@ -253,17 +253,30 @@ export interface PaidSelectionsToolMetadata {
 //
 // Repeated identical selection calls (same normalized exchange / min_prob13wk /
 // effective limit / include_data / include_mast / cs_only) within a server
-// session are the runaway-loop surface of SECURITY_MODEL §7. A signature is
-// recorded ONLY when an authorized billable call is actually attempted; a
-// subsequent identical call fails closed deterministically
-// (`repeated_identical_selection_call`) BEFORE any pricing/auth/fetch/cap debit,
-// rather than silently re-billing. In-memory only; resets on server restart.
+// session are the runaway-loop surface of SECURITY_MODEL §7.
+//
+// Two sets guard against both sequential AND concurrent repeats:
+//
+// - `inFlightSignatures` holds signatures RESERVED synchronously before the
+//   first async boundary (catalog reconciliation). Because the reservation
+//   happens before any `await` that can yield, a second identical call that
+//   arrives while the first is still awaiting sees the reservation and fails
+//   closed before pricing/auth/fetch/cap debit. The reservation is RELEASED if
+//   the call fails before an authorized billable attempt, so a later
+//   operator-supervised retry is not permanently blocked.
+// - `executedSignatures` holds signatures that reached an authorized billable
+//   attempt. Once promoted, a signature stays executed for the session even if
+//   the API returns a deterministic error, so the server never silently re-bills
+//   an identical broad-sweep request.
+//
+// In-memory only; both reset on server restart.
 export interface SelectionsLoopState {
   executedSignatures: Set<string>;
+  inFlightSignatures: Set<string>;
 }
 
 export function createSelectionsLoopState(): SelectionsLoopState {
-  return { executedSignatures: new Set<string>() };
+  return { executedSignatures: new Set<string>(), inFlightSignatures: new Set<string>() };
 }
 
 // --- Registration ---
@@ -405,9 +418,12 @@ async function executePaidSelections(
   }
 
   // Repeated-identical-call loop gate. Fails closed BEFORE pricing/auth/fetch and
-  // never debits a cap, so a runaway agent re-issuing the same broad-sweep call
-  // is not silently re-billed.
-  if (loopState.executedSignatures.has(context.signature)) {
+  // never debits a cap when the signature is already executed OR already
+  // in-flight (a concurrent identical call), so a runaway agent re-issuing the
+  // same broad-sweep call — sequentially or in parallel — is not silently
+  // re-billed. This check runs synchronously and does NOT reserve; the second
+  // caller returns here without disturbing the first caller's reservation.
+  if (loopState.executedSignatures.has(context.signature) || loopState.inFlightSignatures.has(context.signature)) {
     return denySelectionsInvocation(config, context, "repeated_identical_selection_call", {
       endpointAllowlisted: true,
       toolAllowlisted: true,
@@ -422,79 +438,94 @@ async function executePaidSelections(
     });
   }
 
-  const estimatedCost = resolveStaticEndpointPricing(context.pricingRuleId);
-  const usageSnapshot = snapshotPaidUsage(usage);
-  const preflightInput: PaidPreflightEvaluationInput = {
-    toolName: context.toolName,
-    endpointPath: context.endpointPath,
-    httpMethod: SELECTIONS_HTTP_METHOD,
-    targetUrl,
-    costEstimate: estimatedCost,
-    usage: usageSnapshot
-  };
-  const decision = evaluatePaidPreflight(paidAuthConfig, preflightInput);
-
-  if (decision.localPolicyDecision === "deny") {
-    const errorCode = PREFLIGHT_DENIAL_TO_ERROR_CODE[decision.denialReason ?? "paid_execution_disabled"] ?? "paid_execution_disabled";
-    return denySelectionsInvocation(config, context, errorCode, {
-      endpointAllowlisted: true,
-      toolAllowlisted: true,
-      hostApproved: true,
-      paidModeConfigured: true,
-      hardExecutionGateEnabled: structural.hardExecutionGateEnabled,
-      estimatedCost: decision.estimatedCost,
-      pricingSource: decision.pricingSource,
-      pricingRule: decision.estimatedCost?.pricingRuleId ?? null,
-      capUsage: usageSnapshot,
-      reconciliation: reconciliationNotEvaluated()
-    });
-  }
-
-  // Selections-family catalog reconciliation gate (credential-free, fail-closed).
-  // Reconciles ONLY the base `selections` pricing rules against the live catalog
-  // before any auth header or fetch. A `selections_published`/ST-IM/indicators
-  // mirror can never satisfy it.
-  const reconciliationResult = await reconcileStaticPricingWithCatalog(client, reconciliation, SELECTIONS_PRICING_RULE_IDS);
-
-  if (!reconciliationResult.ok) {
-    return denySelectionsInvocation(config, context, "pricing_catalog_reconciliation_failed", {
-      endpointAllowlisted: true,
-      toolAllowlisted: true,
-      hostApproved: true,
-      paidModeConfigured: true,
-      hardExecutionGateEnabled: structural.hardExecutionGateEnabled,
-      estimatedCost: decision.estimatedCost,
-      pricingSource: decision.pricingSource,
-      pricingRule: decision.estimatedCost?.pricingRuleId ?? null,
-      capUsage: usageSnapshot,
-      reconciliation: reconciliationFromResult(reconciliationResult)
-    });
-  }
-
-  // APPROVED. Construct the X-API-Key header inside the coupled boundary (this
-  // re-runs and re-asserts the full preflight as defense in depth), record the
-  // attempt against in-memory caps AND the loop signature, then perform exactly
-  // one fetch.
-  const authHeaders = buildPaidAuthHeaders(paidAuthConfig, preflightInput);
-  recordPaidCallAttempt(usage, context.toolName, estimatedCost);
-  loopState.executedSignatures.add(context.signature);
-  const capUsageAfter = snapshotPaidUsage(usage);
-  const reconciliationSummary = reconciliationFromResult(reconciliationResult);
-
-  let response: PaidEndpointResponse;
+  // Reserve the signature SYNCHRONOUSLY, before the first async boundary
+  // (catalog reconciliation) that can yield to a concurrent identical call. The
+  // reservation is released in `finally` unless the call reaches an authorized
+  // billable attempt (at which point the signature is promoted to executed and
+  // stays there for the session).
+  loopState.inFlightSignatures.add(context.signature);
 
   try {
-    response = await client.fetchPaid({
-      endpointPath: context.endpointPath,
+    const estimatedCost = resolveStaticEndpointPricing(context.pricingRuleId);
+    const usageSnapshot = snapshotPaidUsage(usage);
+    const preflightInput: PaidPreflightEvaluationInput = {
       toolName: context.toolName,
-      searchParams: toSearchParams(context.apiRequestParameters),
-      authHeaders
-    });
-  } catch (error) {
-    return apiErrorResult(config, context, decision, estimatedCost, capUsageAfter, reconciliationSummary, error);
-  }
+      endpointPath: context.endpointPath,
+      httpMethod: SELECTIONS_HTTP_METHOD,
+      targetUrl,
+      costEstimate: estimatedCost,
+      usage: usageSnapshot
+    };
+    const decision = evaluatePaidPreflight(paidAuthConfig, preflightInput);
 
-  return successResult(config, context, decision, estimatedCost, capUsageAfter, reconciliationSummary, response);
+    if (decision.localPolicyDecision === "deny") {
+      const errorCode = PREFLIGHT_DENIAL_TO_ERROR_CODE[decision.denialReason ?? "paid_execution_disabled"] ?? "paid_execution_disabled";
+      return denySelectionsInvocation(config, context, errorCode, {
+        endpointAllowlisted: true,
+        toolAllowlisted: true,
+        hostApproved: true,
+        paidModeConfigured: true,
+        hardExecutionGateEnabled: structural.hardExecutionGateEnabled,
+        estimatedCost: decision.estimatedCost,
+        pricingSource: decision.pricingSource,
+        pricingRule: decision.estimatedCost?.pricingRuleId ?? null,
+        capUsage: usageSnapshot,
+        reconciliation: reconciliationNotEvaluated()
+      });
+    }
+
+    // Selections-family catalog reconciliation gate (credential-free,
+    // fail-closed). Reconciles ONLY the base `selections` pricing rules against
+    // the live catalog before any auth header or fetch. A
+    // `selections_published`/ST-IM/indicators mirror can never satisfy it.
+    const reconciliationResult = await reconcileStaticPricingWithCatalog(client, reconciliation, SELECTIONS_PRICING_RULE_IDS);
+
+    if (!reconciliationResult.ok) {
+      return denySelectionsInvocation(config, context, "pricing_catalog_reconciliation_failed", {
+        endpointAllowlisted: true,
+        toolAllowlisted: true,
+        hostApproved: true,
+        paidModeConfigured: true,
+        hardExecutionGateEnabled: structural.hardExecutionGateEnabled,
+        estimatedCost: decision.estimatedCost,
+        pricingSource: decision.pricingSource,
+        pricingRule: decision.estimatedCost?.pricingRuleId ?? null,
+        capUsage: usageSnapshot,
+        reconciliation: reconciliationFromResult(reconciliationResult)
+      });
+    }
+
+    // APPROVED. Construct the X-API-Key header inside the coupled boundary (this
+    // re-runs and re-asserts the full preflight as defense in depth), then reach
+    // the authorized billable attempt: promote the signature to executed (kept
+    // for the session even on a deterministic API error), debit in-memory caps,
+    // and perform exactly one fetch.
+    const authHeaders = buildPaidAuthHeaders(paidAuthConfig, preflightInput);
+    loopState.executedSignatures.add(context.signature);
+    recordPaidCallAttempt(usage, context.toolName, estimatedCost);
+    const capUsageAfter = snapshotPaidUsage(usage);
+    const reconciliationSummary = reconciliationFromResult(reconciliationResult);
+
+    let response: PaidEndpointResponse;
+
+    try {
+      response = await client.fetchPaid({
+        endpointPath: context.endpointPath,
+        toolName: context.toolName,
+        searchParams: toSearchParams(context.apiRequestParameters),
+        authHeaders
+      });
+    } catch (error) {
+      return apiErrorResult(config, context, decision, estimatedCost, capUsageAfter, reconciliationSummary, error);
+    }
+
+    return successResult(config, context, decision, estimatedCost, capUsageAfter, reconciliationSummary, response);
+  } finally {
+    // Always clear the in-flight reservation on exit. On a pre-billable failure
+    // the signature is NOT in `executedSignatures`, so a later retry is allowed;
+    // once promoted to executed it stays blocked for the session regardless.
+    loopState.inFlightSignatures.delete(context.signature);
+  }
 }
 
 function reconciliationNotEvaluated(): PaidSelectionsPricingReconciliation {

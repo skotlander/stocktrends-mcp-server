@@ -22,7 +22,8 @@ import type { JsonObject, StockTrendsClient } from "./stocktrendsClient.js";
 //
 // The version date lets the wrapper/notes record which static-policy snapshot
 // was used, without implying a fetch occurred for the static resolution.
-export const STATIC_PRICING_POLICY_VERSION = "2026-07-09";
+// Bumped to 2026-07-10 when the base `selections_latest_paid` mirror was added.
+export const STATIC_PRICING_POLICY_VERSION = "2026-07-10";
 
 // The public catalog resource path. Read credential-free (no X-API-Key) for
 // metadata reconciliation only — never as an authorization source by itself.
@@ -32,6 +33,11 @@ export const PRICING_CATALOG_RESOURCE_URI = "stocktrends://pricing/catalog";
 export interface StaticEndpointPricingEntry {
   pricingRuleId: string;
   endpointPath: string;
+  // Expected catalog `endpoint_family` for this rule. Reconciliation fails closed
+  // if the catalog row's family is missing or not exactly this value, so a
+  // catalog row with a correct rule id/path/cost/unit but the wrong family (e.g.
+  // `selections_published` for the base `selections` rule) cannot reconcile.
+  endpointFamily: string;
   amount: number;
   unit: "STC";
 }
@@ -54,11 +60,11 @@ export interface StaticEndpointPricingEntry {
 // `selections/latest` route is mirrored this increment (the published pair and
 // base history remain deferred, per the memo §8).
 const STATIC_ENDPOINT_PRICING: Readonly<Record<string, StaticEndpointPricingEntry>> = Object.freeze({
-  stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", endpointPath: "/v1/stim/latest", amount: 0.0025, unit: "STC" }),
-  stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", amount: 0.0075, unit: "STC" }),
-  indicators_latest_paid: Object.freeze({ pricingRuleId: "indicators_latest_paid", endpointPath: "/v1/indicators/latest", amount: 0.0035, unit: "STC" }),
-  indicators_history_paid: Object.freeze({ pricingRuleId: "indicators_history_paid", endpointPath: "/v1/indicators/history", amount: 0.01, unit: "STC" }),
-  selections_latest_paid: Object.freeze({ pricingRuleId: "selections_latest_paid", endpointPath: "/v1/selections/latest", amount: 0.05, unit: "STC" })
+  stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", endpointPath: "/v1/stim/latest", endpointFamily: "stim", amount: 0.0025, unit: "STC" }),
+  stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", endpointFamily: "stim", amount: 0.0075, unit: "STC" }),
+  indicators_latest_paid: Object.freeze({ pricingRuleId: "indicators_latest_paid", endpointPath: "/v1/indicators/latest", endpointFamily: "indicators", amount: 0.0035, unit: "STC" }),
+  indicators_history_paid: Object.freeze({ pricingRuleId: "indicators_history_paid", endpointPath: "/v1/indicators/history", endpointFamily: "indicators", amount: 0.01, unit: "STC" }),
+  selections_latest_paid: Object.freeze({ pricingRuleId: "selections_latest_paid", endpointPath: "/v1/selections/latest", endpointFamily: "selections", amount: 0.05, unit: "STC" })
 });
 
 // The static rule-id groups a caller may ask to reconcile. Reconciliation is
@@ -109,7 +115,11 @@ export type PricingReconciliationFailureReason =
   | "unsupported_unit"
   | "cost_mismatch"
   | "endpoint_mismatch"
-  | "rule_id_mismatch";
+  | "rule_id_mismatch"
+  | "family_missing"
+  | "family_mismatch"
+  | "access_type_invalid"
+  | "requires_payment_invalid";
 
 export interface PricingReconciliationResult {
   ok: boolean;
@@ -241,6 +251,35 @@ function reconcileRule(rules: readonly unknown[], spec: StaticEndpointPricingEnt
 
   if (conflicting.length > 0) {
     return fail("rule_id_mismatch", `Pricing catalog assigns a different rule id to endpoint ${spec.endpointPath}.`);
+  }
+
+  // The catalog `endpoint_family` is mandatory and must be exactly the expected
+  // family for this rule. A row with a correct rule id/path/cost/unit but a
+  // missing or different family (e.g. `selections_published` for the base
+  // `selections` rule) fails closed, so family scoping cannot be bypassed by a
+  // mislabeled catalog row.
+  const family = readString(entry.endpoint_family);
+
+  if (family === undefined) {
+    return fail("family_missing", `Pricing catalog rule ${spec.pricingRuleId} is missing the required endpoint_family (${spec.endpointFamily}).`);
+  }
+
+  if (family !== spec.endpointFamily) {
+    return fail("family_mismatch", `Pricing catalog rule ${spec.pricingRuleId} endpoint_family ${family} did not match the required ${spec.endpointFamily}.`);
+  }
+
+  // Conservative paid-classification checks: only enforced when the catalog
+  // actually exposes the field (documented for the paid rules in the contract
+  // memos). An explicitly non-paid classification for a paid rule fails closed;
+  // an absent field is not fabricated into a pass.
+  const accessType = readString(entry.access_type);
+
+  if (accessType !== undefined && accessType.toLowerCase() !== "paid") {
+    return fail("access_type_invalid", `Pricing catalog rule ${spec.pricingRuleId} access_type ${accessType} is not the required paid classification.`);
+  }
+
+  if (typeof entry.requires_payment === "boolean" && entry.requires_payment !== true) {
+    return fail("requires_payment_invalid", `Pricing catalog rule ${spec.pricingRuleId} requires_payment is not true.`);
   }
 
   // The catalog unit is mandatory and must be the verified STC unit. A missing

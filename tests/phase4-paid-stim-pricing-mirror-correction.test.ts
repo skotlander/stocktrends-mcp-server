@@ -15,8 +15,15 @@ import { jsonResponse } from "./helpers.js";
 // phase4-paid-stim-live-execution.test.ts. All HTTP is mocked; no live network
 // calls occur.
 
+function endpointFamilyForRule(pricingRuleId: string): string {
+  if (pricingRuleId.startsWith("indicators")) return "indicators";
+  if (pricingRuleId.startsWith("selections_published")) return "selections_published";
+  if (pricingRuleId.startsWith("selections")) return "selections";
+  return "stim";
+}
+
 function catalogRule(pricingRuleId: string, endpointPattern: string, stcCost: number): Record<string, unknown> {
-  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, stc_cost: stcCost, unit: "STC" };
+  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, endpoint_family: endpointFamilyForRule(pricingRuleId), stc_cost: stcCost, unit: "STC" };
 }
 
 function correctedCatalogBody(): Record<string, unknown> {
@@ -39,7 +46,7 @@ function catalogRuleWith(
   stcCost: number,
   unitFields: Record<string, unknown>
 ): Record<string, unknown> {
-  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, stc_cost: stcCost, ...unitFields };
+  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, endpoint_family: endpointFamilyForRule(pricingRuleId), stc_cost: stcCost, ...unitFields };
 }
 
 function indicatorsCatalogRule(pricingRuleId: string, endpointPattern: string, stcCost: number): Record<string, unknown> {

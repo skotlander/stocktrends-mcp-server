@@ -524,6 +524,101 @@ describe("Phase 5C selections — repeated-identical-call loop posture", () => {
     await client.close();
     await server.close();
   });
+
+  it("two concurrent identical calls cannot both fetch — the second fails closed before auth/fetch/cap debit", async () => {
+    // Gate the (async) catalog reconciliation so the first call is suspended
+    // AFTER reserving its signature but BEFORE it can reach auth/fetch. The
+    // second concurrent identical call must then see the in-flight reservation.
+    let reachedCatalog!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      reachedCatalog = resolve;
+    });
+    let releaseCatalog!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseCatalog = resolve;
+    });
+
+    const fetchFn = routedFetch({
+      catalog: async () => {
+        reachedCatalog();
+        await gate;
+        return jsonResponse(validCatalogBody());
+      }
+    });
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    const firstPromise = client.callTool({ name: SELECTIONS_LATEST_TOOL_NAME, arguments: { exchange: "Q", limit: 25 } });
+
+    // Wait until the first call has reserved its signature and is suspended at
+    // the catalog read, then fire the identical concurrent call.
+    await reached;
+    const second = structured(await client.callTool({ name: SELECTIONS_LATEST_TOOL_NAME, arguments: { exchange: "Q", limit: 25 } }));
+
+    // The concurrent duplicate fails closed with no request, no auth header, and
+    // no second cap debit.
+    expect(second.error.error_code).toBe("repeated_identical_selection_call");
+    expect(second.api_request_sent).toBe(false);
+    expect(second.auth_header_sent).toBe(false);
+    expect(pathCalls(fetchFn, SELECTIONS_LATEST_ENDPOINT_PATH)).toHaveLength(0);
+
+    // Let the first call complete.
+    releaseCatalog();
+    const first = structured(await firstPromise);
+    expect(first.paid_execution_authorized).toBe(true);
+
+    // At most one paid endpoint fetch, exactly one X-API-Key send, one cap debit.
+    const selectionsCalls = pathCalls(fetchFn, SELECTIONS_LATEST_ENDPOINT_PATH);
+    expect(selectionsCalls).toHaveLength(1);
+    expect(selectionsCalls.filter(([, init]) => hasApiKey(init))).toHaveLength(1);
+    expect(first.mcp_metadata.local_budget_cap_status.paid_calls_this_session).toBe(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("releases the in-flight reservation on a pre-billable failure so a later retry is not permanently blocked", async () => {
+    // First catalog read fails reconciliation; the second (identical) call must
+    // NOT be blocked as a repeat, because the first never reached a billable
+    // attempt and released its reservation.
+    let catalogCall = 0;
+    const fetchFn = routedFetch({
+      catalog: () => {
+        catalogCall += 1;
+        return catalogCall === 1 ? jsonResponse({ detail: "down" }, 503) : jsonResponse(validCatalogBody());
+      }
+    });
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    const first = structured(await client.callTool({ name: SELECTIONS_LATEST_TOOL_NAME, arguments: { limit: 25 } }));
+    expect(first.error.error_code).toBe("pricing_catalog_reconciliation_failed");
+    expect(first.api_request_sent).toBe(false);
+
+    const second = structured(await client.callTool({ name: SELECTIONS_LATEST_TOOL_NAME, arguments: { limit: 25 } }));
+    expect(second.error).toBeUndefined();
+    expect(second.paid_execution_authorized).toBe(true);
+    expect(pathCalls(fetchFn, SELECTIONS_LATEST_ENDPOINT_PATH)).toHaveLength(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("keeps a signature executed after a deterministic API error so an identical retry is not re-billed", async () => {
+    const fetchFn = routedFetch({ latest: () => jsonResponse({ detail: "boom" }, 500) });
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    const first = structured(await client.callTool({ name: SELECTIONS_LATEST_TOOL_NAME, arguments: { limit: 25 } }));
+    expect(first.error.error_code).toBe("api_request_failed");
+    expect(first.api_request_sent).toBe(true);
+
+    const second = structured(await client.callTool({ name: SELECTIONS_LATEST_TOOL_NAME, arguments: { limit: 25 } }));
+    expect(second.error.error_code).toBe("repeated_identical_selection_call");
+    expect(second.api_request_sent).toBe(false);
+    // Only the first (failed) attempt reached the endpoint; the retry is not re-billed.
+    expect(pathCalls(fetchFn, SELECTIONS_LATEST_ENDPOINT_PATH)).toHaveLength(1);
+
+    await client.close();
+    await server.close();
+  });
 });
 
 describe("Phase 5C selections — catalog reconciliation gate", () => {
@@ -538,19 +633,47 @@ describe("Phase 5C selections — catalog reconciliation gate", () => {
       label: "selections unit is USD with matching cost",
       catalog: () =>
         jsonResponse({
-          rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", stc_cost: 0.05, cost_unit: "USD" }]
+          rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", endpoint_family: "selections", stc_cost: 0.05, cost_unit: "USD" }]
         })
     },
     {
       label: "selections unit field is absent",
       catalog: () =>
-        jsonResponse({ rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", stc_cost: 0.05 }] })
+        jsonResponse({ rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", endpoint_family: "selections", stc_cost: 0.05 }] })
     },
     {
       label: "selections unit fields conflict (cost_unit vs unit)",
       catalog: () =>
         jsonResponse({
-          rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", stc_cost: 0.05, cost_unit: "STC", unit: "USD" }]
+          rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", endpoint_family: "selections", stc_cost: 0.05, cost_unit: "STC", unit: "USD" }]
+        })
+    },
+    {
+      label: "selections rule has the wrong endpoint_family",
+      catalog: () =>
+        jsonResponse({
+          rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", endpoint_family: "selections_published", stc_cost: 0.05, unit: "STC" }]
+        })
+    },
+    {
+      label: "selections rule is missing endpoint_family",
+      catalog: () =>
+        jsonResponse({
+          rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", stc_cost: 0.05, unit: "STC" }]
+        })
+    },
+    {
+      label: "selections rule access_type is not paid",
+      catalog: () =>
+        jsonResponse({
+          rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", endpoint_family: "selections", access_type: "free", stc_cost: 0.05, unit: "STC" }]
+        })
+    },
+    {
+      label: "selections rule requires_payment is false",
+      catalog: () =>
+        jsonResponse({
+          rules: [{ pricing_rule_id: "selections_latest_paid", endpoint_pattern: "/v1/selections/latest", endpoint_family: "selections", requires_payment: false, stc_cost: 0.05, unit: "STC" }]
         })
     },
     {
@@ -582,6 +705,34 @@ describe("Phase 5C selections — catalog reconciliation gate", () => {
   it("succeeds when the catalog carries only the selections rule (family-scoped; other families are irrelevant)", async () => {
     const fetchFn = routedFetch({
       catalog: () => jsonResponse({ rules: [catalogRule("selections_latest_paid", "/v1/selections/latest", 0.05)] })
+    });
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    const body = structured(await client.callTool({ name: SELECTIONS_LATEST_TOOL_NAME, arguments: {} }));
+
+    expect(body.paid_execution_authorized).toBe(true);
+    expect(body.mcp_metadata.pricing_reconciliation.status).toBe("reconciled");
+
+    await client.close();
+    await server.close();
+  });
+
+  it("succeeds when the selections rule carries the correct endpoint_family and paid classification fields", async () => {
+    const fetchFn = routedFetch({
+      catalog: () =>
+        jsonResponse({
+          rules: [
+            {
+              pricing_rule_id: "selections_latest_paid",
+              endpoint_pattern: "/v1/selections/latest",
+              endpoint_family: "selections",
+              access_type: "paid",
+              requires_payment: true,
+              stc_cost: 0.05,
+              cost_unit: "STC"
+            }
+          ]
+        })
     });
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
@@ -664,8 +815,15 @@ function hasApiKey(init: RequestInit): boolean {
   return Object.keys((init.headers as Record<string, string>) ?? {}).some((key) => key.toLowerCase() === "x-api-key");
 }
 
+function endpointFamilyForRule(pricingRuleId: string): string {
+  if (pricingRuleId.startsWith("indicators")) return "indicators";
+  if (pricingRuleId.startsWith("selections_published")) return "selections_published";
+  if (pricingRuleId.startsWith("selections")) return "selections";
+  return "stim";
+}
+
 function catalogRule(pricingRuleId: string, endpointPattern: string, stcCost: number): Record<string, unknown> {
-  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, stc_cost: stcCost, unit: "STC" };
+  return { pricing_rule_id: pricingRuleId, endpoint_pattern: endpointPattern, endpoint_family: endpointFamilyForRule(pricingRuleId), stc_cost: stcCost, unit: "STC" };
 }
 
 function validCatalogBody(): Record<string, unknown> {

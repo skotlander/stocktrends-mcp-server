@@ -467,13 +467,20 @@ default (`2000`) and hard max (`20000`):
 - **Mandatory covering budget cap.** The `0.05 STC` nonzero cost with no covering
   `STOCKTRENDS_MAX_STC_PER_SESSION` is denied `spend_cap_exceeded` before any
   auth/fetch.
-- **Repeated-identical-call loop posture.** Repeated identical base selection
-  calls (same normalized `exchange`/`min_prob13wk`/effective `limit`/`include_data`
-  /`include_mast`/`cs_only`) within a server session are the runaway-loop surface
-  of §7. A signature is recorded only when an authorized billable call is actually
-  attempted; a subsequent identical call **fails closed deterministically**
-  (`repeated_identical_selection_call`) before any pricing/auth/fetch/cap debit,
-  rather than silently re-billing. State is in-memory and resets on restart.
+- **Repeated-identical-call loop posture (sequential and concurrent).** Repeated
+  identical base selection calls (same normalized `exchange`/`min_prob13wk`/
+  effective `limit`/`include_data`/`include_mast`/`cs_only`) within a server
+  session are the runaway-loop surface of §7. The normalized signature is
+  **reserved synchronously before the first async boundary** (catalog
+  reconciliation), so a second identical call that arrives while the first is
+  still in flight — sequentially **or concurrently** — **fails closed
+  deterministically** (`repeated_identical_selection_call`) before any
+  pricing/auth/fetch/cap debit, rather than silently re-billing. If a call fails
+  before an authorized billable attempt, its reservation is **released** so a
+  later operator-supervised retry is not permanently blocked; once a billable
+  attempt is reached the signature is promoted to **executed** and stays blocked
+  for the session even if the API returns a deterministic error (no re-bill of an
+  identical broad-sweep request). State is in-memory and resets on restart.
 - **Row-count transparency.** `mcp_metadata` records the `effective_limit` sent
   and the returned row count when derivable — metadata only, never a second
   ranking or thresholding pass.
@@ -481,17 +488,27 @@ default (`2000`) and hard max (`20000`):
 ### 16.4 Family-scoped selections pricing statement (extends §15.3)
 
 Endpoint cost is resolved from a **fresh, `selections`-family-specific static
-mirror** (`selections_latest_paid = 0.05 STC`, `cost_unit: STC`) that must pass a
-fail-closed reconciliation against the live `GET /v1/pricing/catalog` metadata
-(credential-free) before any auth header or fetch. Reconciliation fails closed
-(`pricing_catalog_reconciliation_failed`, no auth/fetch) on a missing rule, a
-duplicate/ambiguous rule, a cost mismatch, a missing/unsupported/**conflicting**
-unit (the verified `STC` unit is mandatory; a matching numeric cost is never
-accepted without a confirmed unit), an endpoint/rule-id mismatch, or an
-unavailable/malformed catalog. Reconciliation is scoped to the **base
+mirror** (`selections_latest_paid = 0.05 STC`, `endpoint_family: selections`,
+`cost_unit: STC`) that must pass a fail-closed reconciliation against the live
+`GET /v1/pricing/catalog` metadata (credential-free) before any auth header or
+fetch. Reconciliation fails closed (`pricing_catalog_reconciliation_failed`, no
+auth/fetch) on a missing rule, a duplicate/ambiguous rule, a cost mismatch, a
+missing/unsupported/**conflicting** unit (the verified `STC` unit is mandatory; a
+matching numeric cost is never accepted without a confirmed unit), an
+endpoint/rule-id mismatch, or an unavailable/malformed catalog. It **also**
+verifies the catalog row's `endpoint_family`: a missing family, or any family
+other than exactly `selections`, fails closed — so a row with the correct rule
+id/path/cost/unit but the wrong family (e.g. `selections_published`) can never
+reconcile the base rule. Where the catalog exposes them, a paid rule's
+`access_type` must be `paid` and `requires_payment` must be `true` (validated
+conservatively: an explicit contradicting value fails closed; an absent field is
+not fabricated into a pass). Reconciliation is scoped to the **base
 `selections`** rule group only: the `selections_published` family, base
 `selections_history`, ST-IM, and indicators state can never gate or satisfy a
 base-selections call, and the base-selections mirror never transfers to them.
+Each static mirror entry (ST-IM, indicators, base selections) now carries its
+expected `endpoint_family` (`stim`, `indicators`, `selections`), so family
+scoping is enforced for every paid family, not just selections.
 
 ### 16.5 Base-vs-published boundary (extends §6, prompt-injection/authority)
 
