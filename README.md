@@ -318,3 +318,4 @@ Only after a single safe canonical identity exists does the tool run the same pa
 - [Phase 5B Indicators Implementation Notes](docs/PHASE5B_INDICATORS_IMPLEMENTATION_NOTES.md)
 - [Phase 5B Indicators Controlled Validation Plan](docs/PHASE5B_INDICATORS_CONTROLLED_VALIDATION_PLAN.md)
 - [Phase 5B Indicators Production Readiness Signoff](docs/PHASE5B_INDICATORS_PRODUCTION_READINESS_SIGNOFF.md)
+- [Phase 5C Next Capability Selection Memo](docs/PHASE5C_NEXT_CAPABILITY_SELECTION_MEMO.md)
