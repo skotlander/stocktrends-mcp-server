@@ -24,6 +24,7 @@ import {
   STIM_LATEST_ENDPOINT_PATH,
   STIM_LATEST_TOOL_NAME
 } from "../src/tools/stimTools.js";
+import { INDICATORS_HISTORY_TOOL_NAME, INDICATORS_LATEST_TOOL_NAME } from "../src/tools/indicatorsTools.js";
 import { connectMcp, jsonResponse } from "./helpers.js";
 
 const MOCK_KEY = "mock-stim-secret-must-not-be-sent";
@@ -75,8 +76,18 @@ describe("Phase 4 paid ST-IM foundation — tool surface", () => {
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
 
     if (expectPaid) {
-      expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, STIM_HISTORY_TOOL_NAME, STIM_LATEST_TOOL_NAME].sort());
-      expect(toolNames).toHaveLength(3);
+      // Paid-exposed surface is exactly five tools: the planning tool plus the
+      // paired paid ST-IM and paired paid indicators families.
+      expect(toolNames).toEqual(
+        [
+          COST_ESTIMATE_TOOL_NAME,
+          STIM_HISTORY_TOOL_NAME,
+          STIM_LATEST_TOOL_NAME,
+          INDICATORS_HISTORY_TOOL_NAME,
+          INDICATORS_LATEST_TOOL_NAME
+        ].sort()
+      );
+      expect(toolNames).toHaveLength(5);
     } else {
       expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
       expect(toolNames).not.toContain(STIM_LATEST_TOOL_NAME);

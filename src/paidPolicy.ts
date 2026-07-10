@@ -174,7 +174,15 @@ export const DEFAULT_PAID_SPEND_POLICY: PaidSpendPolicy = Object.freeze({
 // `assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`) resolves policies
 // ONLY from this narrow list. Nothing here — or anywhere in the auth-capable
 // path — may authorize an `X-API-Key` header or fetch for any endpoint that is
-// not one of these two ST-IM routes.
+// not one of these four ST-IM / indicators routes.
+//
+// PR 39 promotes the paired paid indicators routes into this auth-capable list
+// so they become executable behind the identical Phase 4 gate policy (paid-tools
+// flag, API key, execution flag, authoritative static pricing/preflight,
+// family-specific catalog reconciliation, and nonzero local caps). The public
+// instrument-discovery endpoints (`/v1/instruments/lookup`,
+// `/v1/instruments/resolve`) are deliberately ABSENT here: the internal resolver
+// reads them credential-free and they can never receive an `X-API-Key`.
 export const AUTH_CAPABLE_PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.freeze([
   {
     toolName: "stocktrends_get_stim_latest",
@@ -194,17 +202,7 @@ export const AUTH_CAPABLE_PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] 
     pricingRuleId: "stim_history_paid",
     requiresPricingPreflight: true,
     supportsLongitudinalAnalysis: true
-  }
-]);
-
-// Broader, NON-auth-capable future paid endpoint metadata. This is descriptive
-// catalog/planning metadata only. Indicator (and any future) entries here are
-// deliberately NOT reachable by the credential-bearing auth/fetch path: the
-// auth boundary reads only AUTH_CAPABLE_PAID_ENDPOINT_POLICIES. Adding an entry
-// here never grants execution; a future branch must explicitly promote a route
-// into the auth-capable list (with its own review) to make it executable.
-export const PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.freeze([
-  ...AUTH_CAPABLE_PAID_ENDPOINT_POLICIES,
+  },
   {
     toolName: "stocktrends_get_indicators_latest",
     endpointPath: "/v1/indicators/latest",
@@ -225,6 +223,14 @@ export const PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.free
     supportsLongitudinalAnalysis: true
   }
 ]);
+
+// Full static paid endpoint policy metadata. After PR 39 every auth-capable
+// route is executable, so this equals AUTH_CAPABLE_PAID_ENDPOINT_POLICIES; the
+// alias is preserved so callers/tests referencing the broader list stay stable.
+// Any future non-executable paid route would be added here only, never to the
+// auth-capable list, and would require an explicit, separately reviewed
+// promotion to become executable.
+export const PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = AUTH_CAPABLE_PAID_ENDPOINT_POLICIES;
 
 export function createPaidToolsConfig(input: {
   requested: boolean;
@@ -468,10 +474,11 @@ function isApprovedAuthTarget(apiBaseUrl: URL, targetUrl: URL): boolean {
   );
 }
 
-// The auth-capable boundary resolves policies ONLY from the narrow ST-IM
-// allowlist. Indicator (and any future non-promoted) endpoints therefore return
-// `undefined` here and are denied `endpoint_not_allowlisted` before any auth
-// header or fetch — they can never pass the credential-bearing path.
+// The auth-capable boundary resolves policies ONLY from the narrow allowlist
+// (ST-IM latest/history and, since PR 39, indicators latest/history). Any
+// endpoint not on this list — including the public instrument-discovery routes —
+// returns `undefined` here and is denied `endpoint_not_allowlisted` before any
+// auth header or fetch, so it can never pass the credential-bearing path.
 function findPaidEndpointPolicy(endpointPath: string, httpMethod: PaidHttpMethod): PaidEndpointPolicy | undefined {
   return AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.find(
     (policy) => policy.endpointPath === endpointPath && policy.httpMethod === httpMethod

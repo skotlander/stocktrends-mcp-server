@@ -9,6 +9,7 @@ import { createPaidPricingReconciliationState } from "./paidPricing.js";
 import { registerPublicResources } from "./resources/index.js";
 import { StockTrendsClient, type FetchLike } from "./stocktrendsClient.js";
 import { registerPublicPlanningTools } from "./tools/index.js";
+import { registerPaidIndicatorsTools } from "./tools/indicatorsTools.js";
 import { registerPaidStimTools } from "./tools/stimTools.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
@@ -51,6 +52,13 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // credential-free catalog reconciliation, and nonzero local caps additionally
   // pass; otherwise every invocation fails closed.
   registerPaidStimTools(server, client, config, paidUsage, paidReconciliation);
+  // Paired paid indicators tools. Same exposure gate as the ST-IM pair (paid
+  // mode enabled with an API key). A raw symbol is resolved credential-free to a
+  // single canonical identity before any paid boundary; ambiguity fails closed
+  // with candidate matches. They share the same in-memory caps and per-server
+  // reconciliation state (reconciled per family), so the paid-exposed surface is
+  // exactly five tools while execution behavior is governed by the same gates.
+  registerPaidIndicatorsTools(server, client, config, paidUsage, paidReconciliation);
 
   return {
     server,
@@ -74,11 +82,11 @@ export async function startStdioServer(env: Env = process.env): Promise<void> {
 
   if (config.paidTools.status === "configured_execution_enabled") {
     logger.warn(
-      "Paid ST-IM live execution is ENABLED (STOCKTRENDS_ENABLE_PAID_EXECUTION=true with an API key). Live subscription/API-key calls to GET /v1/stim/latest and /v1/stim/history can occur when static pricing/preflight and nonzero local caps pass. No API key is logged."
+      "Paid ST-IM and indicators live execution is ENABLED (STOCKTRENDS_ENABLE_PAID_EXECUTION=true with an API key). Live subscription/API-key calls to GET /v1/stim/latest, /v1/stim/history, /v1/indicators/latest, and /v1/indicators/history can occur when a safe canonical instrument identity resolves and static pricing/preflight and nonzero local caps pass. No API key is logged."
     );
   } else if (config.paidTools.status === "configured_foundation_no_execution") {
     logger.warn(
-      "Paid ST-IM tools are exposed but paid execution is NOT enabled (STOCKTRENDS_ENABLE_PAID_EXECUTION is not true); every invocation fails closed with no request."
+      "Paid ST-IM and indicators tools are exposed but paid execution is NOT enabled (STOCKTRENDS_ENABLE_PAID_EXECUTION is not true); every invocation fails closed with no request."
     );
   }
 
