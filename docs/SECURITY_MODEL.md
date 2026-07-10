@@ -396,3 +396,131 @@ call it makes is **credential-free** (Accept + User-Agent only; never
 On any non-success outcome the tool fails closed **before** any pricing preflight,
 cap debit, auth-header construction, or paid fetch. An ambiguous or unresolved
 symbol never triggers a paid call under any configuration.
+
+## 16. Paid `selections/latest` Live Execution (Base ST-IM Selection Universe)
+
+This section records the security-model changes required by
+[`PHASE5C_SELECTIONS_LATEST_DESIGN_AND_CONTRACT_MEMO.md`](PHASE5C_SELECTIONS_LATEST_DESIGN_AND_CONTRACT_MEMO.md)
+§11 before the base-selections tool (`stocktrends_get_selections_latest` →
+`GET /v1/selections/latest`) is implemented and enabled. It updates and does not
+relax sections 2–15. Everything here is validated **mock-only**; no live API call
+runs in the automated test suite.
+
+The base-selections tool applies the **identical** gate policy as the paid ST-IM
+tools (build/runtime execution split, `X-API-Key`-only auth, mandatory
+pricing/preflight, family-scoped catalog reconciliation, default-deny caps,
+covering budget cap), with **list-shaped broad-sweep/limit-safety controls**
+added because it returns a universe/list rather than a single row. It is
+**exchange-scoped, not symbol-keyed**, so the §15.8 instrument resolver does not
+gate it and adds no tool.
+
+### 16.1 Paid-exposed six-tool surface
+
+Registering `stocktrends_get_selections_latest` brings the paid-exposed surface
+from five tools to **exactly six**: the planning tool
+(`stocktrends_estimate_workflow_cost`), the paired paid ST-IM tools, the paired
+paid indicators tools, and the single base-selections tool. The **default/free
+surface remains exactly one tool**, and there are **zero MCP prompts** in every
+mode. Exposure uses the same gate as the ST-IM/indicators families (paid-tools
+flag + configured API key) and is independent of the execution flag. No
+`selections/history`, no `selections/published/*`, and no public selections
+resource is added this increment.
+
+### 16.2 Auth-capable allowlist promotion
+
+`GET /v1/selections/latest` is promoted into
+`AUTH_CAPABLE_PAID_ENDPOINT_POLICIES` (§15.7) as an explicit, separately reviewed
+promotion, so it can receive an `X-API-Key` **only after every gate passes**.
+Only the base `selections/latest` route is promoted. `GET /v1/selections/history`,
+`GET /v1/selections/published/latest`, and `GET /v1/selections/published/history`
+are **not** promoted and remain denied `endpoint_not_allowlisted` before any auth
+header or fetch. The public/base nature of the route does not exempt it: only the
+promoted route becomes auth-capable. The pricing catalog read, the planning tool,
+and the public resources stay **credential-free** and can never receive the key.
+There is no `Authorization: Bearer`, no payment header, no x402/wallet/OAuth, no
+remote MCP, and no dynamic registration.
+
+### 16.3 Selections broad-sweep / limit-safety subsection (extends §7/§8/§15)
+
+Selections cap semantics are **list-shaped** and do **not** inherit the
+single-symbol semantics. The MCP enforces caps far tighter than the API's own
+default (`2000`) and hard max (`20000`):
+
+- **Safe default MCP `limit` = `50`.** When the caller omits `limit`, the adapter
+  sends an explicit `limit=50`; it **never** omits `limit`, so the API's `2000`
+  default can never apply.
+- **Hard maximum MCP `limit` = `250`.** A caller `limit` is validated to the
+  inclusive range `1`–`250` (integer) **before** preflight/auth/fetch. A value
+  above `250`, below `1`, non-integer, an array, or any sentinel **fails closed**
+  at the strict schema boundary with **no request** — it is never silently
+  clamped. Unknown keys and unsafe shapes are rejected the same way.
+- **No universe sweeps.** `limit` is always present and always `≤ 250`; there is
+  no "all rows" mode, no `limit=0`/`limit=-1` sentinel, and no way to exceed the
+  hard max.
+- **One fetch per invocation / no bulk automation.** Exactly one `GET` per tool
+  invocation. No pagination loop, no offset walking, no auto-iteration across
+  exchanges, no background refresh, no assembly of the universe from multiple
+  bounded calls, and **no automatic retry** on `429`/`5xx` (fail closed).
+- **Call caps default-deny.** `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` and
+  `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` default `0` (deny); execution requires
+  explicit nonzero values.
+- **Mandatory covering budget cap.** The `0.05 STC` nonzero cost with no covering
+  `STOCKTRENDS_MAX_STC_PER_SESSION` is denied `spend_cap_exceeded` before any
+  auth/fetch.
+- **Repeated-identical-call loop posture (sequential and concurrent).** Repeated
+  identical base selection calls (same normalized `exchange`/`min_prob13wk`/
+  effective `limit`/`include_data`/`include_mast`/`cs_only`) within a server
+  session are the runaway-loop surface of §7. The normalized signature is
+  **reserved synchronously before the first async boundary** (catalog
+  reconciliation), so a second identical call that arrives while the first is
+  still in flight — sequentially **or concurrently** — **fails closed
+  deterministically** (`repeated_identical_selection_call`) before any
+  pricing/auth/fetch/cap debit, rather than silently re-billing. If a call fails
+  before an authorized billable attempt, its reservation is **released** so a
+  later operator-supervised retry is not permanently blocked; once a billable
+  attempt is reached the signature is promoted to **executed** and stays blocked
+  for the session even if the API returns a deterministic error (no re-bill of an
+  identical broad-sweep request). State is in-memory and resets on restart.
+- **Row-count transparency.** `mcp_metadata` records the `effective_limit` sent
+  and the returned row count when derivable — metadata only, never a second
+  ranking or thresholding pass.
+
+### 16.4 Family-scoped selections pricing statement (extends §15.3)
+
+Endpoint cost is resolved from a **fresh, `selections`-family-specific static
+mirror** (`selections_latest_paid = 0.05 STC`, `endpoint_family: selections`,
+`cost_unit: STC`) that must pass a fail-closed reconciliation against the live
+`GET /v1/pricing/catalog` metadata (credential-free) before any auth header or
+fetch. Reconciliation fails closed (`pricing_catalog_reconciliation_failed`, no
+auth/fetch) on a missing rule, a duplicate/ambiguous rule, a cost mismatch, a
+missing/unsupported/**conflicting** unit (the verified `STC` unit is mandatory; a
+matching numeric cost is never accepted without a confirmed unit), an
+endpoint/rule-id mismatch, or an unavailable/malformed catalog. It **also**
+verifies the catalog row's `endpoint_family`: a missing family, or any family
+other than exactly `selections`, fails closed — so a row with the correct rule
+id/path/cost/unit but the wrong family (e.g. `selections_published`) can never
+reconcile the base rule. Where the catalog exposes them, a paid rule's
+`access_type` must be `paid` and `requires_payment` must be `true` (validated
+conservatively: an explicit contradicting value fails closed; an absent field is
+not fabricated into a pass). Reconciliation is scoped to the **base
+`selections`** rule group only: the `selections_published` family, base
+`selections_history`, ST-IM, and indicators state can never gate or satisfy a
+base-selections call, and the base-selections mirror never transfers to them.
+Each static mirror entry (ST-IM, indicators, base selections) now carries its
+expected `endpoint_family` (`stim`, `indicators`, `selections`), so family
+scoping is enforced for every paid family, not just selections.
+
+### 16.5 Base-vs-published boundary (extends §6, prompt-injection/authority)
+
+`selections/latest` forwards the **base ST-IM selection universe** verbatim in
+`api_data`. It is **not** the published STIM Select list — that is a separate
+endpoint (`/v1/selections/published/latest`, family `selections_published`) that
+applies the published thresholds. The tool **never** presents base rows as the
+published list, **never** applies the published thresholds locally, and **never**
+ranks, thresholds, scores, filters, or otherwise recomputes selections locally
+(ADR-002; MCP_SERVER_ARCHITECTURE no-recomputation rule). `min_prob13wk`,
+`exchange`, `cs_only`, `include_data`, and `include_mast` are passed through to
+the API only; none is applied as a second local pass. `mcp_metadata` carries
+base-universe provenance so agents cannot conflate the two surfaces.
+`observed_cost` and `payment_status` remain `null` unless the API returns them,
+and are never fabricated.

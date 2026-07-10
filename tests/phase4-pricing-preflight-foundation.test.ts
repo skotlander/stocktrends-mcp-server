@@ -206,10 +206,12 @@ describe("Phase 4 pricing/preflight foundation", () => {
 
   it("denies non-allowlisted paid endpoints before auth headers can be built", () => {
     const config = paidConfig();
+    // A still-non-allowlisted paid route (base selections/latest was promoted in
+    // PR 45; selections history remains off the auth-capable allowlist).
     const input = stimLatestInput({
-      toolName: "stocktrends_get_selections_latest",
-      endpointPath: "/v1/selections/latest",
-      targetUrl: new URL("https://api.stocktrends.com/v1/selections/latest")
+      toolName: "stocktrends_get_selections_history",
+      endpointPath: "/v1/selections/history",
+      targetUrl: new URL("https://api.stocktrends.com/v1/selections/history")
     });
     const decision = evaluatePaidPreflight(config, input);
 

@@ -183,6 +183,16 @@ export const DEFAULT_PAID_SPEND_POLICY: PaidSpendPolicy = Object.freeze({
 // instrument-discovery endpoints (`/v1/instruments/lookup`,
 // `/v1/instruments/resolve`) are deliberately ABSENT here: the internal resolver
 // reads them credential-free and they can never receive an `X-API-Key`.
+//
+// PR 45 promotes ONLY the base `/v1/selections/latest` route into this
+// auth-capable list (PHASE5C_SELECTIONS_LATEST_DESIGN_AND_CONTRACT_MEMO §11.1),
+// behind the identical gate policy plus list-shaped broad-sweep/limit-safety
+// controls (default limit 50, hard max 250, always-present limit, one fetch per
+// invocation, no bulk/retry, repeated-identical-call loop denial). The published
+// selections routes (`/v1/selections/published/latest`,
+// `/v1/selections/published/history`) and base `/v1/selections/history` are
+// deliberately ABSENT and remain denied `endpoint_not_allowlisted`; promoting
+// them requires a separate, reviewed increment.
 export const AUTH_CAPABLE_PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.freeze([
   {
     toolName: "stocktrends_get_stim_latest",
@@ -221,6 +231,19 @@ export const AUTH_CAPABLE_PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] 
     pricingRuleId: "indicators_history_paid",
     requiresPricingPreflight: true,
     supportsLongitudinalAnalysis: true
+  },
+  {
+    // Base ST-IM selection universe (list/universe-returning). Exchange-scoped,
+    // not symbol-keyed; no history sibling this increment. Shipped alone under
+    // list-shaped limit-safety controls (see selectionsTools.ts). NOT the
+    // published STIM Select list.
+    toolName: "stocktrends_get_selections_latest",
+    endpointPath: "/v1/selections/latest",
+    httpMethod: "GET",
+    access: "paid",
+    pricingRuleId: "selections_latest_paid",
+    requiresPricingPreflight: true,
+    supportsLongitudinalAnalysis: false
   }
 ]);
 

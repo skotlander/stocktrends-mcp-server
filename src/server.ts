@@ -10,6 +10,7 @@ import { registerPublicResources } from "./resources/index.js";
 import { StockTrendsClient, type FetchLike } from "./stocktrendsClient.js";
 import { registerPublicPlanningTools } from "./tools/index.js";
 import { registerPaidIndicatorsTools } from "./tools/indicatorsTools.js";
+import { registerPaidSelectionsTools } from "./tools/selectionsTools.js";
 import { registerPaidStimTools } from "./tools/stimTools.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
@@ -59,6 +60,16 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // reconciliation state (reconciled per family), so the paid-exposed surface is
   // exactly five tools while execution behavior is governed by the same gates.
   registerPaidIndicatorsTools(server, client, config, paidUsage, paidReconciliation);
+  // Base ST-IM selection-universe tool (`stocktrends_get_selections_latest`).
+  // Same exposure gate as the ST-IM / indicators pairs (paid mode enabled with
+  // an API key), so registering it brings the paid-exposed surface to exactly
+  // six tools while the default/free surface stays at exactly one. Execution is
+  // governed by the same gates plus list-shaped broad-sweep/limit-safety controls
+  // (default limit 50, hard max 250, always-present limit, one fetch per
+  // invocation, no bulk/retry, repeated-identical-call loop denial). It shares
+  // the same in-memory caps and per-server reconciliation state (reconciled per
+  // family, base `selections` only).
+  registerPaidSelectionsTools(server, client, config, paidUsage, paidReconciliation);
 
   return {
     server,
@@ -82,11 +93,11 @@ export async function startStdioServer(env: Env = process.env): Promise<void> {
 
   if (config.paidTools.status === "configured_execution_enabled") {
     logger.warn(
-      "Paid ST-IM and indicators live execution is ENABLED (STOCKTRENDS_ENABLE_PAID_EXECUTION=true with an API key). Live subscription/API-key calls to GET /v1/stim/latest, /v1/stim/history, /v1/indicators/latest, and /v1/indicators/history can occur when a safe canonical instrument identity resolves and static pricing/preflight and nonzero local caps pass. No API key is logged."
+      "Paid ST-IM, indicators, and base selections live execution is ENABLED (STOCKTRENDS_ENABLE_PAID_EXECUTION=true with an API key). Live subscription/API-key calls to GET /v1/stim/latest, /v1/stim/history, /v1/indicators/latest, /v1/indicators/history, and /v1/selections/latest can occur when static pricing/preflight, family-scoped catalog reconciliation, and nonzero local caps pass (ST-IM/indicators additionally require a safe canonical instrument identity; selections additionally enforce a bounded limit and repeated-identical-call loop safety). No API key is logged."
     );
   } else if (config.paidTools.status === "configured_foundation_no_execution") {
     logger.warn(
-      "Paid ST-IM and indicators tools are exposed but paid execution is NOT enabled (STOCKTRENDS_ENABLE_PAID_EXECUTION is not true); every invocation fails closed with no request."
+      "Paid ST-IM, indicators, and base selections tools are exposed but paid execution is NOT enabled (STOCKTRENDS_ENABLE_PAID_EXECUTION is not true); every invocation fails closed with no request."
     );
   }
 
