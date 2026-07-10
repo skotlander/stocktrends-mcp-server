@@ -39,14 +39,25 @@ export interface StaticEndpointPricingEntry {
 // Keyed by the catalog pricing rule id. Each entry also records the endpoint it
 // prices, so reconciliation can verify the catalog assigns the same rule id to
 // the same endpoint at the same cost/unit.
+//
+// The indicators values are a FRESH, family-specific static mirror confirmed
+// against the live credential-free catalog in
+// PHASE5B_INDICATORS_CONTRACT_VERIFICATION_MEMO §4 (`indicators_latest_paid`
+// 0.0035 STC, `indicators_history_paid` 0.01 STC). The ST-IM values do NOT
+// transfer to indicators and vice versa; each family carries its own mirror.
 const STATIC_ENDPOINT_PRICING: Readonly<Record<string, StaticEndpointPricingEntry>> = Object.freeze({
   stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", endpointPath: "/v1/stim/latest", amount: 0.0025, unit: "STC" }),
-  stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", amount: 0.0075, unit: "STC" })
+  stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", amount: 0.0075, unit: "STC" }),
+  indicators_latest_paid: Object.freeze({ pricingRuleId: "indicators_latest_paid", endpointPath: "/v1/indicators/latest", amount: 0.0035, unit: "STC" }),
+  indicators_history_paid: Object.freeze({ pricingRuleId: "indicators_history_paid", endpointPath: "/v1/indicators/history", amount: 0.01, unit: "STC" })
 });
 
-// The rules that must be confirmed by the live catalog before any paid ST-IM
-// auth/fetch. Exactly the two auth-capable ST-IM rules — nothing broader.
-const RECONCILIATION_SPECS: readonly StaticEndpointPricingEntry[] = Object.freeze(Object.values(STATIC_ENDPOINT_PRICING));
+// The static rule-id groups a caller may ask to reconcile. Reconciliation is
+// FAMILY-SCOPED: a paid ST-IM call reconciles only the ST-IM rules and a paid
+// indicators call reconciles only the indicators rules, so one family's catalog
+// state never gates the other.
+export const STIM_PRICING_RULE_IDS: readonly string[] = Object.freeze(["stim_latest_paid", "stim_history_paid"]);
+export const INDICATORS_PRICING_RULE_IDS: readonly string[] = Object.freeze(["indicators_latest_paid", "indicators_history_paid"]);
 
 // Resolve the static, authoritative cost basis for a paid endpoint pricing rule.
 // Returns `null` when no static rule exists (ambiguous/missing pricing), which
@@ -94,27 +105,39 @@ export interface PricingReconciliationResult {
 
 // Per-server reconciliation state. A successful reconciliation is cached for the
 // lifetime of the server instance (the catalog is stable metadata; no hidden
-// background refresh). Failures are NOT cached, so a transient catalog outage
-// fails the current call closed but does not permanently poison the session.
+// background refresh) and is tracked PER rule-id group, so reconciling one paid
+// family (e.g. ST-IM) never marks another family (e.g. indicators) reconciled.
+// Failures are NOT cached, so a transient catalog outage fails the current call
+// closed but does not permanently poison the session.
 export interface PaidPricingReconciliationState {
-  reconciled: boolean;
+  reconciledGroups: Set<string>;
 }
 
 export function createPaidPricingReconciliationState(): PaidPricingReconciliationState {
-  return { reconciled: false };
+  return { reconciledGroups: new Set<string>() };
 }
 
-// Reconcile the static local pricing mirror against the live `/v1/pricing/catalog`
-// metadata. Runs a single credential-free public read (no X-API-Key) and fails
-// closed on any discrepancy. This is metadata reconciliation only — the catalog
-// is never treated as an authorization source by itself; local caps and the
-// full preflight still gate the call, and the auth header is constructed only
-// after this reconciliation passes.
+function reconciliationGroupKey(pricingRuleIds: readonly string[]): string {
+  return [...pricingRuleIds].sort().join("|");
+}
+
+// Reconcile the static local pricing mirror for a specific family of pricing
+// rules against the live `/v1/pricing/catalog` metadata. Runs a single
+// credential-free public read (no X-API-Key) and fails closed on any
+// discrepancy. This is metadata reconciliation only — the catalog is never
+// treated as an authorization source by itself; local caps and the full
+// preflight still gate the call, and the auth header is constructed only after
+// this reconciliation passes. `pricingRuleIds` scopes reconciliation to exactly
+// the family being invoked (fail closed if any requested rule id has no static
+// mirror).
 export async function reconcileStaticPricingWithCatalog(
   client: StockTrendsClient,
-  state: PaidPricingReconciliationState
+  state: PaidPricingReconciliationState,
+  pricingRuleIds: readonly string[]
 ): Promise<PricingReconciliationResult> {
-  if (state.reconciled) {
+  const groupKey = reconciliationGroupKey(pricingRuleIds);
+
+  if (state.reconciledGroups.has(groupKey)) {
     return {
       ok: true,
       reason: null,
@@ -122,6 +145,18 @@ export async function reconcileStaticPricingWithCatalog(
       source: "pricing_catalog",
       cached: true
     };
+  }
+
+  const specs: StaticEndpointPricingEntry[] = [];
+
+  for (const pricingRuleId of pricingRuleIds) {
+    const entry = STATIC_ENDPOINT_PRICING[pricingRuleId];
+
+    if (!entry) {
+      return fail("rule_missing", `No static pricing mirror is defined for rule ${pricingRuleId}.`);
+    }
+
+    specs.push(entry);
   }
 
   let data: JsonObject;
@@ -134,7 +169,7 @@ export async function reconcileStaticPricingWithCatalog(
     });
     data = response.data;
   } catch {
-    return fail("catalog_unavailable", "The pricing catalog could not be fetched; live paid ST-IM execution fails closed.");
+    return fail("catalog_unavailable", "The pricing catalog could not be fetched; live paid execution fails closed.");
   }
 
   const rules = extractCatalogRules(data);
@@ -143,7 +178,7 @@ export async function reconcileStaticPricingWithCatalog(
     return fail("catalog_malformed", "The pricing catalog response did not contain a usable rules array.");
   }
 
-  for (const spec of RECONCILIATION_SPECS) {
+  for (const spec of specs) {
     const ruleResult = reconcileRule(rules, spec);
 
     if (!ruleResult.ok) {
@@ -151,7 +186,7 @@ export async function reconcileStaticPricingWithCatalog(
     }
   }
 
-  state.reconciled = true;
+  state.reconciledGroups.add(groupKey);
   return {
     ok: true,
     reason: null,
@@ -192,10 +227,18 @@ function reconcileRule(rules: readonly unknown[], spec: StaticEndpointPricingEnt
     return fail("rule_id_mismatch", `Pricing catalog assigns a different rule id to endpoint ${spec.endpointPath}.`);
   }
 
-  const unit = readString(entry.unit);
+  // The catalog unit is mandatory and must be the verified STC unit. A missing
+  // unit, an unsupported unit (e.g. USD), or conflicting `cost_unit`/`unit`
+  // fields all fail closed — a matching numeric cost is never accepted without a
+  // confirmed unit. This applies identically to every family (ST-IM, indicators).
+  const unit = normalizeCatalogUnit(entry);
 
-  if (unit !== undefined && unit.toUpperCase() !== spec.unit) {
-    return fail("unsupported_unit", `Pricing catalog rule ${spec.pricingRuleId} unit is not supported for local budgeting.`);
+  if (unit === null) {
+    return fail("unsupported_unit", `Pricing catalog rule ${spec.pricingRuleId} has a missing or conflicting unit; the verified ${spec.unit} unit is required.`);
+  }
+
+  if (unit !== spec.unit) {
+    return fail("unsupported_unit", `Pricing catalog rule ${spec.pricingRuleId} unit ${unit} is not the supported ${spec.unit} unit for local budgeting.`);
   }
 
   const cost = readCatalogStcCost(entry);
@@ -219,6 +262,21 @@ function extractCatalogRules(data: JsonObject): readonly unknown[] | null {
 function readCatalogStcCost(entry: JsonObject): number | null {
   const value = entry.stc_cost ?? entry.cost_stc;
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+// Normalize the catalog unit from the actual catalog shape, reading both the
+// verified `cost_unit` field and the legacy `unit` field. Returns the
+// upper-cased unit, or `null` when the unit is absent from both fields or the
+// two fields disagree (a conflict that must fail closed).
+function normalizeCatalogUnit(entry: JsonObject): string | null {
+  const costUnit = readString(entry.cost_unit)?.toUpperCase();
+  const unit = readString(entry.unit)?.toUpperCase();
+
+  if (costUnit !== undefined && unit !== undefined && costUnit !== unit) {
+    return null;
+  }
+
+  return costUnit ?? unit ?? null;
 }
 
 function readString(value: unknown): string | undefined {

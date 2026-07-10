@@ -22,6 +22,7 @@ import {
   reconcileStaticPricingWithCatalog,
   resolveStaticEndpointPricing,
   STATIC_PRICING_POLICY_VERSION,
+  STIM_PRICING_RULE_IDS,
   type PaidPricingReconciliationState,
   type PricingReconciliationResult
 } from "../paidPricing.js";
@@ -526,7 +527,7 @@ async function executePaidStim(
   // metadata BEFORE any auth header is constructed or any ST-IM fetch occurs.
   // Static pricing alone can never authorize a paid call. This read sends no
   // X-API-Key and is not an authorization source by itself.
-  const reconciliationResult = await reconcileStaticPricingWithCatalog(client, reconciliation);
+  const reconciliationResult = await reconcileStaticPricingWithCatalog(client, reconciliation, STIM_PRICING_RULE_IDS);
 
   if (!reconciliationResult.ok) {
     return denyStimInvocation(config, context, "pricing_catalog_reconciliation_failed", {

@@ -17,6 +17,7 @@ import { PHASE1_PROMPT_DEFINITIONS } from "../src/resources/index.js";
 import type { FetchLike } from "../src/stocktrendsClient.js";
 import { COST_ESTIMATE_TOOL_NAME } from "../src/tools/index.js";
 import { STIM_HISTORY_TOOL_NAME, STIM_LATEST_TOOL_NAME } from "../src/tools/stimTools.js";
+import { INDICATORS_HISTORY_TOOL_NAME, INDICATORS_LATEST_TOOL_NAME } from "../src/tools/indicatorsTools.js";
 import { connectMcp, jsonResponse, textResponse } from "./helpers.js";
 
 const MOCK_KEY = "mock-live-secret-must-never-be-sent-in-plaintext";
@@ -54,14 +55,22 @@ const STIM_HEADERS = {
 };
 
 describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix", () => {
-  it("exposes exactly 3 tools, 9 resources, 0 prompts with the execution flag set", async () => {
+  it("exposes exactly 5 tools, 9 resources, 0 prompts with the execution flag set", async () => {
     const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     const resources = await client.listResources();
 
-    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, STIM_HISTORY_TOOL_NAME, STIM_LATEST_TOOL_NAME].sort());
+    expect(toolNames).toEqual(
+      [
+        COST_ESTIMATE_TOOL_NAME,
+        STIM_HISTORY_TOOL_NAME,
+        STIM_LATEST_TOOL_NAME,
+        INDICATORS_HISTORY_TOOL_NAME,
+        INDICATORS_LATEST_TOOL_NAME
+      ].sort()
+    );
     expect(resources.resources.map((resource) => resource.uri)).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
     expect(client.getServerCapabilities()?.prompts).toBeUndefined();
     expect(PHASE1_PROMPT_DEFINITIONS).toEqual([]);
@@ -551,45 +560,46 @@ describe("Phase 4 paid ST-IM live execution — credential-bearing endpoint allo
     return { apiBaseUrl: config.apiBaseUrl, paidTools: config.paidTools };
   };
 
-  it("narrows the auth-capable allowlist to ST-IM latest/history only, keeping broad metadata separate", () => {
-    expect(AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toEqual(["/v1/stim/latest", "/v1/stim/history"]);
-    // Broad future metadata still lists indicators, but never on the auth path.
-    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toContain("/v1/indicators/latest");
-    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toContain("/v1/indicators/history");
+  it("scopes the auth-capable allowlist to ST-IM and indicators latest/history only (PR 39 promotion)", () => {
+    // PR 39 promotes the paired paid indicators routes into the auth-capable
+    // allowlist so they are executable behind the same gate policy. The public
+    // instrument-discovery routes are deliberately never on this list.
+    expect(AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toEqual([
+      "/v1/stim/latest",
+      "/v1/stim/history",
+      "/v1/indicators/latest",
+      "/v1/indicators/history"
+    ]);
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/instruments/lookup");
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/instruments/resolve");
   });
 
-  it.each(["/v1/indicators/latest", "/v1/indicators/history"])("refuses indicator endpoint %s on the auth-capable boundary", (endpointPath) => {
+  it.each(["/v1/indicators/latest", "/v1/indicators/history"])("allows indicator endpoint %s on the auth-capable boundary (structural gates pass)", (endpointPath) => {
     const config = authConfig();
     const toolName = endpointPath.endsWith("latest") ? "stocktrends_get_indicators_latest" : "stocktrends_get_indicators_history";
     const targetUrl = new URL(`https://api.stocktrends.com${endpointPath}`);
 
-    // Not resolvable as an auth-capable policy.
-    expect(getPaidEndpointPolicy(endpointPath)).toBeUndefined();
-    expect(() => assertPaidEndpointAllowed(endpointPath)).toThrow(StockTrendsMcpError);
+    // Resolvable as an auth-capable policy after promotion.
+    expect(getPaidEndpointPolicy(endpointPath)?.pricingRuleId).toBe(
+      endpointPath.endsWith("latest") ? "indicators_latest_paid" : "indicators_history_paid"
+    );
+    expect(() => assertPaidEndpointAllowed(endpointPath)).not.toThrow();
 
-    // Structural invocation preflight denies before pricing/auth.
-    expect(
-      evaluatePaidInvocationPreflight(config, { toolName, endpointPath, httpMethod: "GET", targetUrl }).denialReason
-    ).toBe("endpoint_not_allowlisted");
+    // Structural invocation preflight now authorizes (execution flag + key set).
+    expect(evaluatePaidInvocationPreflight(config, { toolName, endpointPath, httpMethod: "GET", targetUrl }).denialReason).toBeNull();
 
-    // Full preflight (even with a valid-looking cost estimate) denies.
+    // Full preflight allows with the authoritative indicators cost estimate.
     const input: PaidPreflightEvaluationInput = {
       toolName,
       endpointPath,
       httpMethod: "GET",
       targetUrl,
-      costEstimate: indicatorCost()
+      costEstimate: indicatorCost(endpointPath.endsWith("latest") ? "indicators_latest_paid" : "indicators_history_paid")
     };
-    expect(evaluatePaidPreflight(config, input).denialReason).toBe("endpoint_not_allowlisted");
+    expect(evaluatePaidPreflight(config, input).localPolicyDecision).toBe("allow");
 
-    // buildPaidAuthHeaders refuses to construct an X-API-Key header.
-    expect(() => buildPaidAuthHeaders(config, input)).toThrow(StockTrendsMcpError);
-    try {
-      buildPaidAuthHeaders(config, input);
-    } catch (error) {
-      expect(error).toBeInstanceOf(StockTrendsMcpError);
-      expect(serializedSafeError(error)).not.toContain(MOCK_KEY);
-    }
+    // buildPaidAuthHeaders now constructs the X-API-Key header for indicators.
+    expect(buildPaidAuthHeaders(config, input)).toEqual({ "X-API-Key": MOCK_KEY });
   });
 
   it("still allows the ST-IM endpoints through the auth-capable allowlist check", () => {
@@ -723,13 +733,13 @@ function costEstimateBody(): Record<string, unknown> {
   };
 }
 
-function indicatorCost(): PaidCostEstimate {
+function indicatorCost(pricingRuleId: "indicators_latest_paid" | "indicators_history_paid" = "indicators_latest_paid"): PaidCostEstimate {
   return {
     amount: 0.25,
     unit: "STC",
     authoritative: true,
     pricingSource: "pricing_catalog",
-    pricingRuleId: "indicators_latest_paid",
+    pricingRuleId,
     fetchedAt: "2026-07-08T00:00:00.000Z"
   };
 }

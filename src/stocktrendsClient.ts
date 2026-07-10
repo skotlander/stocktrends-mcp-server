@@ -44,6 +44,24 @@ export interface PaidEndpointResponse {
   headers: PaidResponseHeaders;
 }
 
+export interface PublicDiscoveryRequest {
+  endpointPath: string;
+  // Only validated, caller-supplied query parameters (e.g. symbol, prefer_exchange).
+  searchParams: URLSearchParams;
+  resourceUri?: string;
+  toolName?: string;
+}
+
+// Result of a credential-free public instrument-discovery read. Unlike
+// `fetchJson`, this deliberately surfaces the HTTP status and body for the
+// resolver's expected 4xx outcomes (400 invalid input, 404 no match, 409
+// ambiguity) instead of throwing, so the internal resolver can fail closed with
+// candidate matches. Network/timeout/redirect/malformed responses still throw.
+export interface PublicDiscoveryResult {
+  status: number;
+  data: JsonObject | null;
+}
+
 export class StockTrendsClient {
   readonly apiBaseOrigin: string;
   private readonly fetchFn: FetchLike;
@@ -142,6 +160,72 @@ export class StockTrendsClient {
       data,
       status: response.status,
       upstreamRequestId
+    };
+  }
+
+  // Credential-free public instrument-discovery GET path used by the internal
+  // resolver before any paid boundary. It sends the SAME public headers as
+  // `fetchJson` (Accept + User-Agent) and NEVER an `X-API-Key`, Authorization,
+  // or payment header. It performs exactly one attempt, never retries, and never
+  // follows redirects. Expected discovery statuses (200, plus 400/404/409) are
+  // returned to the caller with their parsed JSON body so the resolver can fail
+  // closed with candidate matches; redirects, timeouts, and network failures
+  // throw. This method is deliberately distinct from `fetchPaid` and can never
+  // attach a credential.
+  async fetchPublicDiscovery(request: PublicDiscoveryRequest): Promise<PublicDiscoveryResult> {
+    const url = this.buildUrl(request.endpointPath);
+
+    for (const [key, value] of request.searchParams) {
+      url.searchParams.append(key, value);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+    const safeData = { endpointPath: request.endpointPath, resourceUri: request.resourceUri, toolName: request.toolName };
+
+    let response: Response;
+
+    try {
+      response = await this.fetchFn(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "stocktrends-mcp-server/1.0"
+        },
+        redirect: "manual",
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) {
+        throw new StockTrendsMcpError("timeout", safeData);
+      }
+
+      throw new StockTrendsMcpError("api_unavailable", safeData);
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      throw new StockTrendsMcpError("api_unapproved_redirect", { ...safeData, status: response.status });
+    }
+
+    // Best-effort JSON parse. A JSON body is expected for the resolver's success
+    // and documented 4xx cases; a non-JSON body yields `data: null` and the
+    // resolver treats it as an unusable response (fail closed).
+    let data: JsonObject | null = null;
+
+    if (isJsonResponse(response)) {
+      try {
+        const parsed = await response.json();
+        data = isJsonObject(parsed) ? parsed : null;
+      } catch {
+        data = null;
+      }
+    }
+
+    return {
+      status: response.status,
+      data
     };
   }
 

@@ -194,16 +194,25 @@ Before any runtime code is merged:
 - [ ] Confirm x402/wallet behavior remains deferred.
 - [ ] Complete a separate review before any remote HTTP/SSE transport.
 
-## 15. Paid ST-IM Live Execution (Subscription/API-Key)
+## 15. Paid ST-IM and Indicators Live Execution (Subscription/API-Key)
 
 This section is the reconfirmation required by
 [`PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md`](PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md)
 §17.1 (consistent with the Phase 3 paid-tool process requirement) before live
 subscription/API-key execution of the paired paid ST-IM tools
 (`stocktrends_get_stim_latest` → `GET /v1/stim/latest`,
-`stocktrends_get_stim_history` → `GET /v1/stim/history`) is implemented and
-enabled. It updates and does not relax sections 2–13. Everything in this section
-is validated **mock-only**; no live API call runs in the automated test suite.
+`stocktrends_get_stim_history` → `GET /v1/stim/history`) and the paired paid
+indicators tools (`stocktrends_get_indicators_latest` →
+`GET /v1/indicators/latest`, `stocktrends_get_indicators_history` →
+`GET /v1/indicators/history`) is implemented and enabled. It updates and does not
+relax sections 2–13. Everything in this section is validated **mock-only**; no
+live API call runs in the automated test suite.
+
+The indicators tools apply the **identical** gate policy as the ST-IM tools, with
+one addition: an **internal, credential-free instrument resolver** (§15.8) must
+resolve a caller identity to exactly one safe canonical `symbol_exchange` before
+any paid boundary is entered. Indicators are **no longer denied-before-auth as a
+class**; they are authorized only behind the same gates as ST-IM.
 
 ### 15.1 Final paid enablement flags (exposure vs. execution split)
 
@@ -217,9 +226,11 @@ must agree before any call:
   can never execute regardless of environment. Flipping the constants does not
   by itself authorize any call.
 - **`STOCKTRENDS_ENABLE_PAID_TOOLS` (exposure).** When `true` with a configured
-  `STOCKTRENDS_API_KEY`, registers the paired paid ST-IM tool *definitions*
-  (total tools become 3). This flag, or the API key, alone never exposes or
-  executes anything.
+  `STOCKTRENDS_API_KEY`, registers the paired paid ST-IM tool *definitions* and
+  the paired paid indicators tool *definitions* (total tools become 5; the
+  default/free surface remains exactly 1). This flag, or the API key, alone never
+  exposes or executes anything. The internal instrument resolver adds **no**
+  public tool.
 - **`STOCKTRENDS_ENABLE_PAID_EXECUTION` (execution).** A distinct runtime flag.
   Live execution additionally requires it to be `true`. Exposure is independent
   of it: the tools appear whether or not it is set; only execution is gated.
@@ -230,9 +241,9 @@ must agree before any call:
   | API key only | none (1 planning tool) | none |
   | Paid-tools flag only (no key) | none (1 planning tool) | none |
   | Execution flag only (no tools flag / no key) | none (1 planning tool) | none |
-  | Paid-tools flag + key, no execution flag | 3 tools | none (`paid_execution_disabled`) |
-  | Paid-tools flag + key + execution flag, no caps | 3 tools | none (`spend_cap_exceeded`) |
-  | Paid-tools flag + key + execution flag + ≥1 nonzero call cap + a budget cap covering the nonzero cost | 3 tools | permitted after full preflight |
+  | Paid-tools flag + key, no execution flag | 5 tools | none (`paid_execution_disabled`) |
+  | Paid-tools flag + key + execution flag, no caps | 5 tools | none (`spend_cap_exceeded`) |
+  | Paid-tools flag + key + execution flag + ≥1 nonzero call cap + a budget cap covering the nonzero cost | 5 tools | permitted after full preflight (indicators additionally require a safe resolved identity) |
 
   There is no dry-run flag in this build; a not-yet-enabled configuration simply
   fails closed with `paid_execution_disabled` and sends no request.
@@ -247,14 +258,20 @@ must agree before any call:
 - The `X-API-Key` header is constructed **only** inside the coupled paid
   boundary (`buildPaidAuthHeaders`), **only after every preflight gate passes**,
   and **only** for the approved origin + a **narrow auth-capable allowlist**
-  (`/v1/stim/latest`, `/v1/stim/history` — see §15.7). Public resources and the
-  `stocktrends_estimate_workflow_cost` planning tool stay credential-free.
+  (`/v1/stim/latest`, `/v1/stim/history`, `/v1/indicators/latest`,
+  `/v1/indicators/history` — see §15.7). Public resources, the
+  `stocktrends_estimate_workflow_cost` planning tool, the pricing catalog read,
+  and the internal instrument-resolver reads (`/v1/instruments/lookup`,
+  `/v1/instruments/resolve`) stay **credential-free** and can never receive the
+  API key.
 
 ### 15.3 Pricing/preflight contract
 
 - Preflight is **mandatory and non-skippable**. Endpoint cost is resolved from a
   **static, in-repo endpoint pricing policy** mirroring the catalog rule ids
-  (`stim_latest_paid`, `stim_history_paid`); `/v1/cost-estimate` and the
+  (`stim_latest_paid`, `stim_history_paid`, `indicators_latest_paid` `0.0035 STC`,
+  `indicators_history_paid` `0.01 STC`); the ST-IM and indicators mirrors are
+  family-specific and do not transfer to one another. `/v1/cost-estimate` and the
   `stocktrends_estimate_workflow_cost` planning tool remain **workflow-level
   planning only** and are **not** endpoint-level authorization inputs.
 - **Static pricing alone cannot authorize a paid call.** Before any auth header
@@ -265,8 +282,14 @@ must agree before any call:
   reconciliation only, never authorization by itself**. Reconciliation fails
   closed (`pricing_catalog_reconciliation_failed`, no auth/fetch) when the
   catalog is unavailable, malformed, ambiguous (duplicate rule), missing a
-  required rule id, missing/mismatched cost, has an unsupported unit, or has a
-  mismatched endpoint/rule id. A successful reconciliation is cached per server
+  required rule id, missing/mismatched cost, has a **missing, unsupported, or
+  conflicting unit** (the verified `STC` unit is mandatory; a matching numeric
+  cost is never accepted without a confirmed unit, read from the catalog's
+  `cost_unit`/`unit` field), or has a mismatched endpoint/rule id. Reconciliation
+  is **family-scoped**: a paid ST-IM call reconciles only the ST-IM rule group and
+  a paid indicators call reconciles only the indicators rule group, so one
+  family's catalog state (or success) never gates or satisfies the other. A
+  successful reconciliation is cached **per rule-id group** for the server
   session; failures are not cached. Catalog-derived cost is used only as an
   estimated/static cost, **never** as `observed_cost`.
 - Static pricing policy **+** catalog reconciliation **+** local caps are all
@@ -331,13 +354,45 @@ the repository.**
 ### 15.7 Narrowed credential-bearing endpoint allowlist
 
 The credential-bearing execution boundary can authorize an `X-API-Key` header
-and a fetch for **only** `GET /v1/stim/latest` and `GET /v1/stim/history`. The
-single policy resolver used by the auth-capable path (`findPaidEndpointPolicy`,
-feeding `evaluatePaidPreflight`, `evaluatePaidInvocationPreflight`,
-`buildPaidAuthHeaders`, `assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`)
-reads only `AUTH_CAPABLE_PAID_ENDPOINT_POLICIES`. Broader descriptive metadata
-(`PAID_ENDPOINT_POLICIES`, which still lists the indicators endpoints and may
-list future paid routes) is **not** reachable by the auth path: indicator and
-any other non-promoted endpoints are denied `endpoint_not_allowlisted` before
-any auth header or fetch. Making a future endpoint executable requires an
-explicit, separately reviewed promotion into the auth-capable allowlist.
+and a fetch for **only** the four approved paid routes: `GET /v1/stim/latest`,
+`GET /v1/stim/history`, `GET /v1/indicators/latest`, and
+`GET /v1/indicators/history`. The single policy resolver used by the auth-capable
+path (`findPaidEndpointPolicy`, feeding `evaluatePaidPreflight`,
+`evaluatePaidInvocationPreflight`, `buildPaidAuthHeaders`,
+`assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`) reads only
+`AUTH_CAPABLE_PAID_ENDPOINT_POLICIES`. PR 39 promoted the paired paid indicators
+routes into that allowlist so they are executable behind the identical gate
+policy as ST-IM. The **public instrument-discovery routes**
+(`/v1/instruments/lookup`, `/v1/instruments/resolve`) and any future non-promoted
+paid route are **not** on the auth-capable allowlist and are denied
+`endpoint_not_allowlisted` before any auth header or fetch — they can never
+receive an `X-API-Key`. Making a future endpoint executable requires an explicit,
+separately reviewed promotion into the auth-capable allowlist.
+
+### 15.8 Internal credential-free instrument resolver
+
+Indicators (and any future stock-specific paid family) resolve a caller identity
+to exactly one safe canonical `symbol_exchange` **before** any paid boundary. The
+resolver is an **internal helper only** — it adds **no public MCP tool** and no
+MCP resource, so the default/free surface stays at exactly one tool — and every
+call it makes is **credential-free** (Accept + User-Agent only; never
+`X-API-Key`, `Authorization`, or a payment header).
+
+- **Canonical `symbol_exchange`** (e.g. `IBM_N`) is trusted directly with no
+  discovery call and converted to the API hyphen form (`IBM-N`); a conflicting
+  `symbol`/`exchange` fails closed.
+- **Explicit `symbol` + `exchange`** is verified via `GET /v1/instruments/resolve`
+  with an explicit `prefer_exchange` equal to the supplied exchange — **never the
+  default `N`**. A `409`, `404`, or an inconsistent result fails closed.
+- **Bare raw `symbol`** is disambiguated via `GET /v1/instruments/lookup` using a
+  **required, valid integer `count`**: it proceeds only when `count === 1` and the
+  body carries exactly one usable canonical match. A missing/non-integer/negative
+  `count`, a `count` inconsistent with the returned rows, `count > 1`, or no match
+  all **fail closed** (ambiguity returns the candidate matches). The resolver never
+  substitutes the parsed row count for a missing/invalid `count`, and the
+  bare-symbol path never calls resolve and never sends `prefer_exchange`, so the
+  default-`N` auto-pick can never occur.
+
+On any non-success outcome the tool fails closed **before** any pricing preflight,
+cap debit, auth-header construction, or paid fetch. An ambiguous or unresolved
+symbol never triggers a paid call under any configuration.

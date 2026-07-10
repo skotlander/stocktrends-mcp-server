@@ -46,13 +46,19 @@ describe("Phase 3 paid-auth foundation", () => {
     const resources = await client.listResources();
     const tools = await client.listTools();
 
-    // The paired paid ST-IM tool *definitions* are only exposed when paid mode
-    // is enabled with an API key (Phase 4 foundation, no-execution). Every other
-    // env keeps the single public planning tool. See
-    // PHASE4_PAID_STIM_FOUNDATION_NO_EXECUTION_IMPLEMENTATION_NOTES.md.
-    const paidStimExposed = env.STOCKTRENDS_ENABLE_PAID_TOOLS === "true" && Boolean(env.STOCKTRENDS_API_KEY);
-    const expectedToolNames = paidStimExposed
-      ? [COST_ESTIMATE_TOOL_NAME, "stocktrends_get_stim_latest", "stocktrends_get_stim_history"].sort()
+    // The paired paid ST-IM and paired paid indicators tool *definitions* are
+    // only exposed when paid mode is enabled with an API key. Every other env
+    // keeps the single public planning tool. The paid-exposed surface is exactly
+    // five tools (PR 39). See PHASE5B_INDICATORS_IMPLEMENTATION_NOTES.md.
+    const paidToolsExposed = env.STOCKTRENDS_ENABLE_PAID_TOOLS === "true" && Boolean(env.STOCKTRENDS_API_KEY);
+    const expectedToolNames = paidToolsExposed
+      ? [
+          COST_ESTIMATE_TOOL_NAME,
+          "stocktrends_get_stim_latest",
+          "stocktrends_get_stim_history",
+          "stocktrends_get_indicators_latest",
+          "stocktrends_get_indicators_history"
+        ].sort()
       : [COST_ESTIMATE_TOOL_NAME];
 
     expect(fetchFn).not.toHaveBeenCalled();
