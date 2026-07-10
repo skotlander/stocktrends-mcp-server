@@ -66,15 +66,79 @@ In the Inspector UI, confirm:
 
 This check confirms the free/default boundary without requiring or triggering any paid execution.
 
-### Secret Safety
+### Secret Safety (free mode)
 
-- Do not paste API keys into README examples, screenshots, terminal recordings, or committed files.
-- Free/default mode should always be tested and demonstrated without an API key.
-- Paid configuration and credential handling are documented separately from this quickstart.
+Free/default mode needs no API key, so nothing secret is involved in this quickstart. Always test and demonstrate default mode without a key. The full credential-handling rules — placeholders only, never commit or paste a real key — are consolidated in the top-level [Secret Safety](#secret-safety) section.
 
-### Paid Mode (Forward Pointer)
+## Paid Mode Configuration
 
-Paid tools and paid execution are intentionally disabled by default. Paid-mode setup is governed by [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) and [`docs/PHASE5A_OPERATIONAL_HARDENING_DESIGN_MEMO.md`](docs/PHASE5A_OPERATIONAL_HARDENING_DESIGN_MEMO.md). Detailed paid-mode README instructions will be added in a later PR.
+Paid tools are **disabled by default**. Nothing in this section is required to install, inspect, or use the server in default/free mode. This section explains how the paid ST-IM tools are *exposed* and, separately, how paid *execution* is gated. Read it before configuring any paid variable. Paid-mode posture is governed by [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) and [`docs/PHASE5A_OPERATIONAL_HARDENING_DESIGN_MEMO.md`](docs/PHASE5A_OPERATIONAL_HARDENING_DESIGN_MEMO.md).
+
+**Paid tool exposure and paid execution are two separate gates.** Enabling exposure never, by itself, performs a paid call.
+
+**Paid tool exposure requires both of:**
+
+- `STOCKTRENDS_ENABLE_PAID_TOOLS=true`
+- `STOCKTRENDS_API_KEY` configured
+
+With both set, the server additionally registers the two paired paid ST-IM tool *definitions*, so the exposed tool set becomes exactly three:
+
+- `stocktrends_estimate_workflow_cost` — the credential-free planning tool (always present)
+- `stocktrends_get_stim_latest` — paid ST-IM tool definition
+- `stocktrends_get_stim_history` — paid ST-IM tool definition
+
+Exposure does not change what the free planning tool does, and it does not send any API key. It only makes the two paid tool definitions visible to the MCP client.
+
+**Paid execution additionally requires all of:**
+
+- `STOCKTRENDS_ENABLE_PAID_EXECUTION=true` — a distinct runtime flag from the exposure flag.
+- The mandatory pricing preflight resolving (`STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` stays `true`).
+- Explicit **nonzero** local caps (`STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` and `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL`).
+- A budget cap that covers the nonzero cost (`STOCKTRENDS_MAX_STC_PER_SESSION`, plus `STOCKTRENDS_MAX_USD_PER_SESSION` where a USD cost applies).
+
+Enabling execution changes **call behavior, not tool count**. When execution is enabled and every gate passes, invoking a paid ST-IM tool may send one authorized request; when it is not enabled, or any cap/preflight gate fails, the same tool fails closed with no request and no auth header.
+
+The paid surface remains exactly three tools in every configuration — `stocktrends_estimate_workflow_cost`, `stocktrends_get_stim_latest`, and `stocktrends_get_stim_history`. The exposure and execution flags change visibility and behavior, never the tool count. No additional paid tools are introduced.
+
+### Exposure vs Execution
+
+| Concept | Meaning |
+| --- | --- |
+| **Exposure** | The two paid ST-IM tool *definitions* (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`) are **visible** to the MCP client. |
+| **Execution** | An actual authorized API request **may be sent** to the approved ST-IM endpoint when a paid tool is invoked. |
+
+- The **execution gate is intentionally stricter** than the exposure gate. Making a tool definition visible is deliberately easier than authorizing a real, billable call.
+- If execution is not enabled, or the caps / pricing preflight fail, the paid tools **fail closed**: no request is sent, no `X-API-Key` is attached, and a deterministic secret-free denial is returned.
+- **Public resources and `stocktrends_estimate_workflow_cost` remain credential-free** in every mode. They never send an API key and are unaffected by the exposure or execution flags.
+
+### Enable paid tool exposure (exposure only — no execution)
+
+The example below exposes the paid tool *definitions* so an operator can confirm the three-tool surface. It is for **tool exposure only**: it does **not** enable paid execution and must not be used to perform a live paid call.
+
+```sh
+# Exposure only: makes the two paid ST-IM tool definitions visible.
+# This does NOT authorize or perform any paid API call.
+export STOCKTRENDS_ENABLE_PAID_TOOLS=true
+export STOCKTRENDS_API_KEY="<your-api-key>"        # placeholder — never paste a real key
+# Execution stays disabled (its default). Do not set this to true just to test exposure.
+export STOCKTRENDS_ENABLE_PAID_EXECUTION=false
+```
+
+With this configuration the MCP client lists exactly three tools. No paid request is sent, because the execution flag is `false` and no nonzero caps or budget cap are configured. This is enough to verify the paid *exposure* surface without any spend.
+
+Paid *execution* requires the additional gates described above (execution flag, mandatory preflight, explicit nonzero caps, and a covering budget cap). A step-by-step live-execution runbook and the paid-execution safety checklist are intentionally **not** included here; they are separate, later Phase 5A deliverables. Do not enable paid execution merely to test installation — installation and tool-listing verification are fully demonstrable in free mode and in paid-exposed mode without execution.
+
+## Secret Safety
+
+These rules apply to every example, screenshot, recording, and shared artifact involving this server.
+
+- **Never commit API keys.** No key belongs in this repository, a checked-in config, or any committed file.
+- **Never paste a real API key** into README examples, screenshots, terminal recordings, shared chats, or issue reports. Use placeholders only (for example `<your-api-key>`).
+- **Free/default mode needs no key.** It is fully functional with no API key, and the quickstart must be demonstrated without one.
+- **Public resources and the `stocktrends_estimate_workflow_cost` planning tool never send an API key.** They are credential-free regardless of paid configuration.
+- **Prefer per-session shell environment variables** (for example `export STOCKTRENDS_API_KEY=<your-api-key>` in a single shell) over writing a key into a persistent, machine-wide, or committed location for local inspection.
+- **The API key, when paid tools are enabled, is sent only as the `X-API-Key` header** to the approved paid ST-IM endpoints, and only after every gate passes. There is **no `Authorization: Bearer` fallback**.
+- The key is never logged and never appears in errors, denials, or returned data.
 
 ## Current Status
 
@@ -138,19 +202,21 @@ Do not run the stdio server directly in a terminal expecting human-readable outp
 
 ## Environment Variables
 
-| Variable | Required | Default | Current behavior |
+All variables are optional; defaults keep the server in free mode. The **Affects** column shows whether a variable applies to all modes, to paid tool *exposure*, or to paid *execution* (see [Paid Mode Configuration](#paid-mode-configuration)). Only `STOCKTRENDS_API_KEY` is a secret.
+
+| Variable | Affects | Default | Behavior & secret-safety notes |
 | --- | --- | --- | --- |
-| `STOCKTRENDS_API_BASE_URL` | No | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. |
-| `STOCKTRENDS_MCP_TRANSPORT` | No | `stdio` | Only `stdio` is supported. |
-| `STOCKTRENDS_MCP_LOG_LEVEL` | No | `warn` | Normal logs go to stderr, never stdout. |
-| `STOCKTRENDS_ENABLE_PAID_TOOLS` | No | `false` | Exposure flag. When `true` with a configured API key, exposes the paired paid ST-IM tool *definitions* (total tools become 3). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. |
-| `STOCKTRENDS_ENABLE_PAID_EXECUTION` | No | `false` | Execution flag. Live subscription/API-key calls to `GET /v1/stim/latest` and `GET /v1/stim/history` require this to be `true` **and** the paid-tools flag, an API key, authoritative static pricing/preflight, and ≥1 nonzero call cap plus a budget cap covering the nonzero cost. The flag alone (no tools flag / no key) exposes and executes nothing. |
-| `STOCKTRENDS_API_KEY` | No | None | Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as `X-API-Key` to the approved origin + allowlisted paid ST-IM endpoint after every gate passes. Never sent for public resources or the cost-estimate planning tool; never logged or exposed in errors/denials/returned data. |
-| `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` | No | `true` | Pricing/preflight posture. Preflight is mandatory; setting this `false` denies paid execution (fail closed) rather than weakening the requirement. |
-| `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | No | `0` | Per-session paid-call cap. `0` denies all paid calls; live execution requires an explicit nonzero value. In-memory per session; resets on restart. |
-| `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | No | `0` | Per-tool paid-call cap. `0` denies; requires an explicit nonzero value. In-memory per session; resets on restart. |
-| `STOCKTRENDS_MAX_STC_PER_SESSION` | No | None | STC budget cap. A nonzero STC cost with no STC cap is denied. Because ST-IM rules are nonzero, a budget cap is effectively mandatory. |
-| `STOCKTRENDS_MAX_USD_PER_SESSION` | No | None | USD budget cap. A nonzero USD cost with no USD cap is denied. |
+| `STOCKTRENDS_API_BASE_URL` | All modes | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. Not a secret. |
+| `STOCKTRENDS_MCP_TRANSPORT` | All modes | `stdio` | Only `stdio` is supported. Not a secret. |
+| `STOCKTRENDS_MCP_LOG_LEVEL` | All modes | `warn` | Normal logs go to stderr, never stdout. Not a secret. |
+| `STOCKTRENDS_ENABLE_PAID_TOOLS` | Paid tool exposure | `false` | Exposure flag. When `true` with a configured API key, exposes the two paired paid ST-IM tool *definitions* (total tools become 3). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. Not a secret. |
+| `STOCKTRENDS_API_KEY` | Paid exposure + execution | None | **Secret — use a placeholder (`<your-api-key>`) in all docs, examples, screenshots, and shared artifacts; never commit or paste a real value.** Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as the `X-API-Key` header to the approved origin + allowlisted paid ST-IM endpoint after every gate passes (no `Authorization: Bearer` fallback). Never sent for public resources or the cost-estimate planning tool; never logged or exposed in errors/denials/returned data. |
+| `STOCKTRENDS_ENABLE_PAID_EXECUTION` | Paid execution | `false` | Execution flag, distinct from the exposure flag. Live subscription/API-key calls to `GET /v1/stim/latest` and `GET /v1/stim/history` require this to be `true` **and** the paid-tools flag, an API key, authoritative static pricing/preflight, and ≥1 nonzero call cap plus a budget cap covering the nonzero cost. The flag alone (no tools flag / no key) exposes and executes nothing. Not a secret. |
+| `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` | Paid execution | `true` | Pricing/preflight posture. Preflight is mandatory; setting this `false` denies paid execution (fail closed) rather than weakening the requirement. Not a secret. |
+| `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | Paid execution | `0` | Per-session paid-call cap. `0` denies all paid calls; live execution requires an explicit nonzero value. In-memory per session; resets on restart. Not a secret. |
+| `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | Paid execution | `0` | Per-tool paid-call cap. `0` denies; requires an explicit nonzero value. In-memory per session; resets on restart. Not a secret. |
+| `STOCKTRENDS_MAX_STC_PER_SESSION` | Paid execution | None | STC budget cap. A nonzero STC cost with no STC cap is denied. Because ST-IM rules are nonzero, a budget cap is effectively mandatory. Not a secret. |
+| `STOCKTRENDS_MAX_USD_PER_SESSION` | Paid execution | None | USD budget cap. A nonzero USD cost with no USD cap is denied. Not a secret. |
 
 ## Public Resources
 
