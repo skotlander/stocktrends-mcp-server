@@ -66,6 +66,8 @@ In the Inspector UI, confirm:
 
 This check confirms the free/default boundary without requiring or triggering any paid execution.
 
+For a fuller step-by-step Inspector procedure — default/free listing, paid-*exposed* listing without execution, and a rollback checklist — see the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md).
+
 ### Secret Safety (free mode)
 
 Free/default mode needs no API key, so nothing secret is involved in this quickstart. Always test and demonstrate default mode without a key. The full credential-handling rules — placeholders only, never commit or paste a real key — are consolidated in the top-level [Secret Safety](#secret-safety) section.
@@ -124,7 +126,7 @@ export STOCKTRENDS_API_KEY="<your-api-key>"        # placeholder — never paste
 export STOCKTRENDS_ENABLE_PAID_EXECUTION=false
 ```
 
-With this configuration the MCP client lists exactly three tools. No paid request is sent, because the execution flag is `false` and no nonzero caps or budget cap are configured. This is enough to verify the paid *exposure* surface without any spend.
+With this configuration the MCP client lists exactly three tools. No paid request is sent, because the execution flag is `false` and no nonzero caps or budget cap are configured. This is enough to verify the paid *exposure* surface without any spend. A step-by-step procedure for confirming this three-tool paid-exposed surface under MCP Inspector — still without any live paid execution — is documented in the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md).
 
 Paid *execution* requires the additional gates described above (execution flag, mandatory preflight, explicit nonzero caps, and a covering budget cap). A step-by-step live-execution runbook and the paid-execution safety checklist are intentionally **not** included here; they are separate, later Phase 5A deliverables. Do not enable paid execution merely to test installation — installation and tool-listing verification are fully demonstrable in free mode and in paid-exposed mode without execution.
 
@@ -288,3 +290,4 @@ These two tools are always registered together (history-beside-latest rule). Eve
 - [Phase 4 Paid ST-IM Live Execution Design Memo](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_DESIGN_MEMO.md)
 - [Phase 4 Paid ST-IM Live Execution (Subscription) Implementation Notes](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_SUBSCRIPTION_IMPLEMENTATION_NOTES.md)
 - [Phase 4 Paid ST-IM Live Execution (Subscription) Validation Report](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_SUBSCRIPTION_VALIDATION_REPORT.md)
+- [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md)
