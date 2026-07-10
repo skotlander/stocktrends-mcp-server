@@ -25,6 +25,7 @@ import {
   STIM_LATEST_TOOL_NAME
 } from "../src/tools/stimTools.js";
 import { INDICATORS_HISTORY_TOOL_NAME, INDICATORS_LATEST_TOOL_NAME } from "../src/tools/indicatorsTools.js";
+import { SELECTIONS_LATEST_TOOL_NAME } from "../src/tools/selectionsTools.js";
 import { connectMcp, jsonResponse } from "./helpers.js";
 
 const MOCK_KEY = "mock-stim-secret-must-not-be-sent";
@@ -76,18 +77,20 @@ describe("Phase 4 paid ST-IM foundation — tool surface", () => {
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
 
     if (expectPaid) {
-      // Paid-exposed surface is exactly five tools: the planning tool plus the
-      // paired paid ST-IM and paired paid indicators families.
+      // Paid-exposed surface is exactly six tools: the planning tool plus the
+      // paired paid ST-IM and paired paid indicators families and the base
+      // selections tool.
       expect(toolNames).toEqual(
         [
           COST_ESTIMATE_TOOL_NAME,
           STIM_HISTORY_TOOL_NAME,
           STIM_LATEST_TOOL_NAME,
           INDICATORS_HISTORY_TOOL_NAME,
-          INDICATORS_LATEST_TOOL_NAME
+          INDICATORS_LATEST_TOOL_NAME,
+          SELECTIONS_LATEST_TOOL_NAME
         ].sort()
       );
-      expect(toolNames).toHaveLength(5);
+      expect(toolNames).toHaveLength(6);
     } else {
       expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
       expect(toolNames).not.toContain(STIM_LATEST_TOOL_NAME);
@@ -255,9 +258,9 @@ describe("Phase 4 paid ST-IM foundation — preflight and caps", () => {
     expect(
       evaluatePaidInvocationPreflight(config, {
         toolName: STIM_LATEST_TOOL_NAME,
-        endpointPath: "/v1/selections/latest",
+        endpointPath: "/v1/selections/history",
         httpMethod: "GET",
-        targetUrl: new URL("https://api.stocktrends.com/v1/selections/latest")
+        targetUrl: new URL("https://api.stocktrends.com/v1/selections/history")
       }).denialReason
     ).toBe("endpoint_not_allowlisted");
 

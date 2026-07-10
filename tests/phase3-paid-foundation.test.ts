@@ -46,10 +46,10 @@ describe("Phase 3 paid-auth foundation", () => {
     const resources = await client.listResources();
     const tools = await client.listTools();
 
-    // The paired paid ST-IM and paired paid indicators tool *definitions* are
-    // only exposed when paid mode is enabled with an API key. Every other env
-    // keeps the single public planning tool. The paid-exposed surface is exactly
-    // five tools (PR 39). See PHASE5B_INDICATORS_IMPLEMENTATION_NOTES.md.
+    // The paired paid ST-IM and paired paid indicators tool *definitions* and the
+    // base selections tool are only exposed when paid mode is enabled with an API
+    // key. Every other env keeps the single public planning tool. The paid-exposed
+    // surface is exactly six tools (PR 39 + PR 45).
     const paidToolsExposed = env.STOCKTRENDS_ENABLE_PAID_TOOLS === "true" && Boolean(env.STOCKTRENDS_API_KEY);
     const expectedToolNames = paidToolsExposed
       ? [
@@ -57,7 +57,8 @@ describe("Phase 3 paid-auth foundation", () => {
           "stocktrends_get_stim_latest",
           "stocktrends_get_stim_history",
           "stocktrends_get_indicators_latest",
-          "stocktrends_get_indicators_history"
+          "stocktrends_get_indicators_history",
+          "stocktrends_get_selections_latest"
         ].sort()
       : [COST_ESTIMATE_TOOL_NAME];
 
@@ -149,7 +150,8 @@ describe("Phase 3 paid-auth foundation", () => {
       "/v1/stim/latest",
       "/v1/stim/history",
       "/v1/indicators/latest",
-      "/v1/indicators/history"
+      "/v1/indicators/history",
+      "/v1/selections/latest"
     ]);
     expect(PAID_ENDPOINT_POLICIES.every((policy) => policy.httpMethod === "GET")).toBe(true);
     expect(PAID_ENDPOINT_POLICIES.every((policy) => policy.requiresPricingPreflight)).toBe(true);
@@ -161,7 +163,9 @@ describe("Phase 3 paid-auth foundation", () => {
     expect(PAID_ENDPOINT_POLICIES.find((policy) => policy.endpointPath === "/v1/indicators/latest")?.requiredHistoryPair).toBe(
       "stocktrends_get_indicators_history"
     );
-    expect(() => assertPaidEndpointAllowed("/v1/selections/latest")).toThrow(StockTrendsMcpError);
+    // A still-non-allowlisted paid route (base selections/latest was promoted in
+    // PR 45, but selections history and the published pair remain off-allowlist).
+    expect(() => assertPaidEndpointAllowed("/v1/selections/history")).toThrow(StockTrendsMcpError);
 
     const registeredResourceEndpoints = PUBLIC_RESOURCES.map((resource) => resource.endpointPath);
 

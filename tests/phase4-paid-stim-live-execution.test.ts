@@ -18,6 +18,7 @@ import type { FetchLike } from "../src/stocktrendsClient.js";
 import { COST_ESTIMATE_TOOL_NAME } from "../src/tools/index.js";
 import { STIM_HISTORY_TOOL_NAME, STIM_LATEST_TOOL_NAME } from "../src/tools/stimTools.js";
 import { INDICATORS_HISTORY_TOOL_NAME, INDICATORS_LATEST_TOOL_NAME } from "../src/tools/indicatorsTools.js";
+import { SELECTIONS_LATEST_TOOL_NAME } from "../src/tools/selectionsTools.js";
 import { connectMcp, jsonResponse, textResponse } from "./helpers.js";
 
 const MOCK_KEY = "mock-live-secret-must-never-be-sent-in-plaintext";
@@ -55,7 +56,7 @@ const STIM_HEADERS = {
 };
 
 describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix", () => {
-  it("exposes exactly 5 tools, 9 resources, 0 prompts with the execution flag set", async () => {
+  it("exposes exactly 6 tools, 9 resources, 0 prompts with the execution flag set", async () => {
     const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
@@ -68,7 +69,8 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
         STIM_HISTORY_TOOL_NAME,
         STIM_LATEST_TOOL_NAME,
         INDICATORS_HISTORY_TOOL_NAME,
-        INDICATORS_LATEST_TOOL_NAME
+        INDICATORS_LATEST_TOOL_NAME,
+        SELECTIONS_LATEST_TOOL_NAME
       ].sort()
     );
     expect(resources.resources.map((resource) => resource.uri)).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
@@ -560,16 +562,21 @@ describe("Phase 4 paid ST-IM live execution — credential-bearing endpoint allo
     return { apiBaseUrl: config.apiBaseUrl, paidTools: config.paidTools };
   };
 
-  it("scopes the auth-capable allowlist to ST-IM and indicators latest/history only (PR 39 promotion)", () => {
-    // PR 39 promotes the paired paid indicators routes into the auth-capable
-    // allowlist so they are executable behind the same gate policy. The public
-    // instrument-discovery routes are deliberately never on this list.
+  it("scopes the auth-capable allowlist to ST-IM, indicators, and base selections/latest only (PR 39 + PR 45 promotions)", () => {
+    // PR 39 promoted the paired paid indicators routes and PR 45 promoted the
+    // base /v1/selections/latest route into the auth-capable allowlist so they
+    // are executable behind the same gate policy. The public instrument-discovery
+    // routes and the deferred (published/base-history) selections routes are
+    // deliberately never on this list.
     expect(AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toEqual([
       "/v1/stim/latest",
       "/v1/stim/history",
       "/v1/indicators/latest",
-      "/v1/indicators/history"
+      "/v1/indicators/history",
+      "/v1/selections/latest"
     ]);
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/selections/history");
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/selections/published/latest");
     expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/instruments/lookup");
     expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/instruments/resolve");
   });

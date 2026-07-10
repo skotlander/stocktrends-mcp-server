@@ -45,19 +45,35 @@ export interface StaticEndpointPricingEntry {
 // PHASE5B_INDICATORS_CONTRACT_VERIFICATION_MEMO §4 (`indicators_latest_paid`
 // 0.0035 STC, `indicators_history_paid` 0.01 STC). The ST-IM values do NOT
 // transfer to indicators and vice versa; each family carries its own mirror.
+//
+// The `selections_latest_paid` value is a FRESH, `selections`-family-specific
+// static mirror confirmed against the live credential-free catalog in
+// PHASE5C_SELECTIONS_LATEST_DESIGN_AND_CONTRACT_MEMO §5 (`selections_latest_paid`
+// 0.05 STC, `endpoint_family: selections`). It does NOT transfer to/from the
+// ST-IM, indicators, or `selections_published` families; only the base
+// `selections/latest` route is mirrored this increment (the published pair and
+// base history remain deferred, per the memo §8).
 const STATIC_ENDPOINT_PRICING: Readonly<Record<string, StaticEndpointPricingEntry>> = Object.freeze({
   stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", endpointPath: "/v1/stim/latest", amount: 0.0025, unit: "STC" }),
   stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", amount: 0.0075, unit: "STC" }),
   indicators_latest_paid: Object.freeze({ pricingRuleId: "indicators_latest_paid", endpointPath: "/v1/indicators/latest", amount: 0.0035, unit: "STC" }),
-  indicators_history_paid: Object.freeze({ pricingRuleId: "indicators_history_paid", endpointPath: "/v1/indicators/history", amount: 0.01, unit: "STC" })
+  indicators_history_paid: Object.freeze({ pricingRuleId: "indicators_history_paid", endpointPath: "/v1/indicators/history", amount: 0.01, unit: "STC" }),
+  selections_latest_paid: Object.freeze({ pricingRuleId: "selections_latest_paid", endpointPath: "/v1/selections/latest", amount: 0.05, unit: "STC" })
 });
 
 // The static rule-id groups a caller may ask to reconcile. Reconciliation is
-// FAMILY-SCOPED: a paid ST-IM call reconciles only the ST-IM rules and a paid
-// indicators call reconciles only the indicators rules, so one family's catalog
-// state never gates the other.
+// FAMILY-SCOPED: a paid ST-IM call reconciles only the ST-IM rules, a paid
+// indicators call reconciles only the indicators rules, and a paid base
+// selections call reconciles only the base `selections` rules, so one family's
+// catalog state never gates the other.
 export const STIM_PRICING_RULE_IDS: readonly string[] = Object.freeze(["stim_latest_paid", "stim_history_paid"]);
 export const INDICATORS_PRICING_RULE_IDS: readonly string[] = Object.freeze(["indicators_latest_paid", "indicators_history_paid"]);
+// Base `selections` family only. The `selections_published` family
+// (`selections_published_latest_paid`, `selections_published_history_paid`) and
+// base `selections_history_paid` are intentionally NOT included; a
+// `selections_published`/ST-IM/indicators mirror can never satisfy base
+// selections reconciliation.
+export const SELECTIONS_PRICING_RULE_IDS: readonly string[] = Object.freeze(["selections_latest_paid"]);
 
 // Resolve the static, authoritative cost basis for a paid endpoint pricing rule.
 // Returns `null` when no static rule exists (ambiguous/missing pricing), which

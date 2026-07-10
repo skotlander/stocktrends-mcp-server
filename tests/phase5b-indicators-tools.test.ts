@@ -12,17 +12,20 @@ import {
   INDICATORS_LATEST_TOOL_NAME,
   PAID_INDICATORS_TOOL_NAMES
 } from "../src/tools/indicatorsTools.js";
+import { SELECTIONS_LATEST_TOOL_NAME } from "../src/tools/selectionsTools.js";
 import { connectMcp, jsonResponse, textResponse } from "./helpers.js";
 
 const MOCK_KEY = "mock-indicators-secret-must-never-be-sent";
 const PUBLIC_HEADERS = { Accept: "application/json", "User-Agent": "stocktrends-mcp-server/1.0" };
 
-const FIVE_PAID_TOOLS = [
+// Paid-exposed surface after PR 45 adds the base selections tool: six tools.
+const SIX_PAID_TOOLS = [
   COST_ESTIMATE_TOOL_NAME,
   STIM_LATEST_TOOL_NAME,
   STIM_HISTORY_TOOL_NAME,
   INDICATORS_LATEST_TOOL_NAME,
-  INDICATORS_HISTORY_TOOL_NAME
+  INDICATORS_HISTORY_TOOL_NAME,
+  SELECTIONS_LATEST_TOOL_NAME
 ].sort();
 
 // Paid tools + key + execution flag + nonzero caps + budget cap.
@@ -63,13 +66,13 @@ describe("Phase 5B indicators — tool surface", () => {
     await server.close();
   });
 
-  it("paid-exposed mode exposes exactly five tools", async () => {
+  it("paid-exposed mode exposes exactly six tools", async () => {
     const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXPOSURE_ENV);
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
-    expect(toolNames).toEqual(FIVE_PAID_TOOLS);
-    expect(toolNames).toHaveLength(5);
+    expect(toolNames).toEqual(SIX_PAID_TOOLS);
+    expect(toolNames).toHaveLength(6);
 
     await client.close();
     await server.close();
