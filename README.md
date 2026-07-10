@@ -128,7 +128,7 @@ export STOCKTRENDS_ENABLE_PAID_EXECUTION=false
 
 With this configuration the MCP client lists exactly three tools. No paid request is sent, because the execution flag is `false` and no nonzero caps or budget cap are configured. This is enough to verify the paid *exposure* surface without any spend. A step-by-step procedure for confirming this three-tool paid-exposed surface under MCP Inspector — still without any live paid execution — is documented in the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md).
 
-Paid *execution* requires the additional gates described above (execution flag, mandatory preflight, explicit nonzero caps, and a covering budget cap). A step-by-step live-execution runbook and the paid-execution safety checklist are intentionally **not** included here; they are separate, later Phase 5A deliverables. Do not enable paid execution merely to test installation — installation and tool-listing verification are fully demonstrable in free mode and in paid-exposed mode without execution.
+Paid *execution* requires the additional gates described above (execution flag, mandatory preflight, explicit nonzero caps, and a covering budget cap). A step-by-step live-execution runbook is intentionally **not** included here. For the operator-facing *preconditions* that must hold before any separately authorized live run — framed conceptually, with no live call commands — see the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md). Do not enable paid execution merely to test installation — installation and tool-listing verification are fully demonstrable in free mode and in paid-exposed mode without execution.
 
 ## Secret Safety
 
@@ -141,6 +141,8 @@ These rules apply to every example, screenshot, recording, and shared artifact i
 - **Prefer per-session shell environment variables** (for example `export STOCKTRENDS_API_KEY=<your-api-key>` in a single shell) over writing a key into a persistent, machine-wide, or committed location for local inspection.
 - **The API key, when paid tools are enabled, is sent only as the `X-API-Key` header** to the approved paid ST-IM endpoints, and only after every gate passes. There is **no `Authorization: Bearer` fallback**.
 - The key is never logged and never appears in errors, denials, or returned data.
+
+Before a release, run the manual secret-safety scan in the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md) to confirm no real key, populated auth header, or secret-bearing artifact was committed. Placeholders like `<your-api-key>` are allowed; real-looking secrets are not.
 
 ## Current Status
 
@@ -291,3 +293,4 @@ These two tools are always registered together (history-beside-latest rule). Eve
 - [Phase 4 Paid ST-IM Live Execution (Subscription) Implementation Notes](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_SUBSCRIPTION_IMPLEMENTATION_NOTES.md)
 - [Phase 4 Paid ST-IM Live Execution (Subscription) Validation Report](docs/PHASE4_PAID_STIM_LIVE_EXECUTION_SUBSCRIPTION_VALIDATION_REPORT.md)
 - [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md)
+- [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md)
