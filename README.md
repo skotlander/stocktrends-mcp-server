@@ -344,3 +344,4 @@ Pricing is a fresh, `selections`-family static mirror (`selections_latest_paid` 
 - [Phase 5C Selections/Latest Implementation Notes](docs/PHASE5C_SELECTIONS_LATEST_IMPLEMENTATION_NOTES.md)
 - [Phase 5C Selections/Latest Controlled Validation Plan](docs/PHASE5C_SELECTIONS_LATEST_CONTROLLED_VALIDATION_PLAN.md)
 - [Phase 5C Selections/Latest Controlled Validation Report](docs/PHASE5C_SELECTIONS_LATEST_CONTROLLED_VALIDATION_REPORT.md)
+- [Phase 5C Selections/Latest Production Readiness Signoff](docs/PHASE5C_SELECTIONS_LATEST_PRODUCTION_READINESS_SIGNOFF.md)
