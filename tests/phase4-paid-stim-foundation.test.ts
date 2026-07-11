@@ -43,7 +43,8 @@ const EXPECTED_PUBLIC_RESOURCE_URIS = [
   "stocktrends://methodology/indicators",
   "stocktrends://methodology/inference",
   "stocktrends://pricing/catalog",
-  "stocktrends://proof/market-edge"
+  "stocktrends://proof/market-edge",
+  "stocktrends://leadership/definitions"
 ];
 
 describe("Phase 4 paid ST-IM foundation — tool surface", () => {
@@ -77,9 +78,9 @@ describe("Phase 4 paid ST-IM foundation — tool surface", () => {
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
 
     if (expectPaid) {
-      // Paid-exposed surface is exactly six tools: the planning tool plus the
-      // paired paid ST-IM and paired paid indicators families and the base
-      // selections tool.
+      // Paid-exposed surface is exactly ten tools: the planning tool plus the
+      // paired paid ST-IM and paired paid indicators families, the base
+      // selections tool, and the four market-context tools.
       expect(toolNames).toEqual(
         [
           COST_ESTIMATE_TOOL_NAME,
@@ -87,10 +88,14 @@ describe("Phase 4 paid ST-IM foundation — tool surface", () => {
           STIM_LATEST_TOOL_NAME,
           INDICATORS_HISTORY_TOOL_NAME,
           INDICATORS_LATEST_TOOL_NAME,
-          SELECTIONS_LATEST_TOOL_NAME
+          SELECTIONS_LATEST_TOOL_NAME,
+          "stocktrends_get_market_regime_latest",
+          "stocktrends_get_market_regime_history",
+          "stocktrends_get_breadth_sector_latest",
+          "stocktrends_get_leadership_summary_latest"
         ].sort()
       );
-      expect(toolNames).toHaveLength(6);
+      expect(toolNames).toHaveLength(10);
     } else {
       expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
       expect(toolNames).not.toContain(STIM_LATEST_TOOL_NAME);

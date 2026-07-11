@@ -17,7 +17,8 @@ const EXPECTED_PUBLIC_RESOURCE_URIS = [
   "stocktrends://methodology/indicators",
   "stocktrends://methodology/inference",
   "stocktrends://pricing/catalog",
-  "stocktrends://proof/market-edge"
+  "stocktrends://proof/market-edge",
+  "stocktrends://leadership/definitions"
 ];
 
 const PHASE2_PUBLIC_RESOURCES = PUBLIC_RESOURCES.filter((resource) => resource.phase === "phase2");

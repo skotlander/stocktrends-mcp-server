@@ -22,8 +22,9 @@ import type { JsonObject, StockTrendsClient } from "./stocktrendsClient.js";
 //
 // The version date lets the wrapper/notes record which static-policy snapshot
 // was used, without implying a fetch occurred for the static resolution.
-// Bumped to 2026-07-10 when the base `selections_latest_paid` mirror was added.
-export const STATIC_PRICING_POLICY_VERSION = "2026-07-10";
+// Bumped to 2026-07-11 when the market-context mirrors (market regime, breadth,
+// leadership summary) were added.
+export const STATIC_PRICING_POLICY_VERSION = "2026-07-11";
 
 // The public catalog resource path. Read credential-free (no X-API-Key) for
 // metadata reconciliation only — never as an authorization source by itself.
@@ -59,12 +60,28 @@ export interface StaticEndpointPricingEntry {
 // ST-IM, indicators, or `selections_published` families; only the base
 // `selections/latest` route is mirrored this increment (the published pair and
 // base history remain deferred, per the memo §8).
+// The market-context values are three FRESH, family-specific static mirrors
+// confirmed against the live credential-free catalog in
+// PHASE5D_MARKET_CONTEXT_DESIGN_AND_CONTRACT_MEMO §4.0/§7. The verified market
+// rule ids deliberately carry NO `_paid` suffix and the verified family string
+// is exactly `market` (not `market_regime`); a suffixed id or a
+// `market_regime`-style family must fail reconciliation. None of these mirrors
+// transfers to/from ST-IM, indicators, selections, or each other. The
+// deferred-route rules (`market_regime_forecast`, `breadth_sector_history_paid`,
+// `leadership_rotation_history_paid`) and the public
+// `leadership_definitions_public` rule (access_type `public`, cost unit
+// `request`) are intentionally NOT mirrored and can never reconcile as paid STC
+// mirrors.
 const STATIC_ENDPOINT_PRICING: Readonly<Record<string, StaticEndpointPricingEntry>> = Object.freeze({
   stim_latest_paid: Object.freeze({ pricingRuleId: "stim_latest_paid", endpointPath: "/v1/stim/latest", endpointFamily: "stim", amount: 0.0025, unit: "STC" }),
   stim_history_paid: Object.freeze({ pricingRuleId: "stim_history_paid", endpointPath: "/v1/stim/history", endpointFamily: "stim", amount: 0.0075, unit: "STC" }),
   indicators_latest_paid: Object.freeze({ pricingRuleId: "indicators_latest_paid", endpointPath: "/v1/indicators/latest", endpointFamily: "indicators", amount: 0.0035, unit: "STC" }),
   indicators_history_paid: Object.freeze({ pricingRuleId: "indicators_history_paid", endpointPath: "/v1/indicators/history", endpointFamily: "indicators", amount: 0.01, unit: "STC" }),
-  selections_latest_paid: Object.freeze({ pricingRuleId: "selections_latest_paid", endpointPath: "/v1/selections/latest", endpointFamily: "selections", amount: 0.05, unit: "STC" })
+  selections_latest_paid: Object.freeze({ pricingRuleId: "selections_latest_paid", endpointPath: "/v1/selections/latest", endpointFamily: "selections", amount: 0.05, unit: "STC" }),
+  market_regime_latest: Object.freeze({ pricingRuleId: "market_regime_latest", endpointPath: "/v1/market/regime/latest", endpointFamily: "market", amount: 0.15, unit: "STC" }),
+  market_regime_history: Object.freeze({ pricingRuleId: "market_regime_history", endpointPath: "/v1/market/regime/history", endpointFamily: "market", amount: 0.25, unit: "STC" }),
+  breadth_sector_latest_paid: Object.freeze({ pricingRuleId: "breadth_sector_latest_paid", endpointPath: "/v1/breadth/sector/latest", endpointFamily: "breadth", amount: 0.1, unit: "STC" }),
+  leadership_summary_latest_paid: Object.freeze({ pricingRuleId: "leadership_summary_latest_paid", endpointPath: "/v1/leadership/summary/latest", endpointFamily: "leadership", amount: 0.25, unit: "STC" })
 });
 
 // The static rule-id groups a caller may ask to reconcile. Reconciliation is
@@ -80,6 +97,17 @@ export const INDICATORS_PRICING_RULE_IDS: readonly string[] = Object.freeze(["in
 // `selections_published`/ST-IM/indicators mirror can never satisfy base
 // selections reconciliation.
 export const SELECTIONS_PRICING_RULE_IDS: readonly string[] = Object.freeze(["selections_latest_paid"]);
+// Market-context families (PHASE5D memo §7). Three independent rule-id groups:
+// a market-regime call reconciles only the `market` rules, a breadth call only
+// the `breadth` rule, and a leadership call only the `leadership` rule. No
+// group's state (or success) ever gates or satisfies another family — including
+// ST-IM, indicators, and selections. The deferred-route rules
+// (`market_regime_forecast`, `breadth_sector_history_paid`,
+// `leadership_rotation_history_paid`) and the public
+// `leadership_definitions_public` rule are members of NO group.
+export const MARKET_PRICING_RULE_IDS: readonly string[] = Object.freeze(["market_regime_latest", "market_regime_history"]);
+export const BREADTH_PRICING_RULE_IDS: readonly string[] = Object.freeze(["breadth_sector_latest_paid"]);
+export const LEADERSHIP_PRICING_RULE_IDS: readonly string[] = Object.freeze(["leadership_summary_latest_paid"]);
 
 // Resolve the static, authoritative cost basis for a paid endpoint pricing rule.
 // Returns `null` when no static rule exists (ambiguous/missing pricing), which

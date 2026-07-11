@@ -26,7 +26,8 @@ const EXPECTED_PUBLIC_RESOURCE_URIS = [
   "stocktrends://methodology/indicators",
   "stocktrends://methodology/inference",
   "stocktrends://pricing/catalog",
-  "stocktrends://proof/market-edge"
+  "stocktrends://proof/market-edge",
+  "stocktrends://leadership/definitions"
 ];
 
 const PAID_ENV_MATRIX: Array<{ label: string; env: Env }> = [
@@ -46,10 +47,11 @@ describe("Phase 3 paid-auth foundation", () => {
     const resources = await client.listResources();
     const tools = await client.listTools();
 
-    // The paired paid ST-IM and paired paid indicators tool *definitions* and the
-    // base selections tool are only exposed when paid mode is enabled with an API
-    // key. Every other env keeps the single public planning tool. The paid-exposed
-    // surface is exactly six tools (PR 39 + PR 45).
+    // The paired paid ST-IM and paired paid indicators tool *definitions*, the
+    // base selections tool, and the four market-context tools are only exposed
+    // when paid mode is enabled with an API key. Every other env keeps the single
+    // public planning tool. The paid-exposed surface is exactly ten tools
+    // (PR 39 + PR 45 + PR 51).
     const paidToolsExposed = env.STOCKTRENDS_ENABLE_PAID_TOOLS === "true" && Boolean(env.STOCKTRENDS_API_KEY);
     const expectedToolNames = paidToolsExposed
       ? [
@@ -58,7 +60,11 @@ describe("Phase 3 paid-auth foundation", () => {
           "stocktrends_get_stim_history",
           "stocktrends_get_indicators_latest",
           "stocktrends_get_indicators_history",
-          "stocktrends_get_selections_latest"
+          "stocktrends_get_selections_latest",
+          "stocktrends_get_market_regime_latest",
+          "stocktrends_get_market_regime_history",
+          "stocktrends_get_breadth_sector_latest",
+          "stocktrends_get_leadership_summary_latest"
         ].sort()
       : [COST_ESTIMATE_TOOL_NAME];
 
@@ -151,7 +157,11 @@ describe("Phase 3 paid-auth foundation", () => {
       "/v1/stim/history",
       "/v1/indicators/latest",
       "/v1/indicators/history",
-      "/v1/selections/latest"
+      "/v1/selections/latest",
+      "/v1/market/regime/latest",
+      "/v1/market/regime/history",
+      "/v1/breadth/sector/latest",
+      "/v1/leadership/summary/latest"
     ]);
     expect(PAID_ENDPOINT_POLICIES.every((policy) => policy.httpMethod === "GET")).toBe(true);
     expect(PAID_ENDPOINT_POLICIES.every((policy) => policy.requiresPricingPreflight)).toBe(true);

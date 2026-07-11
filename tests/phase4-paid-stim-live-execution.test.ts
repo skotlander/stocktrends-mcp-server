@@ -44,7 +44,8 @@ const EXPECTED_PUBLIC_RESOURCE_URIS = [
   "stocktrends://methodology/indicators",
   "stocktrends://methodology/inference",
   "stocktrends://pricing/catalog",
-  "stocktrends://proof/market-edge"
+  "stocktrends://proof/market-edge",
+  "stocktrends://leadership/definitions"
 ];
 
 const STIM_HEADERS = {
@@ -56,7 +57,7 @@ const STIM_HEADERS = {
 };
 
 describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix", () => {
-  it("exposes exactly 6 tools, 9 resources, 0 prompts with the execution flag set", async () => {
+  it("exposes exactly 10 tools, 10 resources, 0 prompts with the execution flag set", async () => {
     const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
 
@@ -70,7 +71,11 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
         STIM_LATEST_TOOL_NAME,
         INDICATORS_HISTORY_TOOL_NAME,
         INDICATORS_LATEST_TOOL_NAME,
-        SELECTIONS_LATEST_TOOL_NAME
+        SELECTIONS_LATEST_TOOL_NAME,
+        "stocktrends_get_market_regime_latest",
+        "stocktrends_get_market_regime_history",
+        "stocktrends_get_breadth_sector_latest",
+        "stocktrends_get_leadership_summary_latest"
       ].sort()
     );
     expect(resources.resources.map((resource) => resource.uri)).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
@@ -562,23 +567,33 @@ describe("Phase 4 paid ST-IM live execution — credential-bearing endpoint allo
     return { apiBaseUrl: config.apiBaseUrl, paidTools: config.paidTools };
   };
 
-  it("scopes the auth-capable allowlist to ST-IM, indicators, and base selections/latest only (PR 39 + PR 45 promotions)", () => {
-    // PR 39 promoted the paired paid indicators routes and PR 45 promoted the
-    // base /v1/selections/latest route into the auth-capable allowlist so they
-    // are executable behind the same gate policy. The public instrument-discovery
-    // routes and the deferred (published/base-history) selections routes are
-    // deliberately never on this list.
+  it("scopes the auth-capable allowlist to ST-IM, indicators, base selections/latest, and the four market-context routes only (PR 39 + PR 45 + PR 51 promotions)", () => {
+    // PR 39 promoted the paired paid indicators routes, PR 45 promoted the base
+    // /v1/selections/latest route, and PR 51 promoted the four market-context
+    // routes into the auth-capable allowlist so they are executable behind the
+    // same gate policy. The public instrument-discovery routes, the deferred
+    // (published/base-history) selections routes, the deferred market-context
+    // routes, and the public leadership definitions route are deliberately never
+    // on this list.
     expect(AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).toEqual([
       "/v1/stim/latest",
       "/v1/stim/history",
       "/v1/indicators/latest",
       "/v1/indicators/history",
-      "/v1/selections/latest"
+      "/v1/selections/latest",
+      "/v1/market/regime/latest",
+      "/v1/market/regime/history",
+      "/v1/breadth/sector/latest",
+      "/v1/leadership/summary/latest"
     ]);
     expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/selections/history");
     expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/selections/published/latest");
     expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/instruments/lookup");
     expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/instruments/resolve");
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/market/regime/forecast");
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/breadth/sector/history");
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/leadership/rotation/history");
+    expect(PAID_ENDPOINT_POLICIES.map((policy) => policy.endpointPath)).not.toContain("/v1/leadership/definitions");
   });
 
   it.each(["/v1/indicators/latest", "/v1/indicators/history"])("allows indicator endpoint %s on the auth-capable boundary (structural gates pass)", (endpointPath) => {

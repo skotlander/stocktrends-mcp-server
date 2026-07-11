@@ -9,7 +9,7 @@ export interface PublicResource {
   endpointPath: string;
   description: string;
   mimeType: "application/json";
-  phase: "phase1" | "phase2";
+  phase: "phase1" | "phase2" | "phase5d";
 }
 
 export type Phase1PublicResource = PublicResource;
@@ -105,6 +105,21 @@ export const PUBLIC_RESOURCES: readonly PublicResource[] = [
     description: "Public static market-edge proof metadata fetched on request from GET /v1/ai/proof/market-edge.",
     mimeType: "application/json",
     phase: "phase2"
+  },
+  {
+    // The catalog marks /v1/leadership/definitions public/zero-cost
+    // (access_type public, requires_payment false, stc_cost 0), and a
+    // credential-free GET returned 200 on 2026-07-11
+    // (PHASE5D_MARKET_CONTEXT_DESIGN_AND_CONTRACT_MEMO §3/§4.F). It is
+    // credential-free forever: never on the auth-capable paid allowlist, never
+    // sent an X-API-Key, and never mirrored as a paid STC pricing rule.
+    name: "stocktrends_leadership_definitions",
+    title: "Stock Trends Leadership Definitions",
+    uri: "stocktrends://leadership/definitions",
+    endpointPath: "/v1/leadership/definitions",
+    description: "Public leadership indicator and taxonomy definitions fetched on request from GET /v1/leadership/definitions after credential-free verification.",
+    mimeType: "application/json",
+    phase: "phase5d"
   }
 ];
 
@@ -132,6 +147,12 @@ export const EXCLUDED_PHASE1_RESOURCE_CANDIDATES = EXCLUDED_PUBLIC_RESOURCE_CAND
 export const PHASE1_TOOL_DEFINITIONS: readonly [] = [];
 export const PHASE1_PROMPT_DEFINITIONS: readonly [] = [];
 
+// Paid/prohibited endpoints that must never be wrapped by a public resource.
+// PR 51 closes the PR #49/#50 gap by adding the two PAID leadership routes
+// (`/v1/leadership/summary/latest`, `/v1/leadership/rotation/history`);
+// `/v1/leadership/definitions` is deliberately kept OFF this list because it is
+// a verified public/zero-cost route registered above as a credential-free
+// public resource.
 export const PROHIBITED_RESOURCE_ENDPOINTS: readonly string[] = [
   "/v1/agent/screener/top",
   "/v1/breadth/sector/latest",
@@ -153,6 +174,8 @@ export const PROHIBITED_RESOURCE_ENDPOINTS: readonly string[] = [
   "/v1/market/regime/latest",
   "/v1/market/regime/history",
   "/v1/market/regime/forecast",
+  "/v1/leadership/summary/latest",
+  "/v1/leadership/rotation/history",
   "/v1/intelligence/guidance/latest",
   "/v1/intelligence/guidance/{artifact_id}",
   "/v1/intelligence/research/latest",

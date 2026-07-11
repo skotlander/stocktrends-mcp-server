@@ -290,9 +290,8 @@ export function registerPaidSelectionsTools(
 ): void {
   // Same exposure gate as the ST-IM / indicators pairs: the base-selections tool
   // definition is exposed only when paid mode is explicitly enabled AND an API
-  // key is configured. Exposure is independent of the execution flag. Registering
-  // this single tool brings the paid-exposed surface to exactly six tools; the
-  // default/free surface stays at exactly one.
+  // key is configured. Exposure is independent of the execution flag. The
+  // default/free surface stays at exactly one tool regardless.
   if (!shouldExposePaidSelectionsTools(config)) {
     return;
   }
