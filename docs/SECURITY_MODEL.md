@@ -524,3 +524,175 @@ the API only; none is applied as a second local pass. `mcp_metadata` carries
 base-universe provenance so agents cannot conflate the two surfaces.
 `observed_cost` and `payment_status` remain `null` unless the API returns them,
 and are never fabricated.
+
+## 17. Paid Market-Context Live Execution (Regime, Breadth, Leadership)
+
+This section records the security-model changes required by
+[`PHASE5D_MARKET_CONTEXT_DESIGN_AND_CONTRACT_MEMO.md`](PHASE5D_MARKET_CONTEXT_DESIGN_AND_CONTRACT_MEMO.md)
+§11 for the Phase 5D market-context subset (PR #51). It updates and does not
+relax sections 2–16. Everything here is validated **mock-only**; no live API
+call runs in the automated test suite, and any live run remains separately
+authorized under a later controlled validation plan (PR #52).
+
+The four market-context tools apply the **identical** gate policy as the prior
+paid families (build/runtime execution split, `X-API-Key`-only auth, mandatory
+pricing/preflight, family-scoped catalog reconciliation, default-deny caps,
+covering budget cap), with market-context limit-safety controls added because
+the data is weekly-cadence and market-scoped. Scope remains **controlled local
+stdio, operator-controlled use only** — no autonomous, scheduled, remote, or
+bulk use.
+
+### 17.1 Surface counts (paid-exposed ten-tool surface, ten public resources)
+
+Registering the four market-context tools brings the paid-exposed surface from
+six tools to **exactly ten**: the planning tool
+(`stocktrends_estimate_workflow_cost`), the paired paid ST-IM tools, the paired
+paid indicators tools, the base-selections tool, and the four market-context
+tools (`stocktrends_get_market_regime_latest`,
+`stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`,
+`stocktrends_get_leadership_summary_latest`). The **default/free surface remains
+exactly one tool**, and there are **zero MCP prompts** in every mode. Exposure
+uses the same gate as every prior family (paid-tools flag + configured API key —
+neither alone exposes anything) and is independent of the execution flag, which
+changes call behavior, never tool count. The **public resource count changes
+from nine to ten** in every mode: `stocktrends://leadership/definitions`
+(backing `GET /v1/leadership/definitions`) is registered as a credential-free
+public resource — verified public/zero-cost by the credential-free `200` read
+recorded in the design memo §3 — and is **never keyed** under any configuration.
+No dynamic registration occurs.
+
+### 17.2 Auth-capable allowlist promotions
+
+Exactly four routes are promoted into `AUTH_CAPABLE_PAID_ENDPOINT_POLICIES`
+(§15.7), each as an explicit, separately reviewed promotion coupled to its tool:
+`GET /v1/market/regime/latest` (`market_regime_latest`),
+`GET /v1/market/regime/history` (`market_regime_history`),
+`GET /v1/breadth/sector/latest` (`breadth_sector_latest_paid`), and
+`GET /v1/leadership/summary/latest` (`leadership_summary_latest_paid`). The
+`X-API-Key` header is built only inside the coupled paid boundary
+(`buildPaidAuthHeaders`), only after every gate passes, and only for the
+approved origin + exact promoted path. **Not promoted** (denied
+`endpoint_not_allowlisted` before any auth header or fetch):
+`/v1/market/regime/forecast`, `/v1/breadth/sector/history`, and
+`/v1/leadership/rotation/history` — each deferred behind its own reviewed
+design pass. `/v1/leadership/definitions` is **permanently non-promoted and
+never auth-capable**: it is read only via the credential-free public-resource
+path. The pricing catalog, the planning tool, and all public resources stay
+credential-free and can never receive the key. There is no
+`Authorization: Bearer`, no payment header, no `X-StockTrends-Payment-*`
+header, no x402/wallet/OAuth, no raw API bypass, no remote MCP, no automatic
+retry, and no dynamic registration; the §15.5 `GET`-only/no-request-body
+posture is unchanged.
+
+### 17.3 Family-scoped market-context pricing statements (extends §15.3/§16.4)
+
+Endpoint cost is resolved from **three fresh, family-specific static mirrors**:
+`market_regime_latest` (`/v1/market/regime/latest`, family `market`,
+`0.15 STC`) and `market_regime_history` (`/v1/market/regime/history`, family
+`market`, `0.25 STC`) in the `MARKET_PRICING_RULE_IDS` group;
+`breadth_sector_latest_paid` (`/v1/breadth/sector/latest`, family `breadth`,
+`0.1 STC`) in `BREADTH_PRICING_RULE_IDS`; and `leadership_summary_latest_paid`
+(`/v1/leadership/summary/latest`, family `leadership`, `0.25 STC`) in
+`LEADERSHIP_PRICING_RULE_IDS`. The verified market rule ids deliberately carry
+**no `_paid` suffix** and the verified family string is exactly `market` (not
+`market_regime`); a suffixed id or a `market_regime`-style family fails
+reconciliation. Each mirror must pass the same fail-closed reconciliation
+against the live `GET /v1/pricing/catalog` metadata (credential-free) before
+any auth header or fetch: missing rule, duplicate/ambiguous rule, endpoint or
+rule-id mismatch, **missing or mismatched `endpoint_family`**, explicit
+non-`paid` `access_type`, explicit `requires_payment: false`, cost mismatch,
+missing/unsupported/**conflicting** unit (the verified `STC` `cost_unit` is
+mandatory), and an unavailable/malformed catalog each fail closed
+(`pricing_catalog_reconciliation_failed`). Reconciliation is family-scoped: no
+group's state or success ever gates or satisfies another family — including
+ST-IM, indicators, selections, and the other market-context families. The
+deferred-route rules (`market_regime_forecast`, `breadth_sector_history_paid`,
+`leadership_rotation_history_paid`) are **not mirrored**, and
+`leadership_definitions_public` (access `public`, cost unit `request`, zero
+cost) can never reconcile as a paid STC mirror. `observed_cost` and
+`payment_status` remain `null` unless the API returns them and are never
+fabricated from static or catalog estimates.
+
+### 17.4 Market-context limit-safety (extends §7/§8/§16.3)
+
+Per-route MCP limits, all **always sent explicitly** and validated at the
+strict schema boundary **before** any pricing/auth/fetch:
+
+| Tool | Parameter | API default / max | MCP default | MCP hard max |
+| --- | --- | --- | --- | --- |
+| `stocktrends_get_market_regime_latest` | — (snapshot; strict empty input) | — | — | — |
+| `stocktrends_get_market_regime_history` | `limit` | `12` / `52` | `12` | `52` (API max is already tiny) |
+| `stocktrends_get_breadth_sector_latest` | `limit` | `5000` / `50000` | `50` | `250` (0.5% of API max) |
+| `stocktrends_get_leadership_summary_latest` | `limit_overall` | `50` / `1000` | `50` | `200` (20% of API max) |
+| `stocktrends_get_leadership_summary_latest` | `limit_bucket` | `20` / `200` | `20` | `50` (25% of API max) |
+
+- **Fail-closed invalid limits.** Out-of-range, non-integer, array, sentinel
+  (`0`, `-1`, `"all"`), and unknown-key inputs fail closed with no request —
+  never silently clamped. Strict schemas reject unknown keys on every tool,
+  including the zero-parameter regime-latest tool.
+- **No snapshot time-travel through latest tools.** The verified `weekdate`
+  override parameters on `breadth/sector/latest` and
+  `leadership/summary/latest` are **not exposed** — stepping `weekdate` would
+  reconstruct history through a latest tool, bypassing the deferred history
+  routes and their limits. `vol_scale` (unbounded legacy multiplier) and `type`
+  (no verified enum) are likewise not exposed and are rejected as unknown keys.
+- **No pagination, no `start_date` walking, no date-range sweeping, no exchange
+  iteration** (the `exchange` filter is a single validated passthrough value,
+  never looped), **no bulk assembly, no background refresh, and no automatic
+  retry** on `429`/`5xx`/`402` — exactly one `GET` per invocation (§15.5).
+- **Repeated-identical-call posture (all four tools; sequential and
+  concurrent).** The normalized signature (tool name + normalized effective
+  input parameters) is **reserved synchronously before the first async
+  boundary** (catalog reconciliation), so a duplicate — sequential or
+  concurrent — fails closed deterministically
+  (`repeated_identical_market_context_call`) before any
+  pricing/auth/fetch/cap debit, with a secret-free denial. A pre-billable
+  failure releases the reservation so a later operator-supervised retry is not
+  permanently blocked; reaching an authorized billable attempt promotes the
+  signature to executed for the session even if the API returns an error. The
+  zero-parameter regime-latest signature is constant, so a second executed
+  regime-latest call in the same server session fails closed. State is
+  in-memory only and resets on restart. This is deliberately stricter than the
+  ST-IM/indicators posture, justified by the weekly cadence.
+- **Call caps default-deny and a covering budget is mandatory.** The call caps
+  default `0` (deny); every market-context rule is nonzero STC, so a covering
+  `STOCKTRENDS_MAX_STC_PER_SESSION` is required or the call is denied before
+  auth/fetch.
+- **Row-count and limit transparency.** `mcp_metadata` records every effective
+  limit sent (`effective_limits`) and the returned row count when derivable —
+  metadata only, never a second ranking/filtering pass.
+- **Breadth history is not reachable.** The API's verified
+  `200000`/`500000` default/max never becomes reachable: PR #51 adds no code
+  path for `/v1/breadth/sector/history`, the route stays non-promoted and on
+  `PROHIBITED_RESOURCE_ENDPOINTS`, and any future inclusion requires its own
+  reviewed memo adopting the design memo §4.E floor.
+
+### 17.5 Market-context authority boundary (extends §6/§16.5)
+
+All four routes return unconstrained JSON; the adapter preserves the API
+payload **verbatim in `api_data`** and never synthesizes, reshapes, renames, or
+drops fields. **No local regime calculation** (no computation, smoothing,
+reclassification, blending into a trend, or forecasting), **no local breadth
+calculation** (no re-aggregation, re-grouping, participation math, or
+recomputed percentages), **no local leadership calculation** (no ranking,
+re-scoring, re-bucketing, threshold changes, or bucket merging —
+`min_rsi`/`min_mt_cnt` pass through to the API only), and no summarization,
+rewriting, filtering, or recomputation of any API output. **No investment
+advice and no suitability analysis:** every tool description and
+`mcp_metadata` carry context-not-advice framing — a regime label is **market
+context, not a trading recommendation**; breadth rows are **participation
+context, not confirmation signals to act on**; leadership tables are
+**rotation context, not picks**. `mcp_metadata` carries provenance (source
+endpoint, tool name, pricing rule, effective parameters and limits sent,
+no-local-recomputation flags) and preserves the API-returned `request_id`
+where present; freshness/weekdate/staleness fields are captured **only when
+present** in the API payload and never fabricated.
+
+### 17.6 Prohibited-resource-list correction
+
+`PROHIBITED_RESOURCE_ENDPOINTS` gains the two **paid** leadership routes
+(`/v1/leadership/summary/latest`, `/v1/leadership/rotation/history`), closing
+the gap recorded in the design memo §2 (the market-regime and breadth routes
+were already listed). `/v1/leadership/definitions` is deliberately kept **off**
+the prohibited list: it is the verified public/zero-cost route registered as
+the credential-free `stocktrends://leadership/definitions` resource.

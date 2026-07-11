@@ -18,13 +18,17 @@ import { connectMcp, jsonResponse } from "./helpers.js";
 const MOCK_KEY = "mock-selections-secret-must-never-be-sent";
 const PUBLIC_HEADERS = { Accept: "application/json", "User-Agent": "stocktrends-mcp-server/1.0" };
 
-const SIX_PAID_TOOLS = [
+const TEN_PAID_TOOLS = [
   COST_ESTIMATE_TOOL_NAME,
   STIM_LATEST_TOOL_NAME,
   STIM_HISTORY_TOOL_NAME,
   INDICATORS_LATEST_TOOL_NAME,
   INDICATORS_HISTORY_TOOL_NAME,
-  SELECTIONS_LATEST_TOOL_NAME
+  SELECTIONS_LATEST_TOOL_NAME,
+  "stocktrends_get_market_regime_latest",
+  "stocktrends_get_market_regime_history",
+  "stocktrends_get_breadth_sector_latest",
+  "stocktrends_get_leadership_summary_latest"
 ].sort();
 
 // Paid tools + key + execution flag + nonzero caps + covering budget cap.
@@ -66,13 +70,13 @@ describe("Phase 5C selections — tool surface", () => {
     await server.close();
   });
 
-  it("paid-exposed mode exposes exactly six tools (adds selections_latest)", async () => {
+  it("paid-exposed mode exposes exactly ten tools (including selections_latest)", async () => {
     const fetchFn = routedFetch();
     const { client, server } = await connectMcp(fetchFn, EXPOSURE_ENV);
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
-    expect(toolNames).toEqual(SIX_PAID_TOOLS);
-    expect(toolNames).toHaveLength(6);
+    expect(toolNames).toEqual(TEN_PAID_TOOLS);
+    expect(toolNames).toHaveLength(10);
     expect(toolNames).toContain(SELECTIONS_LATEST_TOOL_NAME);
     expect(PAID_SELECTIONS_TOOL_NAMES).toEqual([SELECTIONS_LATEST_TOOL_NAME]);
 

@@ -60,7 +60,7 @@ npx @modelcontextprotocol/inspector node dist/server.js
 
 In the Inspector UI, confirm:
 
-- The tool list contains exactly `stocktrends_estimate_workflow_cost`, and the paid tools (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`, `stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`, `stocktrends_get_selections_latest`) are not visible.
+- The tool list contains exactly `stocktrends_estimate_workflow_cost`, and the paid tools (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`, `stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`, `stocktrends_get_selections_latest`, `stocktrends_get_market_regime_latest`, `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`, `stocktrends_get_leadership_summary_latest`) are not visible.
 - The prompts list is empty, if the client exposes a prompts panel.
 - Public resources (for example `stocktrends://api/openapi`, `stocktrends://ai/context`) are listed and readable without any credential configured.
 
@@ -83,7 +83,7 @@ Paid tools are **disabled by default**. Nothing in this section is required to i
 - `STOCKTRENDS_ENABLE_PAID_TOOLS=true`
 - `STOCKTRENDS_API_KEY` configured
 
-With both set, the server additionally registers the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, and the base selections tool *definition*, so the exposed tool set becomes exactly six:
+With both set, the server additionally registers the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, the base selections tool *definition*, and the four market-context tool *definitions*, so the exposed tool set becomes exactly ten:
 
 - `stocktrends_estimate_workflow_cost` — the credential-free planning tool (always present)
 - `stocktrends_get_stim_latest` — paid ST-IM tool definition
@@ -91,8 +91,12 @@ With both set, the server additionally registers the two paired paid ST-IM tool 
 - `stocktrends_get_indicators_latest` — paid indicators tool definition
 - `stocktrends_get_indicators_history` — paid indicators tool definition
 - `stocktrends_get_selections_latest` — paid base ST-IM selection universe tool definition
+- `stocktrends_get_market_regime_latest` — paid market-context tool definition (regime)
+- `stocktrends_get_market_regime_history` — paid market-context tool definition (regime)
+- `stocktrends_get_breadth_sector_latest` — paid market-context tool definition (breadth)
+- `stocktrends_get_leadership_summary_latest` — paid market-context tool definition (leadership)
 
-Exposure does not change what the free planning tool does, and it does not send any API key. It only makes the five paid tool definitions visible to the MCP client. The internal instrument resolver adds **no** public tool: it is a credential-free helper used before the paid boundary, so the default/free surface stays at exactly one tool.
+Exposure does not change what the free planning tool does, and it does not send any API key. It only makes the nine paid tool definitions visible to the MCP client. The internal instrument resolver adds **no** public tool: it is a credential-free helper used before the paid boundary, so the default/free surface stays at exactly one tool.
 
 **Paid execution additionally requires all of:**
 
@@ -101,16 +105,16 @@ Exposure does not change what the free planning tool does, and it does not send 
 - Explicit **nonzero** local caps (`STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` and `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL`).
 - A budget cap that covers the nonzero cost (`STOCKTRENDS_MAX_STC_PER_SESSION`, plus `STOCKTRENDS_MAX_USD_PER_SESSION` where a USD cost applies).
 
-Enabling execution changes **call behavior, not tool count**. When execution is enabled and every gate passes, invoking a paid ST-IM, indicators, or selections tool may send one authorized request; when it is not enabled, or any resolution/limit/cap/preflight gate fails, the same tool fails closed with no request and no auth header.
+Enabling execution changes **call behavior, not tool count**. When execution is enabled and every gate passes, invoking a paid ST-IM, indicators, selections, or market-context tool may send one authorized request; when it is not enabled, or any resolution/limit/cap/preflight gate fails, the same tool fails closed with no request and no auth header.
 
-The paid surface remains exactly six tools in every configuration — `stocktrends_estimate_workflow_cost`, `stocktrends_get_stim_latest`, `stocktrends_get_stim_history`, `stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`, and `stocktrends_get_selections_latest`. The exposure and execution flags change visibility and behavior, never the tool count.
+The paid surface remains exactly ten tools in every configuration — `stocktrends_estimate_workflow_cost`, `stocktrends_get_stim_latest`, `stocktrends_get_stim_history`, `stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`, `stocktrends_get_selections_latest`, `stocktrends_get_market_regime_latest`, `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`, and `stocktrends_get_leadership_summary_latest`. The exposure and execution flags change visibility and behavior, never the tool count.
 
 ### Exposure vs Execution
 
 | Concept | Meaning |
 | --- | --- |
-| **Exposure** | The five paid tool *definitions* (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`, `stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`, `stocktrends_get_selections_latest`) are **visible** to the MCP client. |
-| **Execution** | An actual authorized API request **may be sent** to the approved ST-IM, indicators, or base-selections endpoint when a paid tool is invoked and its gates pass (ST-IM/indicators additionally require a resolved canonical instrument identity; selections additionally enforce a bounded limit). |
+| **Exposure** | The nine paid tool *definitions* (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`, `stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`, `stocktrends_get_selections_latest`, `stocktrends_get_market_regime_latest`, `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`, `stocktrends_get_leadership_summary_latest`) are **visible** to the MCP client. |
+| **Execution** | An actual authorized API request **may be sent** to the approved ST-IM, indicators, base-selections, or market-context endpoint when a paid tool is invoked and its gates pass (ST-IM/indicators additionally require a resolved canonical instrument identity; selections and market-context additionally enforce bounded always-sent limits). |
 
 - The **execution gate is intentionally stricter** than the exposure gate. Making a tool definition visible is deliberately easier than authorizing a real, billable call.
 - If execution is not enabled, or the caps / pricing preflight fail, the paid tools **fail closed**: no request is sent, no `X-API-Key` is attached, and a deterministic secret-free denial is returned.
@@ -118,10 +122,11 @@ The paid surface remains exactly six tools in every configuration — `stocktren
 
 ### Enable paid tool exposure (exposure only — no execution)
 
-The example below exposes the paid tool *definitions* so an operator can confirm the five-tool surface. It is for **tool exposure only**: it does **not** enable paid execution and must not be used to perform a live paid call.
+The example below exposes the paid tool *definitions* so an operator can confirm the ten-tool surface. It is for **tool exposure only**: it does **not** enable paid execution and must not be used to perform a live paid call.
 
 ```sh
-# Exposure only: makes the five paid ST-IM, indicators, and base-selections tool definitions visible.
+# Exposure only: makes the nine paid ST-IM, indicators, base-selections, and
+# market-context tool definitions visible.
 # This does NOT authorize or perform any paid API call.
 export STOCKTRENDS_ENABLE_PAID_TOOLS=true
 export STOCKTRENDS_API_KEY="<your-api-key>"        # placeholder — never paste a real key
@@ -129,7 +134,7 @@ export STOCKTRENDS_API_KEY="<your-api-key>"        # placeholder — never paste
 export STOCKTRENDS_ENABLE_PAID_EXECUTION=false
 ```
 
-With this configuration the MCP client lists exactly six tools. No paid request is sent, because the execution flag is `false` and no nonzero caps or budget cap are configured. This is enough to verify the paid *exposure* surface without any spend. A step-by-step procedure for confirming the paid-exposed surface under MCP Inspector — still without any live paid execution — is documented in the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md).
+With this configuration the MCP client lists exactly ten tools. No paid request is sent, because the execution flag is `false` and no nonzero caps or budget cap are configured. This is enough to verify the paid *exposure* surface without any spend. A step-by-step procedure for confirming the paid-exposed surface under MCP Inspector — still without any live paid execution — is documented in the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md).
 
 Paid *execution* requires the additional gates described above (execution flag, mandatory preflight, explicit nonzero caps, and a covering budget cap). A step-by-step live-execution runbook is intentionally **not** included here. For the operator-facing *preconditions* that must hold before any separately authorized live run — framed conceptually, with no live call commands — see the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md). Do not enable paid execution merely to test installation — installation and tool-listing verification are fully demonstrable in free mode and in paid-exposed mode without execution.
 
@@ -142,7 +147,7 @@ These rules apply to every example, screenshot, recording, and shared artifact i
 - **Free/default mode needs no key.** It is fully functional with no API key, and the quickstart must be demonstrated without one.
 - **Public resources and the `stocktrends_estimate_workflow_cost` planning tool never send an API key.** They are credential-free regardless of paid configuration.
 - **Prefer per-session shell environment variables** (for example `export STOCKTRENDS_API_KEY=<your-api-key>` in a single shell) over writing a key into a persistent, machine-wide, or committed location for local inspection.
-- **The API key, when paid tools are enabled, is sent only as the `X-API-Key` header** to the approved paid ST-IM, indicators, and base `selections/latest` endpoints, and only after every gate passes. The credential-free instrument resolver (`/v1/instruments/lookup`, `/v1/instruments/resolve`) and the pricing catalog never receive it. There is **no `Authorization: Bearer` fallback**.
+- **The API key, when paid tools are enabled, is sent only as the `X-API-Key` header** to the approved paid ST-IM, indicators, base `selections/latest`, and market-context (`market/regime/latest`, `market/regime/history`, `breadth/sector/latest`, `leadership/summary/latest`) endpoints, and only after every gate passes. The credential-free instrument resolver (`/v1/instruments/lookup`, `/v1/instruments/resolve`), the pricing catalog, and the `stocktrends://leadership/definitions` public resource never receive it. There is **no `Authorization: Bearer` fallback**.
 - The key is never logged and never appears in errors, denials, or returned data.
 
 Before a release, run the manual secret-safety scan in the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md) to confirm no real key, populated auth header, or secret-bearing artifact was committed. Placeholders like `<your-api-key>` are allowed; real-looking secrets are not.
@@ -157,7 +162,7 @@ Included:
 - Public Stock Trends API resources and public/free planning tool.
 - Fetch-on-request behavior; no startup API fetch is required.
 - One public/free MCP planning tool: `stocktrends_estimate_workflow_cost`.
-- Conditional paired paid ST-IM tools (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`), paired paid indicators tools (`stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`), and the base ST-IM selection-universe tool (`stocktrends_get_selections_latest`), exposed only when paid mode is explicitly enabled with an API key (paid-exposed surface = six tools). Live subscription/API-key execution (`X-API-Key` only) runs **only** behind the two-gate policy — the paid-tools flag, an API key, the distinct `STOCKTRENDS_ENABLE_PAID_EXECUTION` runtime flag, authoritative static pricing/preflight, family-scoped catalog reconciliation, and nonzero local caps (plus a covering budget) — and, for indicators, only after a bare/raw symbol has resolved credential-free to a single canonical identity, and, for selections, under list-shaped broad-sweep/limit-safety controls (default limit 50, hard max 250, one fetch, no bulk/retry, repeated-identical-call loop denial); otherwise it fails closed with no request and no auth/payment header. See the [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution), [Conditional Paid Indicators Tools](#conditional-paid-indicators-tools-subscriptionapi-key-execution), and [Conditional Paid Selections Tool](#conditional-paid-selections-tool-subscriptionapi-key-execution) sections.
+- Conditional paired paid ST-IM tools (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`), paired paid indicators tools (`stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`), the base ST-IM selection-universe tool (`stocktrends_get_selections_latest`), and the four market-context tools (`stocktrends_get_market_regime_latest`, `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`, `stocktrends_get_leadership_summary_latest`), exposed only when paid mode is explicitly enabled with an API key (paid-exposed surface = ten tools). Live subscription/API-key execution (`X-API-Key` only) runs **only** behind the two-gate policy — the paid-tools flag, an API key, the distinct `STOCKTRENDS_ENABLE_PAID_EXECUTION` runtime flag, authoritative static pricing/preflight, family-scoped catalog reconciliation, and nonzero local caps (plus a covering budget) — and, for indicators, only after a bare/raw symbol has resolved credential-free to a single canonical identity, and, for selections and market-context, under list-shaped broad-sweep/limit-safety controls (always-sent bounded limits, one fetch, no bulk/retry, repeated-identical-call loop denial); otherwise it fails closed with no request and no auth/payment header. See the [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution), [Conditional Paid Indicators Tools](#conditional-paid-indicators-tools-subscriptionapi-key-execution), [Conditional Paid Selections Tool](#conditional-paid-selections-tool-subscriptionapi-key-execution), and [Conditional Paid Market-Context Tools](#conditional-paid-market-context-tools-subscriptionapi-key-execution) sections.
 - Zero MCP prompts.
 - No API key requirement for the default/public surface.
 - Internal paid-mode configuration, host enforcement, endpoint/tool allowlist coupling, `X-API-Key`-only auth construction, redaction, static endpoint pricing policy, in-memory per-session spend caps, single-attempt fetch with no retries, and mock-only validation.
@@ -216,9 +221,9 @@ All variables are optional; defaults keep the server in free mode. The **Affects
 | `STOCKTRENDS_API_BASE_URL` | All modes | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. Not a secret. |
 | `STOCKTRENDS_MCP_TRANSPORT` | All modes | `stdio` | Only `stdio` is supported. Not a secret. |
 | `STOCKTRENDS_MCP_LOG_LEVEL` | All modes | `warn` | Normal logs go to stderr, never stdout. Not a secret. |
-| `STOCKTRENDS_ENABLE_PAID_TOOLS` | Paid tool exposure | `false` | Exposure flag. When `true` with a configured API key, exposes the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, and the base selections tool *definition* (total tools become 6; the internal instrument resolver adds no public tool). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. Not a secret. |
-| `STOCKTRENDS_API_KEY` | Paid exposure + execution | None | **Secret — use a placeholder (`<your-api-key>`) in all docs, examples, screenshots, and shared artifacts; never commit or paste a real value.** Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as the `X-API-Key` header to the approved origin + allowlisted paid ST-IM, indicators, and base `selections/latest` endpoints after every gate passes (no `Authorization: Bearer` fallback). Never sent for public resources, the cost-estimate planning tool, the pricing catalog, or the credential-free instrument resolver; never logged or exposed in errors/denials/returned data. |
-| `STOCKTRENDS_ENABLE_PAID_EXECUTION` | Paid execution | `false` | Execution flag, distinct from the exposure flag. Live subscription/API-key calls to `GET /v1/stim/latest`, `GET /v1/stim/history`, `GET /v1/indicators/latest`, `GET /v1/indicators/history`, and `GET /v1/selections/latest` require this to be `true` **and** the paid-tools flag, an API key, authoritative static pricing/preflight, family-scoped catalog reconciliation, and ≥1 nonzero call cap plus a budget cap covering the nonzero cost (indicators additionally require a safe resolved canonical identity; selections additionally enforce a bounded limit and repeated-identical-call loop safety). The flag alone (no tools flag / no key) exposes and executes nothing. Not a secret. |
+| `STOCKTRENDS_ENABLE_PAID_TOOLS` | Paid tool exposure | `false` | Exposure flag. When `true` with a configured API key, exposes the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, the base selections tool *definition*, and the four market-context tool *definitions* (total tools become 10; the internal instrument resolver adds no public tool). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. Not a secret. |
+| `STOCKTRENDS_API_KEY` | Paid exposure + execution | None | **Secret — use a placeholder (`<your-api-key>`) in all docs, examples, screenshots, and shared artifacts; never commit or paste a real value.** Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as the `X-API-Key` header to the approved origin + allowlisted paid ST-IM, indicators, base `selections/latest`, and market-context endpoints after every gate passes (no `Authorization: Bearer` fallback). Never sent for public resources (including `stocktrends://leadership/definitions`), the cost-estimate planning tool, the pricing catalog, or the credential-free instrument resolver; never logged or exposed in errors/denials/returned data. |
+| `STOCKTRENDS_ENABLE_PAID_EXECUTION` | Paid execution | `false` | Execution flag, distinct from the exposure flag. Live subscription/API-key calls to `GET /v1/stim/latest`, `GET /v1/stim/history`, `GET /v1/indicators/latest`, `GET /v1/indicators/history`, `GET /v1/selections/latest`, `GET /v1/market/regime/latest`, `GET /v1/market/regime/history`, `GET /v1/breadth/sector/latest`, and `GET /v1/leadership/summary/latest` require this to be `true` **and** the paid-tools flag, an API key, authoritative static pricing/preflight, family-scoped catalog reconciliation, and ≥1 nonzero call cap plus a budget cap covering the nonzero cost (indicators additionally require a safe resolved canonical identity; selections and market-context additionally enforce bounded always-sent limits and repeated-identical-call loop safety). The flag alone (no tools flag / no key) exposes and executes nothing. Not a secret. |
 | `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` | Paid execution | `true` | Pricing/preflight posture. Preflight is mandatory; setting this `false` denies paid execution (fail closed) rather than weakening the requirement. Not a secret. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | Paid execution | `0` | Per-session paid-call cap. `0` denies all paid calls; live execution requires an explicit nonzero value. In-memory per session; resets on restart. Not a secret. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | Paid execution | `0` | Per-tool paid-call cap. `0` denies; requires an explicit nonzero value. In-memory per session; resets on restart. Not a secret. |
@@ -240,6 +245,9 @@ The server registers these resources:
 | `stocktrends://methodology/inference` | `GET /v1/meta/inference` |
 | `stocktrends://pricing/catalog` | `GET /v1/pricing/catalog` |
 | `stocktrends://proof/market-edge` | `GET /v1/ai/proof/market-edge` |
+| `stocktrends://leadership/definitions` | `GET /v1/leadership/definitions` |
+
+All ten resources are credential-free in every mode (fetch-on-request, no API key ever). `stocktrends://leadership/definitions` serves the leadership indicator and taxonomy definitions (verified public/zero-cost by a credential-free read) and is the interpretive companion to the paid leadership summary tool; it is never keyed, never on the paid allowlist, and never mirrored as a paid pricing rule.
 
 Candidate intelligence resources remain excluded until no-key public verification succeeds:
 
@@ -306,6 +314,23 @@ Broad-sweep / limit safety (far tighter than the API's own `2000` default / `200
 
 Pricing is a fresh, `selections`-family static mirror (`selections_latest_paid` `0.05 STC`) reconciled **credential-free** and **family-scoped** against the live `/v1/pricing/catalog` metadata (missing/duplicate rule, cost mismatch, or missing/unsupported/conflicting `STC` unit fails closed; an ST-IM/indicators/published mirror never satisfies it). When every gate passes, exactly one `GET` is sent with `X-API-Key` only (no `Authorization: Bearer`, no payment header, no x402, no retries). Successful responses preserve the API payload verbatim in `api_data` and add `mcp_metadata` including base-vs-published provenance, `effective_limit`, and the returned row count; `observed_cost`/`payment_status` remain `null` and are never fabricated. Automated validation is **mock-only**; no live API call runs in tests. See the [Phase 5C Selections/Latest Implementation Notes](docs/PHASE5C_SELECTIONS_LATEST_IMPLEMENTATION_NOTES.md).
 
+## Conditional Paid Market-Context Tools (subscription/API-key execution)
+
+When paid tools are enabled with an API key, the server also registers the four Phase 5D market-context tools alongside the prior families, bringing the paid-exposed surface to exactly ten tools. They behave like the other paid tools with the same gate policy, plus market-context limit-safety controls because the data is weekly-cadence and market-scoped. None of them is symbol-keyed, so no instrument resolver is involved.
+
+| MCP tool | Endpoint | Cost | Limits (always sent) |
+| --- | --- | --- | --- |
+| `stocktrends_get_market_regime_latest` | `GET /v1/market/regime/latest` | `0.15 STC` | — (snapshot; strict empty input, unknown keys rejected) |
+| `stocktrends_get_market_regime_history` | `GET /v1/market/regime/history` | `0.25 STC` | `limit` default `12`, hard max `52` (the API's own max); optional `start_date` (`YYYY-MM-DD`) passthrough |
+| `stocktrends_get_breadth_sector_latest` | `GET /v1/breadth/sector/latest` | `0.1 STC` | `limit` default `50`, hard max `250`; `group_level` default `sector` always sent |
+| `stocktrends_get_leadership_summary_latest` | `GET /v1/leadership/summary/latest` | `0.25 STC` | `limit_overall` default `50`, hard max `200`; `limit_bucket` default `20`, hard max `50` |
+
+**Context, not advice.** These tools forward Stock Trends API-authored market context verbatim and never turn it into a recommendation: a regime label is **market context, not a trading recommendation**; breadth rows are **participation context, not confirmation signals to act on**; leadership tables are **rotation context, not picks**. The adapter performs no local regime calculation, breadth re-aggregation, or leadership re-ranking/re-bucketing/thresholding, and produces no buy/sell/hold/allocation or suitability output.
+
+Additional input policy: `exchange` (one of `N,Q,A,B,T,I`), breadth's `cs_only`/`include_unknown`/`min_price`/`min_volume`, and leadership's `min_rsi`/`min_mt_cnt` (`0`–`500`) are validated passthroughs sent only when supplied so API defaults apply; none is applied locally. `weekdate` is deliberately **not exposed** on either latest tool (no snapshot time-travel that would reconstruct history through a latest route), and `vol_scale` (unbounded legacy multiplier) and `type` (no verified enum) are not exposed; all are rejected as unknown keys. Invalid/out-of-range/array/sentinel limits fail closed before any pricing/auth/fetch and are never clamped. Exactly one `GET` per invocation — no pagination, date-range sweeping, exchange iteration, bulk assembly, or automatic retry — and repeated identical calls (same tool + normalized parameters; the zero-parameter regime-latest signature is constant) fail closed (`repeated_identical_market_context_call`) rather than re-billing weekly data.
+
+Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0.15 STC` and `market_regime_history` `0.25 STC` in family `market` — the verified rule ids carry no `_paid` suffix; `breadth_sector_latest_paid` `0.1 STC` in family `breadth`; `leadership_summary_latest_paid` `0.25 STC` in family `leadership`), each reconciled **credential-free** against the live `/v1/pricing/catalog` metadata with the same fail-closed checks (missing/duplicate rule, endpoint/family/cost/unit mismatch, non-`paid` classification). The deferred routes `/v1/market/regime/forecast`, `/v1/breadth/sector/history` (API default/max `200000`/`500000` — never reachable through this adapter), and `/v1/leadership/rotation/history` are not implemented, not promoted, and denied `endpoint_not_allowlisted`. Successful responses preserve the API payload verbatim in `api_data` and add `mcp_metadata` with context-not-advice provenance, `effective_limits`, the returned row count where derivable, and the API-reported weekdate only when present; `observed_cost`/`payment_status` remain `null` and are never fabricated. Automated validation is **mock-only**; no live API call runs in tests. See the [Phase 5D Market-Context Implementation Notes](docs/PHASE5D_MARKET_CONTEXT_IMPLEMENTATION_NOTES.md) and [`docs/SECURITY_MODEL.md` §17](docs/SECURITY_MODEL.md).
+
 ## Documentation
 
 - [Architecture Decisions](docs/ARCHITECTURE_DECISIONS.md)
@@ -347,3 +372,4 @@ Pricing is a fresh, `selections`-family static mirror (`selections_latest_paid` 
 - [Phase 5C Selections/Latest Production Readiness Signoff](docs/PHASE5C_SELECTIONS_LATEST_PRODUCTION_READINESS_SIGNOFF.md)
 - [Phase 5D MCP Launch Capability Roadmap and Available Endpoint Selection Memo](docs/PHASE5D_MCP_LAUNCH_CAPABILITY_ROADMAP.md)
 - [Phase 5D Market-Context Layer Design and Contract Verification Memo](docs/PHASE5D_MARKET_CONTEXT_DESIGN_AND_CONTRACT_MEMO.md)
+- [Phase 5D Market-Context Implementation Notes](docs/PHASE5D_MARKET_CONTEXT_IMPLEMENTATION_NOTES.md)

@@ -19,7 +19,8 @@ const EXPECTED_PUBLIC_RESOURCE_URIS = [
   "stocktrends://methodology/indicators",
   "stocktrends://methodology/inference",
   "stocktrends://pricing/catalog",
-  "stocktrends://proof/market-edge"
+  "stocktrends://proof/market-edge",
+  "stocktrends://leadership/definitions"
 ];
 
 const PAID_ENV_MATRIX = [
@@ -31,7 +32,7 @@ const PAID_ENV_MATRIX = [
 ];
 
 describe("stocktrends_estimate_workflow_cost", () => {
-  it("registers exactly one public planning tool, zero prompts, and the unchanged 9 public resources", async () => {
+  it("registers exactly one public planning tool, zero prompts, and the 10 public resources", async () => {
     const fetchFn = vi.fn<FetchLike>(async () => jsonResponse(costEstimateResponse()));
     const { client, server } = await connectMcp(fetchFn);
 

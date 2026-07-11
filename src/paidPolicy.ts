@@ -193,6 +193,18 @@ export const DEFAULT_PAID_SPEND_POLICY: PaidSpendPolicy = Object.freeze({
 // `/v1/selections/published/history`) and base `/v1/selections/history` are
 // deliberately ABSENT and remain denied `endpoint_not_allowlisted`; promoting
 // them requires a separate, reviewed increment.
+//
+// PR 51 promotes exactly the four Phase 5D market-context routes
+// (PHASE5D_MARKET_CONTEXT_DESIGN_AND_CONTRACT_MEMO §8): `/v1/market/regime/latest`,
+// `/v1/market/regime/history`, `/v1/breadth/sector/latest`, and
+// `/v1/leadership/summary/latest`, behind the identical gate policy plus
+// market-context limit-safety controls (always-sent limits, no weekdate
+// snapshot time-travel, repeated-identical-call denial for all four tools).
+// The deferred routes (`/v1/market/regime/forecast`, `/v1/breadth/sector/history`,
+// `/v1/leadership/rotation/history`) are deliberately ABSENT and remain denied
+// `endpoint_not_allowlisted`. `/v1/leadership/definitions` is PERMANENTLY absent
+// as a paid route: it is a credential-free public resource and can never receive
+// an `X-API-Key`.
 export const AUTH_CAPABLE_PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] = Object.freeze([
   {
     toolName: "stocktrends_get_stim_latest",
@@ -242,6 +254,54 @@ export const AUTH_CAPABLE_PAID_ENDPOINT_POLICIES: readonly PaidEndpointPolicy[] 
     httpMethod: "GET",
     access: "paid",
     pricingRuleId: "selections_latest_paid",
+    requiresPricingPreflight: true,
+    supportsLongitudinalAnalysis: false
+  },
+  {
+    // Current weekly market regime classification (snapshot-shaped; no list
+    // parameters). Registered together with its history pair (PR 51).
+    toolName: "stocktrends_get_market_regime_latest",
+    endpointPath: "/v1/market/regime/latest",
+    httpMethod: "GET",
+    access: "paid",
+    pricingRuleId: "market_regime_latest",
+    requiresPricingPreflight: true,
+    supportsLongitudinalAnalysis: false,
+    requiredHistoryPair: "stocktrends_get_market_regime_history"
+  },
+  {
+    // Historical weekly market regime classification. The API itself bounds the
+    // route to 52 weekly rows (default 12), so the sweep surface is trivial.
+    toolName: "stocktrends_get_market_regime_history",
+    endpointPath: "/v1/market/regime/history",
+    httpMethod: "GET",
+    access: "paid",
+    pricingRuleId: "market_regime_history",
+    requiresPricingPreflight: true,
+    supportsLongitudinalAnalysis: true
+  },
+  {
+    // Sector/industry-group/industry participation breadth snapshot. Shipped
+    // without its history sibling (the API's breadth history default/max of
+    // 200000/500000 is the largest sweep surface observed anywhere and stays
+    // deferred behind its own reviewed design memo).
+    toolName: "stocktrends_get_breadth_sector_latest",
+    endpointPath: "/v1/breadth/sector/latest",
+    httpMethod: "GET",
+    access: "paid",
+    pricingRuleId: "breadth_sector_latest_paid",
+    requiresPricingPreflight: true,
+    supportsLongitudinalAnalysis: false
+  },
+  {
+    // API-ranked, API-bucketed leadership summary snapshot. Shipped without its
+    // rotation-history sibling (no API row cap, nullable omit-means-all top_k —
+    // deferred behind its own reviewed design pass).
+    toolName: "stocktrends_get_leadership_summary_latest",
+    endpointPath: "/v1/leadership/summary/latest",
+    httpMethod: "GET",
+    access: "paid",
+    pricingRuleId: "leadership_summary_latest_paid",
     requiresPricingPreflight: true,
     supportsLongitudinalAnalysis: false
   }
