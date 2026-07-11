@@ -648,7 +648,7 @@ This memo and the Phase 5D track explicitly do **not** include:
 
 - **Recommend Phase 5D proceed to a design/contract memo (PR #50) for the
   currently available market-context endpoints: market regime, breadth, and
-  leadership.** These are available now, verified to exist credential-free
+  leadership.** These are available now, verified via credential-free metadata to exist
   (§4.0), lowest-advice-risk among the available paid candidates, foundational
   for retail trading agents, and the natural complement to the proven ST-IM,
   indicators, and selections/latest families.
