@@ -244,8 +244,12 @@ Always-sent-defaults coverage (regime history `limit` default `12`; breadth
 `limit_overall`/`limit_bucket` defaults `50`/`20`) is validated by the merged
 mock-only suite (`tests/phase5d-market-context-tools.test.ts`, part of the 448
 passing tests); the denial-path `effective_limits` echoes in §5 additionally
-confirm caller-supplied limits are carried exactly, and no omitted-limit paid
-request could be observed live because no live paid call was authorized.
+confirm caller-supplied limits are carried exactly. No omitted-limit live
+paid request was performed in the authorized live phase: the live probes
+intentionally used the plan's exact minimal inputs. Omitted-default behavior
+remains covered by the merged mock-only suite, while the live evidence in §8
+confirms caller-supplied limits are serialized exactly and breadth's default
+`group_level=sector` is sent explicitly.
 
 ### 6.2 Cap-denial no-spend probe (plan §9 — optional, disclosed)
 
@@ -309,7 +313,7 @@ is likewise covered by the same suite.
 | Fetch-on-request | confirmed — the resource content was fetched at read time; startup performed no API call (fetch-on-request registration validated by the mock-only suite) |
 | No paid path / no reconciliation | confirmed — the read used the public resource path only; no pricing preflight, no catalog reconciliation, no cap interaction (`leadership_definitions_public` is `access_type: public`, zero cost, `cost_unit: request`, never a paid STC mirror) |
 | Response shape (summary only; no payload reproduced) | resource wrapper keys: `resourceUri`, `source` (`apiBaseUrl`, `endpointPath`, `status`, `upstreamRequestId`), `fetchedAt`, `data`; `data` keys: `concept` (string), `indicators` (object of 5: `rsi`, `trend`, `trend_cnt`, `mt_cnt`, `rsi_updn`), `taxonomy_source` (string), `taxonomy_levels` (array of 3), `notes` (object of 3) — exactly the shape recorded credential-free by the design memo §3 |
-| Spend | **zero** — catalog-verified public/zero-cost route; the definitions reads were the only network activity in the entire validation |
+| Spend | catalog-verified public/zero-cost route. Spend for this public-resource check was zero. The definitions reads were the only network activity for this credential-free public-resource check; the later authorized live paid calls and credential-free pricing-catalog reconciliation reads are recorded separately in §§8–10 |
 
 ## 8. Live paid call results (plan §8) — PERFORMED UNDER THE §4 PHRASE
 
