@@ -216,7 +216,7 @@ Purpose: confirm the §9 limit-safety design of the design memo behaves as
 implemented, entirely **before** any paid boundary. Every rejection below occurs at
 the strict input schema **before** pricing preflight, catalog reconciliation, auth
 header construction, or fetch — no request, no auth header, no cap debit. These
-cases can be exercised under the Phase 6 (execution-disabled) configuration, or —
+cases can be exercised under the §6 execution-disabled configuration, or —
 for the accepted-input cases only — observed in the metadata of the single §8 live
 call; they never justify additional paid calls.
 
@@ -268,7 +268,7 @@ authorization phrase:
 Absent that exact phrase, no paid execution flag is set and no paid call is issued.
 The operator authorizes, configures caps, supervises, and approves the run; the
 single tool call may be issued through the MCP server by a supervised MCP
-client/agent session under that authorization, or directly by the operator — either
+client/agent session under that authorization, or through manual MCP tool invocation by the operator — either
 way the bounds below apply without exception.
 
 > The command-shaped lines in this section are **placeholders / illustrations only**
@@ -401,7 +401,7 @@ presented as real results. Use `REDACTED` placeholders for anything secret-shape
 
 - Date/time (UTC):
 - Operator:
-- Execution mechanism: (operator-direct / supervised MCP client/agent session)
+- Execution mechanism: (operator-supervised manual MCP tool invocation / supervised MCP client/agent session)
 - Commit hash:
 - Environment: (OS, Node version, transport = stdio, API base URL origin)
 
