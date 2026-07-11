@@ -174,7 +174,7 @@ export const DEFAULT_PAID_SPEND_POLICY: PaidSpendPolicy = Object.freeze({
 // `assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`) resolves policies
 // ONLY from this narrow list. Nothing here — or anywhere in the auth-capable
 // path — may authorize an `X-API-Key` header or fetch for any endpoint that is
-// not one of these four ST-IM / indicators routes.
+// not one of the routes explicitly promoted below.
 //
 // PR 39 promotes the paired paid indicators routes into this auth-capable list
 // so they become executable behind the identical Phase 4 gate policy (paid-tools

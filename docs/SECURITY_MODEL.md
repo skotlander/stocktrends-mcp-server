@@ -226,11 +226,12 @@ must agree before any call:
   can never execute regardless of environment. Flipping the constants does not
   by itself authorize any call.
 - **`STOCKTRENDS_ENABLE_PAID_TOOLS` (exposure).** When `true` with a configured
-  `STOCKTRENDS_API_KEY`, registers the paired paid ST-IM tool *definitions* and
-  the paired paid indicators tool *definitions* (total tools become 5; the
-  default/free surface remains exactly 1). This flag, or the API key, alone never
-  exposes or executes anything. The internal instrument resolver adds **no**
-  public tool.
+  `STOCKTRENDS_API_KEY`, registers the paired paid ST-IM tool *definitions*, the
+  paired paid indicators tool *definitions*, the base selections tool
+  *definition* (§16), and the four market-context tool *definitions* (§17) —
+  the current paid-exposed total is exactly 10 tools; the default/free surface
+  remains exactly 1. This flag, or the API key, alone never exposes or executes
+  anything. The internal instrument resolver adds **no** public tool.
 - **`STOCKTRENDS_ENABLE_PAID_EXECUTION` (execution).** A distinct runtime flag.
   Live execution additionally requires it to be `true`. Exposure is independent
   of it: the tools appear whether or not it is set; only execution is gated.
@@ -241,9 +242,9 @@ must agree before any call:
   | API key only | none (1 planning tool) | none |
   | Paid-tools flag only (no key) | none (1 planning tool) | none |
   | Execution flag only (no tools flag / no key) | none (1 planning tool) | none |
-  | Paid-tools flag + key, no execution flag | 5 tools | none (`paid_execution_disabled`) |
-  | Paid-tools flag + key + execution flag, no caps | 5 tools | none (`spend_cap_exceeded`) |
-  | Paid-tools flag + key + execution flag + ≥1 nonzero call cap + a budget cap covering the nonzero cost | 5 tools | permitted after full preflight (indicators additionally require a safe resolved identity) |
+  | Paid-tools flag + key, no execution flag | 10 tools | none (`paid_execution_disabled`) |
+  | Paid-tools flag + key + execution flag, no caps | 10 tools | none (`spend_cap_exceeded`) |
+  | Paid-tools flag + key + execution flag + ≥1 nonzero call cap + a budget cap covering the nonzero cost | 10 tools | permitted after full preflight (indicators additionally require a safe resolved identity; selections and market-context additionally require bounded always-sent limits) |
 
   There is no dry-run flag in this build; a not-yet-enabled configuration simply
   fails closed with `paid_execution_disabled` and sends no request.
@@ -257,9 +258,10 @@ must agree before any call:
   data. Redaction (§2, §9) remains in force; tests assert the key never appears.
 - The `X-API-Key` header is constructed **only** inside the coupled paid
   boundary (`buildPaidAuthHeaders`), **only after every preflight gate passes**,
-  and **only** for the approved origin + a **narrow auth-capable allowlist**
-  (`/v1/stim/latest`, `/v1/stim/history`, `/v1/indicators/latest`,
-  `/v1/indicators/history` — see §15.7). Public resources, the
+  and **only** for the approved origin + the **narrow auth-capable allowlist**
+  (originally `/v1/stim/latest`, `/v1/stim/history`, `/v1/indicators/latest`,
+  `/v1/indicators/history`; since extended by §16.2 and §17.2 to nine routes
+  total — see §15.7 for the current full list). Public resources, the
   `stocktrends_estimate_workflow_cost` planning tool, the pricing catalog read,
   and the internal instrument-resolver reads (`/v1/instruments/lookup`,
   `/v1/instruments/resolve`) stay **credential-free** and can never receive the
@@ -354,17 +356,24 @@ the repository.**
 ### 15.7 Narrowed credential-bearing endpoint allowlist
 
 The credential-bearing execution boundary can authorize an `X-API-Key` header
-and a fetch for **only** the four approved paid routes: `GET /v1/stim/latest`,
-`GET /v1/stim/history`, `GET /v1/indicators/latest`, and
-`GET /v1/indicators/history`. The single policy resolver used by the auth-capable
-path (`findPaidEndpointPolicy`, feeding `evaluatePaidPreflight`,
+and a fetch for **only** the nine currently approved paid routes:
+`GET /v1/stim/latest`, `GET /v1/stim/history`, `GET /v1/indicators/latest`,
+`GET /v1/indicators/history`, `GET /v1/selections/latest` (§16.2),
+`GET /v1/market/regime/latest`, `GET /v1/market/regime/history`,
+`GET /v1/breadth/sector/latest`, and `GET /v1/leadership/summary/latest`
+(§17.2). The single policy resolver used by the auth-capable path
+(`findPaidEndpointPolicy`, feeding `evaluatePaidPreflight`,
 `evaluatePaidInvocationPreflight`, `buildPaidAuthHeaders`,
 `assertPaidEndpointAllowed`, and `getPaidEndpointPolicy`) reads only
 `AUTH_CAPABLE_PAID_ENDPOINT_POLICIES`. PR 39 promoted the paired paid indicators
 routes into that allowlist so they are executable behind the identical gate
-policy as ST-IM. The **public instrument-discovery routes**
-(`/v1/instruments/lookup`, `/v1/instruments/resolve`) and any future non-promoted
-paid route are **not** on the auth-capable allowlist and are denied
+policy as ST-IM; PR 45 and PR 51 made the further promotions listed above under
+the same identical gate policy. The **public instrument-discovery routes**
+(`/v1/instruments/lookup`, `/v1/instruments/resolve`), the credential-free
+`/v1/leadership/definitions` public-resource route, and any future
+non-promoted paid route (including the deferred `/v1/market/regime/forecast`,
+`/v1/breadth/sector/history`, and `/v1/leadership/rotation/history`) are
+**not** on the auth-capable allowlist and are denied
 `endpoint_not_allowlisted` before any auth header or fetch — they can never
 receive an `X-API-Key`. Making a future endpoint executable requires an explicit,
 separately reviewed promotion into the auth-capable allowlist.

@@ -58,18 +58,18 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // mode enabled with an API key). A raw symbol is resolved credential-free to a
   // single canonical identity before any paid boundary; ambiguity fails closed
   // with candidate matches. They share the same in-memory caps and per-server
-  // reconciliation state (reconciled per family), so the paid-exposed surface is
-  // exactly five tools while execution behavior is governed by the same gates.
+  // reconciliation state (reconciled per family), and execution behavior is
+  // governed by the same gates as every other paid family (see the final total
+  // below).
   registerPaidIndicatorsTools(server, client, config, paidUsage, paidReconciliation);
   // Base ST-IM selection-universe tool (`stocktrends_get_selections_latest`).
   // Same exposure gate as the ST-IM / indicators pairs (paid mode enabled with
-  // an API key), so registering it brings the paid-exposed surface to exactly
-  // six tools while the default/free surface stays at exactly one. Execution is
-  // governed by the same gates plus list-shaped broad-sweep/limit-safety controls
-  // (default limit 50, hard max 250, always-present limit, one fetch per
-  // invocation, no bulk/retry, repeated-identical-call loop denial). It shares
-  // the same in-memory caps and per-server reconciliation state (reconciled per
-  // family, base `selections` only).
+  // an API key). Execution is governed by the same gates plus list-shaped
+  // broad-sweep/limit-safety controls (default limit 50, hard max 250,
+  // always-present limit, one fetch per invocation, no bulk/retry,
+  // repeated-identical-call loop denial). It shares the same in-memory caps and
+  // per-server reconciliation state (reconciled per family, base `selections`
+  // only; see the final total below).
   registerPaidSelectionsTools(server, client, config, paidUsage, paidReconciliation);
   // Phase 5D market-context tools (`stocktrends_get_market_regime_latest`,
   // `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`,
