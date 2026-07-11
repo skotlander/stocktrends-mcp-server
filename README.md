@@ -373,3 +373,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5D MCP Launch Capability Roadmap and Available Endpoint Selection Memo](docs/PHASE5D_MCP_LAUNCH_CAPABILITY_ROADMAP.md)
 - [Phase 5D Market-Context Layer Design and Contract Verification Memo](docs/PHASE5D_MARKET_CONTEXT_DESIGN_AND_CONTRACT_MEMO.md)
 - [Phase 5D Market-Context Implementation Notes](docs/PHASE5D_MARKET_CONTEXT_IMPLEMENTATION_NOTES.md)
+- [Phase 5D Market-Context Controlled Validation Plan](docs/PHASE5D_MARKET_CONTEXT_CONTROLLED_VALIDATION_PLAN.md)
