@@ -39,8 +39,9 @@ single operator-authorized, operator-supervised live validation under the merged
 validation plan (PR #46), covering: baseline preconditions, the default/free
 surface, the paid-exposed execution-disabled surface, limit-safety cases, the
 controlled live paid call, cost/cap and catalog-reconciliation observations, and
-rollback. It creates only this report file; it does not modify `src/`, `tests/`,
-`package.json`, or `package-lock.json`. Scope is **exactly one tool / one
+rollback. This PR creates this report file and adds one README
+documentation-index link; it does not modify `src/`, `tests/`, `package.json`, or
+`package-lock.json`. Scope is **exactly one tool / one
 endpoint** — no `selections/history`, no `selections/published/*`, and no public
 selections resource is exercised.
 
