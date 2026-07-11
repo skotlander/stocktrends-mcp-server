@@ -346,3 +346,4 @@ Pricing is a fresh, `selections`-family static mirror (`selections_latest_paid` 
 - [Phase 5C Selections/Latest Controlled Validation Report](docs/PHASE5C_SELECTIONS_LATEST_CONTROLLED_VALIDATION_REPORT.md)
 - [Phase 5C Selections/Latest Production Readiness Signoff](docs/PHASE5C_SELECTIONS_LATEST_PRODUCTION_READINESS_SIGNOFF.md)
 - [Phase 5D MCP Launch Capability Roadmap and Available Endpoint Selection Memo](docs/PHASE5D_MCP_LAUNCH_CAPABILITY_ROADMAP.md)
+- [Phase 5D Market-Context Layer Design and Contract Verification Memo](docs/PHASE5D_MARKET_CONTEXT_DESIGN_AND_CONTRACT_MEMO.md)
