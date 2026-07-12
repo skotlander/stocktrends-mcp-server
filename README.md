@@ -185,6 +185,8 @@ Paid tools are **disabled by default**. Nothing in this section is required to i
 
 **Paid tool exposure and paid execution are two separate gates.** Enabling exposure never, by itself, performs a paid call.
 
+**Paid flag parsing is strict:** only the literal string `true` enables `STOCKTRENDS_ENABLE_PAID_TOOLS` or `STOCKTRENDS_ENABLE_PAID_EXECUTION`. The values `false`, `0`, `no`, and `off` disable them. Other values such as `1`, `yes`, or `on` fail startup with `invalid_config`. The execution flag is named `STOCKTRENDS_ENABLE_PAID_EXECUTION`; `STOCKTRENDS_ALLOW_PAID_EXECUTION` is not a recognized variable and setting it does nothing.
+
 **Paid tool exposure requires both of:**
 
 - `STOCKTRENDS_ENABLE_PAID_TOOLS=true`
