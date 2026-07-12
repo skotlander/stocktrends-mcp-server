@@ -377,3 +377,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5D Market-Context Controlled Validation Report](docs/PHASE5D_MARKET_CONTEXT_CONTROLLED_VALIDATION_REPORT.md)
 - [Phase 5D Market-Context Production Readiness Signoff](docs/PHASE5D_MARKET_CONTEXT_PRODUCTION_READINESS_SIGNOFF.md)
 - [Phase 5E Next Capability Selection Memo](docs/PHASE5E_NEXT_CAPABILITY_SELECTION_MEMO.md)
+- [Phase 5E Launch/Distribution Readiness Design Memo](docs/PHASE5E_LAUNCH_DISTRIBUTION_READINESS_DESIGN_MEMO.md)
