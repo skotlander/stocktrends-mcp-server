@@ -530,3 +530,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5E Operator Smoke-Test Runbook](docs/PHASE5E_OPERATOR_SMOKE_TEST_RUNBOOK.md)
 - [Phase 5E Launch Release Checklist](docs/PHASE5E_LAUNCH_RELEASE_CHECKLIST.md)
 - [Phase 5E Directory/Marketplace Metadata Readiness](docs/PHASE5E_DIRECTORY_METADATA_READINESS.md)
+- [Phase 5E Controlled Local Client Validation Report](docs/PHASE5E_CONTROLLED_LOCAL_CLIENT_VALIDATION_REPORT.md)
