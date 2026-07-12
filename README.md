@@ -25,6 +25,8 @@ The MCP adapter:
 
 Public resources and the default/free mode described below are credential-free: no API key, subscription, or payment credential is required to install, inspect, or use them. The conditional paid ST-IM execution path is a separate, explicitly gated surface that is disabled by default (see [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution)).
 
+**New here?** Start with the [Default / Free Mode Quickstart](#default--free-mode-quickstart) below to install and run the server credential-free, then [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client) to wire it into an MCP client, and read [Paid Mode Configuration](#paid-mode-configuration) and the [Security Model](docs/SECURITY_MODEL.md) before setting any paid variable.
+
 ## Default / Free Mode Quickstart
 
 This is the recommended first path for installing or inspecting the server. In default mode, the server:
@@ -46,6 +48,8 @@ npm install
 npm run build
 ```
 
+This `git clone` + `npm install` + `npm run build` sequence, followed by local stdio execution of the compiled `dist/server.js`, is the only supported install channel for this phase. There is no npm package, no registry publication, and no hosted MCP endpoint — packaging and publication are explicitly deferred, not omitted (see the [Phase 5E Launch/Distribution Readiness Design Memo](docs/PHASE5E_LAUNCH_DISTRIBUTION_READINESS_DESIGN_MEMO.md)).
+
 No environment variables or `.env` file are required for this path. Do not set `STOCKTRENDS_ENABLE_PAID_TOOLS`, `STOCKTRENDS_API_KEY`, or `STOCKTRENDS_ENABLE_PAID_EXECUTION` while testing default/free mode.
 
 Optional: `npm start` starts the local stdio server process directly and is mainly useful as a manual smoke check (it will sit waiting for JSON-RPC input on stdin). Stop it with Ctrl+C before launching the server via MCP Inspector below.
@@ -66,11 +70,114 @@ In the Inspector UI, confirm:
 
 This check confirms the free/default boundary without requiring or triggering any paid execution.
 
-For a fuller step-by-step Inspector procedure — default/free listing, paid-*exposed* listing without execution, and a rollback checklist — see the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md).
+For a fuller step-by-step Inspector procedure — default/free listing, paid-*exposed* listing without execution, and a rollback checklist — see the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md) (its paid-exposed surface and resource counts were correct when written for the Phase 4-era three-tool surface; current counts are documented in this README).
 
 ### Secret Safety (free mode)
 
 Free/default mode needs no API key, so nothing secret is involved in this quickstart. Always test and demonstrate default mode without a key. The full credential-handling rules — placeholders only, never commit or paste a real key — are consolidated in the top-level [Secret Safety](#secret-safety) section.
+
+## Connect a local stdio MCP client
+
+This section wires the compiled server into an MCP client over local stdio. Build first (`npm run build`); every example below launches the compiled entry point with `command: "node"` and `args: ["<absolute-path-to-checkout>/dist/server.js"]`, where `<absolute-path-to-checkout>` is the absolute path to this repository on your machine. Every **primary** example in this section is free mode: no `STOCKTRENDS_*` variable is set, no API key is configured, and no spend is possible. Read [Secret Safety](#secret-safety) before adding any paid variable to a client configuration file.
+
+### A. Claude Desktop
+
+Free-mode `mcpServers` entry (no `env` block — credential-free by default):
+
+```json
+{
+  "mcpServers": {
+    "stocktrends": {
+      "command": "node",
+      "args": ["<absolute-path-to-checkout>/dist/server.js"]
+    }
+  }
+}
+```
+
+Windows JSON paths must use either double backslashes (`"C:\\Users\\you\\stocktrends-mcp-server\\dist\\server.js"`) or forward slashes (`"C:/Users/you/stocktrends-mcp-server/dist/server.js"`) — a single backslash is not valid JSON.
+
+The Claude Desktop configuration file location is client-version dependent; at the time of writing it is:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Verify these paths against your installed Claude Desktop version's current documentation before relying on them, since client versions can change file locations and schema.
+
+**Optional paid-exposure variant (exposure only — not execution).** This adds the paid tool *definitions* to the client's tool list; it does not authorize or perform any paid API call:
+
+```json
+{
+  "mcpServers": {
+    "stocktrends": {
+      "command": "node",
+      "args": ["<absolute-path-to-checkout>/dist/server.js"],
+      "env": {
+        "STOCKTRENDS_ENABLE_PAID_TOOLS": "true",
+        "STOCKTRENDS_API_KEY": "<your-api-key>"
+      }
+    }
+  }
+}
+```
+
+Exposure (`STOCKTRENDS_ENABLE_PAID_TOOLS` + a key) and execution (the separate `STOCKTRENDS_ENABLE_PAID_EXECUTION` flag, plus mandatory pricing preflight, nonzero caps, and a covering budget — see [Paid Mode Configuration](#paid-mode-configuration)) are two separate gates: this variant leaves execution unset, so exposure alone can never send a request or spend. See the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md) §4 for the paid-execution *eligibility* checklist — it is not a live-execution runbook.
+
+**Persisted-config credential warning.** A Claude Desktop config file is plaintext and persists on disk across restarts. If you place a real API key here for a deliberate, operator-supervised session, remove it again immediately afterward and restore the free-mode entry above — do not leave a real key sitting in a client configuration file.
+
+### B. Claude Code
+
+**Boundary note:** Claude Code is an agentic client, and Phase 5D approval does not extend to autonomous agent paid execution. The documented Claude Code path is therefore **free mode only**, where the only tool is credential-free and no spend is possible. Paid exposure/execution remains a separate, operator-shell, operator-supervised procedure under [Paid Mode Configuration](#paid-mode-configuration) and the eligibility checklist referenced above, and is deliberately not given a Claude Code recipe.
+
+Register the server locally with the Claude Code CLI:
+
+```sh
+claude mcp add --transport stdio stocktrends -- node <absolute-path-to-checkout>/dist/server.js
+```
+
+This registers a free-mode stdio server with no `env` entries. Equivalently, a project-scoped `.mcp.json` entry has the same shape (an entry with `command` and `args` and no `type`/`url` field is read as a stdio server):
+
+```json
+{
+  "mcpServers": {
+    "stocktrends": {
+      "command": "node",
+      "args": ["<absolute-path-to-checkout>/dist/server.js"]
+    }
+  }
+}
+```
+
+### C. Generic MCP stdio client
+
+Any MCP client that supports local stdio servers can use this client-agnostic shape:
+
+```json
+{
+  "command": "node",
+  "args": ["<absolute-path-to-checkout>/dist/server.js"],
+  "env": {}
+}
+```
+
+**Optional paid-exposure variant** (same rules as Claude Desktop above — exposure only, execution flag absent):
+
+```json
+{
+  "command": "node",
+  "args": ["<absolute-path-to-checkout>/dist/server.js"],
+  "env": {
+    "STOCKTRENDS_ENABLE_PAID_TOOLS": "true",
+    "STOCKTRENDS_API_KEY": "<your-api-key>"
+  }
+}
+```
+
+Exposure is not execution: no request and no spend occurs until `STOCKTRENDS_ENABLE_PAID_EXECUTION` is additionally set to `true` **and** the mandatory pricing preflight, nonzero local caps, and a covering budget cap all pass (see [Paid Mode Configuration](#paid-mode-configuration)). Paid execution is not documented here as a casual runbook; treat it as an eligibility checklist, not a copy-paste recipe.
+
+### D. MCP Inspector as diagnostic reference
+
+[MCP Inspector](https://github.com/modelcontextprotocol/inspector) remains a useful diagnostic/operator tool for confirming the server's tool, resource, and prompt surface — see [Inspect with MCP Inspector](#inspect-with-mcp-inspector-no-api-key) above — but it is **not the only, or the primary, installation path**. For everyday use, connect one of the clients in A–C above. The [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md) documents a fuller Inspector procedure; its paid-exposed surface and resource counts were correct when written for the Phase 4-era three-tool surface and remain accurate history, but the current counts are documented in this README.
 
 ## Paid Mode Configuration
 
@@ -134,7 +241,47 @@ export STOCKTRENDS_API_KEY="<your-api-key>"        # placeholder — never paste
 export STOCKTRENDS_ENABLE_PAID_EXECUTION=false
 ```
 
-With this configuration the MCP client lists exactly ten tools. No paid request is sent, because the execution flag is `false` and no nonzero caps or budget cap are configured. This is enough to verify the paid *exposure* surface without any spend. A step-by-step procedure for confirming the paid-exposed surface under MCP Inspector — still without any live paid execution — is documented in the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md).
+PowerShell equivalent (Windows):
+
+```powershell
+# Exposure only: makes the nine paid ST-IM, indicators, base-selections, and
+# market-context tool definitions visible.
+# This does NOT authorize or perform any paid API call.
+$env:STOCKTRENDS_ENABLE_PAID_TOOLS = "true"
+$env:STOCKTRENDS_API_KEY = "<your-api-key>"        # placeholder — never paste a real key
+# Execution stays disabled (its default). Do not set this to true just to test exposure.
+$env:STOCKTRENDS_ENABLE_PAID_EXECUTION = "false"
+```
+
+When the session is over, clear these variables rather than leaving them set:
+
+```sh
+# POSIX
+unset STOCKTRENDS_ENABLE_PAID_TOOLS STOCKTRENDS_API_KEY STOCKTRENDS_ENABLE_PAID_EXECUTION
+```
+
+```powershell
+# PowerShell
+Remove-Item Env:STOCKTRENDS_ENABLE_PAID_TOOLS -ErrorAction SilentlyContinue
+Remove-Item Env:STOCKTRENDS_API_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:STOCKTRENDS_ENABLE_PAID_EXECUTION -ErrorAction SilentlyContinue
+```
+
+To confirm no `STOCKTRENDS_*` variable remains set in the parent shell, without ever printing a value (names only):
+
+```powershell
+# PowerShell — names only, never values
+Get-ChildItem Env: | Where-Object { $_.Name -like 'STOCKTRENDS_*' } | Select-Object -ExpandProperty Name
+```
+
+```sh
+# POSIX — names only, never values
+env | grep '^STOCKTRENDS_' | cut -d= -f1
+```
+
+**Never use `setx` or a system/user persistent environment variable for any paid variable, especially `STOCKTRENDS_API_KEY`.** `setx` writes to the Windows registry and persists across every future shell and reboot, defeating per-session credential hygiene; prefer the per-session `$env:`/`export` forms above and clear them when the session ends.
+
+With this configuration the MCP client lists exactly ten tools. No paid request is sent, because the execution flag is `false` and no nonzero caps or budget cap are configured. This is enough to verify the paid *exposure* surface without any spend. A step-by-step procedure for confirming the paid-exposed surface under MCP Inspector — still without any live paid execution — is documented in the [Phase 5A MCP Inspector Validation Runbook](docs/PHASE5A_MCP_INSPECTOR_VALIDATION_RUNBOOK.md) (its counts reflect the Phase 4-era three-tool surface; current counts are documented in this README).
 
 Paid *execution* requires the additional gates described above (execution flag, mandatory preflight, explicit nonzero caps, and a covering budget cap). A step-by-step live-execution runbook is intentionally **not** included here. For the operator-facing *preconditions* that must hold before any separately authorized live run — framed conceptually, with no live call commands — see the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md). Do not enable paid execution merely to test installation — installation and tool-listing verification are fully demonstrable in free mode and in paid-exposed mode without execution.
 
@@ -154,7 +301,7 @@ Before a release, run the manual secret-safety scan in the [Phase 5A Operator Sa
 
 ## Current Status
 
-Phase 4 implements a conservative local stdio MCP server for public-resource access, one public/free workflow cost-estimate planning tool, an internal auth/spend-control/pricing-preflight foundation, and the paired paid ST-IM tools with gated live subscription/API-key execution.
+This repository implements a conservative local stdio MCP server for public-resource access, one public/free workflow cost-estimate planning tool, an internal auth/spend-control/pricing-preflight foundation, and the paired paid ST-IM tools with gated live subscription/API-key execution.
 
 Included:
 
