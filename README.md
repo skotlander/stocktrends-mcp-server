@@ -532,3 +532,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5E Directory/Marketplace Metadata Readiness](docs/PHASE5E_DIRECTORY_METADATA_READINESS.md)
 - [Phase 5E Controlled Local Client Validation Report](docs/PHASE5E_CONTROLLED_LOCAL_CLIENT_VALIDATION_REPORT.md)
 - [Phase 5E Local Stdio Launch Readiness Signoff](docs/PHASE5E_LOCAL_STDIO_LAUNCH_READINESS_SIGNOFF.md)
+- [Phase 5F x402 Relay Architecture Memo](docs/PHASE5F_X402_RELAY_ARCHITECTURE_MEMO.md)
