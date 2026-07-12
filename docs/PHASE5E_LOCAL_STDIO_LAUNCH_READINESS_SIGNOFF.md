@@ -8,9 +8,12 @@ cap value, and no new usage mode.
 
 Signoff date: 2026-07-12
 
-HEAD at signoff: `74a47b0` (`Add Phase 5E controlled local client validation
-report (#59)`) — the merged Phase 5E evidence chain PRs #55–#59 are all
-included in this HEAD.
+Evidence base at signoff: `74a47b0` (`Add Phase 5E controlled local client
+validation report (#59)`) — the merged Phase 5E evidence chain PRs #55–#59
+are all included in this evidence base. PR #60 itself is a docs-only signoff
+PR layered on that evidence base and adds only this signoff document plus one
+README documentation-index link; the PR #60 branch head may differ from
+`74a47b0` because it additionally contains this docs-only signoff commit.
 
 > **What this signoff is.** The narrow, docs-only PR #60 launch-readiness
 > declaration designed by the
@@ -144,11 +147,11 @@ per the repository's review gate (design memo §4; release checklist C8).
 
 | PR | Commit | Contribution | State |
 | --- | --- | --- | --- |
-| **#55** | `97f1f07` | Next-capability selection memo — selected track A, **launch/distribution readiness**, over new-capability/remote/decision/artifact tracks; set the docs-only PR #56–#60 sequence. | Merged, Codex-reviewed |
-| **#56** | `9b0460e` | Launch/distribution readiness design memo — designed the sequence in detail: README/client-doc requirements (§5/§6), runbook and release checklist (§7), metadata content (§8), the PR #59 validation (§9), and this signoff (§10). | Merged, Codex-reviewed |
-| **#57** | `6daf7fa` | README local stdio client install documentation — free-mode-first quickstart and client configuration for Claude Desktop, Claude Code (free-mode-only, agentic-client boundary note), and a generic stdio template; placeholders only; exposure ≠ execution beside every key placeholder. | Merged, Codex-reviewed |
-| **#58** | `90e505e` | Operator smoke-test runbook (current-surface, no-spend by design), launch release checklist (supersedes Phase 5A §5 for current release use), and directory/marketplace metadata readiness content. | Merged, Codex-reviewed |
-| **#59** | `74a47b0` | Controlled local client validation report — executed the merged PR #57/#58 documentation as written, credential-free/no-spend by design; verdict **PASS WITH DEVIATIONS** with every deviation dispositioned. | Merged, Codex-reviewed |
+| **#55** | `97f1f07` | Next-capability selection memo — selected track A, **launch/distribution readiness**, over new-capability/remote/decision/artifact tracks; set the docs-only PR #56–#60 sequence. | Merged; Codex-reviewed in the workflow record |
+| **#56** | `9b0460e` | Launch/distribution readiness design memo — designed the sequence in detail: README/client-doc requirements (§5/§6), runbook and release checklist (§7), metadata content (§8), the PR #59 validation (§9), and this signoff (§10). | Merged; Codex-reviewed in the workflow record |
+| **#57** | `6daf7fa` | README local stdio client install documentation — free-mode-first quickstart and client configuration for Claude Desktop, Claude Code (free-mode-only, agentic-client boundary note), and a generic stdio template; placeholders only; exposure ≠ execution beside every key placeholder. | Merged; Codex-reviewed in the workflow record |
+| **#58** | `90e505e` | Operator smoke-test runbook (current-surface, no-spend by design), launch release checklist (supersedes Phase 5A §5 for current release use), and directory/marketplace metadata readiness content. | Merged; Codex-reviewed in the workflow record |
+| **#59** | `74a47b0` | Controlled local client validation report — executed the merged PR #57/#58 documentation as written, credential-free/no-spend by design; verdict **PASS WITH DEVIATIONS** with every deviation dispositioned. | Merged; Codex-reviewed in the workflow record |
 
 The chain rests on the merged Phase 5D foundation: the PR #53 controlled
 validation report (PASS WITH DEVIATIONS; `0.75 STC` across exactly four
