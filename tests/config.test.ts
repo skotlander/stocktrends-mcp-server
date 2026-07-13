@@ -295,7 +295,25 @@ describe("config", () => {
     ).toThrow(StockTrendsMcpError);
   });
 
-  it("fails closed on x402/API-key paid-mode ambiguity before reading STOCKTRENDS_API_KEY", () => {
+  it("fails closed on x402 relay/API-key paid-mode ambiguity before reading STOCKTRENDS_API_KEY", () => {
+    const envTarget = {
+      STOCKTRENDS_ENABLE_X402_RELAY: "true",
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true"
+    };
+    const env = new Proxy(envTarget, {
+      get(target, property: string | symbol) {
+        if (property === "STOCKTRENDS_API_KEY") {
+          throw new Error("STOCKTRENDS_API_KEY should not be read for a mixed x402 config.");
+        }
+
+        return typeof property === "string" ? target[property as keyof typeof target] : undefined;
+      }
+    });
+
+    expectInvalidConfigDenial(() => parseConfig(env), "x402_mixed_mode_invalid");
+  });
+
+  it("fails closed on x402 challenge/API-key paid-mode ambiguity before reading STOCKTRENDS_API_KEY", () => {
     const envTarget = {
       STOCKTRENDS_ENABLE_X402_RELAY: "true",
       STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true",
@@ -311,6 +329,17 @@ describe("config", () => {
       }
     });
 
-    expect(() => parseConfig(env)).toThrow(StockTrendsMcpError);
+    expectInvalidConfigDenial(() => parseConfig(env), "x402_mixed_mode_invalid");
   });
 });
+
+function expectInvalidConfigDenial(fn: () => unknown, denialReason: string): void {
+  try {
+    fn();
+    throw new Error("expected invalid_config");
+  } catch (error) {
+    expect(error).toBeInstanceOf(StockTrendsMcpError);
+    expect((error as StockTrendsMcpError).errorCode).toBe("invalid_config");
+    expect((error as StockTrendsMcpError).safeData.denialReason).toBe(denialReason);
+  }
+}

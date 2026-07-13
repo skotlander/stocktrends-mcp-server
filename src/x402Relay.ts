@@ -168,9 +168,9 @@ export function parseX402RelayConfig(
     });
   }
 
-  if (challengeExecutionEnabled && options.paidToolsRequested) {
+  if ((relayEnabled || challengeExecutionEnabled) && options.paidToolsRequested) {
     throw new StockTrendsMcpError("invalid_config", {
-      detail: "x402 challenge execution cannot be combined with STOCKTRENDS_ENABLE_PAID_TOOLS in this mock-only build.",
+      detail: "x402 relay flags cannot be combined with STOCKTRENDS_ENABLE_PAID_TOOLS in this mock-only build.",
       denialReason: "x402_mixed_mode_invalid"
     });
   }
@@ -250,7 +250,7 @@ export function buildMockX402ChallengeRelayResult(
     return failClosed(config, normalizedRequest, "x402_proof_forwarding_not_enabled");
   }
 
-  if (hasForbiddenProofMaterialKey(fixture.body)) {
+  if (hasForbiddenProofMaterial(fixture)) {
     return failClosed(config, normalizedRequest, "x402_secret_safety_violation");
   }
 
@@ -361,23 +361,32 @@ function normalizeChallengeShape(fixture: X402MockChallengeFixture): { ok: true 
   const bodyKeys = new Set(Object.keys(fixture.body));
   const fieldCategories = detectFieldCategories(fixture.body);
 
-  if (!X402_CHALLENGE_HEADER_NAMES.every((name) => headerNames.has(name))) {
+  if (!hasExactMembers(headerNames, X402_CHALLENGE_HEADER_NAMES)) {
     return { ok: false };
   }
 
-  if (!X402_CHALLENGE_TOP_LEVEL_BODY_KEYS.every((key) => bodyKeys.has(key))) {
+  if (!hasExactMembers(bodyKeys, X402_CHALLENGE_TOP_LEVEL_BODY_KEYS)) {
     return { ok: false };
   }
 
-  if (!X402_CHALLENGE_FIELD_CATEGORIES.every((category) => fieldCategories.has(category))) {
+  if (fieldCategories.unexpected) {
+    return { ok: false };
+  }
+
+  if (!hasExactMembers(fieldCategories.present, X402_CHALLENGE_FIELD_CATEGORIES)) {
     return { ok: false };
   }
 
   return { ok: true };
 }
 
-function detectFieldCategories(value: unknown): Set<string> {
+function hasExactMembers(actual: ReadonlySet<string>, expected: readonly string[]): boolean {
+  return actual.size === expected.length && expected.every((member) => actual.has(member));
+}
+
+function detectFieldCategories(value: unknown): { present: Set<string>; unexpected: boolean } {
   const categories = new Set<string>();
+  let unexpected = false;
 
   for (const key of collectKeys(value)) {
     const normalized = key.toLowerCase().replace(/[-\s]/g, "_");
@@ -400,9 +409,27 @@ function detectFieldCategories(value: unknown): Set<string> {
     if (normalized === "pricing_rule" || normalized === "family" || normalized.includes("pricing_rule")) {
       categories.add("pricing_rule_or_family");
     }
+    if (
+      [
+        "fee",
+        "fees",
+        "gas",
+        "gas_fee",
+        "gas_limit",
+        "chain",
+        "chain_id",
+        "facilitator",
+        "settlement",
+        "settlement_status",
+        "transaction_hash",
+        "tx_hash"
+      ].includes(normalized)
+    ) {
+      unexpected = true;
+    }
   }
 
-  return categories;
+  return { present: categories, unexpected };
 }
 
 function collectKeys(value: unknown): string[] {
@@ -426,23 +453,65 @@ function hasProofLikeInput(request: X402ChallengeRelayRequest): boolean {
   );
 }
 
-function hasForbiddenProofMaterialKey(value: unknown): boolean {
-  return collectKeys(value).some((key) =>
-    [
-      "proof",
-      "payment_proof",
-      "payment-proof",
-      "x402_proof",
-      "x402-proof",
-      "payment_signature",
-      "payment-signature",
-      "x_payment",
-      "x-payment",
-      "wallet_private_key",
-      "private_key",
-      "seed_phrase"
-    ].includes(key.toLowerCase())
-  );
+function hasForbiddenProofMaterial(value: unknown): boolean {
+  if (typeof value === "string") {
+    return hasForbiddenProofMaterialValue(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasForbiddenProofMaterial(item));
+  }
+
+  if (isRecord(value)) {
+    return Object.entries(value).some(
+      ([key, child]) => hasForbiddenProofMaterialKey(key) || hasForbiddenProofMaterial(child)
+    );
+  }
+
+  return false;
+}
+
+function hasForbiddenProofMaterialKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[-\s]/g, "_");
+  return [
+    "proof",
+    "payment_proof",
+    "payment_signature",
+    "payment_envelope",
+    "x402_proof",
+    "x_payment",
+    "payment_header",
+    "authorization",
+    "bearer_token",
+    "wallet",
+    "wallet_private_key",
+    "private_key",
+    "seed_phrase"
+  ].includes(normalized);
+}
+
+function hasForbiddenProofMaterialValue(value: string): boolean {
+  const trimmed = value.trim();
+
+  if (isRedactedPlaceholder(trimmed)) {
+    return false;
+  }
+
+  return [
+    /\bAuthorization\s*:\s*(Bearer|Basic)\s+[^\s,;]+/i,
+    /\b(Bearer|Basic)\s+[^\s,;]+/i,
+    /\b(X-API-Key|X_API_KEY|API_KEY|STOCKTRENDS_API_KEY)\s*[:=]\s*[^<\s,;]+/i,
+    /\b(PAYMENT-SIGNATURE|PAYMENT_SIGNATURE|PAYMENT-PROOF|PAYMENT_PROOF|PAYMENT-ENVELOPE|PAYMENT_ENVELOPE|X402-PROOF|X402_PROOF|X-PAYMENT|PAYMENT_HEADER)\s*[:=]\s*[^<\s,;]+/i,
+    /\b(WALLET_ADDRESS|WALLET-ADDRESS|WALLET_PRIVATE_KEY|WALLET-PRIVATE-KEY|PRIVATE_KEY|PRIVATE-KEY|SEED_PHRASE|SEED-PHRASE)\s*[:=]\s*[^<\s,;]+/i,
+    /\b(ADDRESS|RECIPIENT)\s*[:=]\s*placeholder-[^\s,;]+/i,
+    /\b(payment proof|payment-proof|payment_proof|payment signature|payment-signature|payment_signature|payment header|payment-header|payment_header|x-payment|x_payment|x402 proof|x402-proof|x402_proof)\b/i,
+    /\b(wallet address|wallet-address|wallet_address|private key|private-key|private_key|seed phrase|seed-phrase|seed_phrase)\b/i,
+    /\bplaceholder-(payment-proof|payment-signature|payment-header|x402-proof|bearer-token|api-key|wallet-address|private-key|seed-phrase|unsafe-recipient|unsafe-address)\b/i
+  ].some((pattern) => pattern.test(trimmed));
+}
+
+function isRedactedPlaceholder(value: string): boolean {
+  return /^<redacted-[a-z0-9-]+>$/.test(value);
 }
 
 function hasPaidOutputWithoutProof(body: JsonObject): boolean {

@@ -40,8 +40,8 @@ All default to off. Only literal `true` enables the first two flags. The values
 forwarding is unsupported in this mock-only build. Off values are accepted only
 to keep disabled/default-off configuration explicit.
 
-x402 challenge execution cannot be combined with `STOCKTRENDS_ENABLE_PAID_TOOLS`
-in this PR. That mixed mode fails closed with `invalid_config` /
+x402 relay flags cannot be combined with `STOCKTRENDS_ENABLE_PAID_TOOLS` in this
+PR. That mixed mode fails closed with `invalid_config` /
 `x402_mixed_mode_invalid` before the x402 path can run.
 
 ## Implementation Shape
@@ -113,7 +113,8 @@ success/error contract.
 
 The redaction layer now covers proof/payment/header/wallet-like values, including
 payment proof/envelope names, payment headers, x402 proof labels, challenge IDs,
-nonces, recipients, wallet-address labels, seed phrases, and private-key labels.
+nonces, recipient/address labels, wallet-address labels, seed phrases, and
+private-key labels.
 
 ## Validation Boundary
 

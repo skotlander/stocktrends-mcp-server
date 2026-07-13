@@ -128,6 +128,15 @@ describe("Phase 5F x402 mock challenge relay result normalization", () => {
     });
   });
 
+  it("allows the approved redacted mock challenge placeholders", () => {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
+
+    const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
+
+    expect(result.status).toBe("payment_required");
+  });
+
   it("sets every no-spend safety boolean false and returns no api_data", () => {
     const config = parseConfig(X402_ENV).x402Relay;
     const result = buildMockX402ChallengeRelayResult(config, REQUEST);
@@ -201,10 +210,49 @@ describe("Phase 5F x402 mock challenge relay result normalization", () => {
     expect(result.payment_header_sent).toBe(false);
   });
 
-  it("fails closed on unexpected challenge shape", () => {
+  it("fails closed when required mock challenge shape is missing", () => {
     const config = parseConfig(X402_ENV).x402Relay;
     const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
     delete fixture.headers["x-stocktrends-pricing-rule"];
+
+    const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_challenge_unexpected_shape");
+    }
+  });
+
+  it("fails closed when mock challenge headers drift beyond the PR #64 set", () => {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
+    fixture.headers["x-stocktrends-extra-mock-header"] = "<redacted-extra-header>";
+
+    const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_challenge_unexpected_shape");
+    }
+  });
+
+  it("fails closed when mock challenge top-level body keys drift beyond the PR #64 set", () => {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
+    fixture.body.extra_mock_key = "<redacted-extra-body-key>";
+
+    const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_challenge_unexpected_shape");
+    }
+  });
+
+  it("fails closed when mock challenge field categories drift beyond the PR #64 set", () => {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
+    (fixture.body.pricing as Record<string, unknown>).fee = "<redacted-fee>";
 
     const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
 
@@ -234,10 +282,25 @@ describe("Phase 5F x402 mock challenge relay result normalization", () => {
     expect(result.paid_api_data_returned).toBe(false);
   });
 
-  it("fails closed when proof material appears inside a mock challenge fixture", () => {
+  it("fails closed when proof-like values appear under approved mock challenge keys", () => {
     const config = parseConfig(X402_ENV).x402Relay;
     const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
-    fixture.body.payment_proof = "placeholder-proof-value";
+    (fixture.body.pricing as Record<string, unknown>).amount = "PAYMENT_PROOF=placeholder-payment-proof";
+
+    const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
+    const serialized = JSON.stringify(result);
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_secret_safety_violation");
+    }
+    expect(serialized).not.toContain("placeholder-payment-proof");
+  });
+
+  it("fails closed when payment-header-like values appear under approved mock challenge keys", () => {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
+    fixture.body.protocol = "X-PAYMENT: placeholder-payment-header";
 
     const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
 
@@ -245,6 +308,21 @@ describe("Phase 5F x402 mock challenge relay result normalization", () => {
     if (result.status === "error") {
       expect(result.error.error_code).toBe("x402_secret_safety_violation");
     }
+    expect(JSON.stringify(result)).not.toContain("placeholder-payment-header");
+  });
+
+  it("fails closed when unsafe address-like values appear under approved mock challenge keys", () => {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
+    (fixture.body.stocktrends_preview as Record<string, unknown>).address = "ADDRESS=placeholder-unsafe-address";
+
+    const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_secret_safety_violation");
+    }
+    expect(JSON.stringify(result)).not.toContain("placeholder-unsafe-address");
   });
 });
 
@@ -257,6 +335,7 @@ describe("Phase 5F x402 redaction safety", () => {
         "X402_PROOF=placeholder-x402-proof",
         "PAYMENT-REQUIRED: placeholder-payment-required",
         "X-STOCKTRENDS-PRICING-RULE: placeholder-pricing-rule",
+        "ADDRESS=placeholder-address",
         "WALLET_ADDRESS=placeholder-wallet-address",
         "SEED_PHRASE=placeholder-seed-phrase",
         "PRIVATE_KEY=placeholder-private-key",
@@ -270,6 +349,7 @@ describe("Phase 5F x402 redaction safety", () => {
       "placeholder-x402-proof",
       "placeholder-payment-required",
       "placeholder-pricing-rule",
+      "placeholder-address",
       "placeholder-wallet-address",
       "placeholder-seed-phrase",
       "placeholder-private-key",
