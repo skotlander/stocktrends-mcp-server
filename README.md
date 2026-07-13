@@ -287,6 +287,24 @@ With this configuration the MCP client lists exactly ten tools. No paid request 
 
 Paid *execution* requires the additional gates described above (execution flag, mandatory preflight, explicit nonzero caps, and a covering budget cap). A step-by-step live-execution runbook is intentionally **not** included here. For the operator-facing *preconditions* that must hold before any separately authorized live run — framed conceptually, with no live call commands — see the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md). Do not enable paid execution merely to test installation — installation and tool-listing verification are fully demonstrable in free mode and in paid-exposed mode without execution.
 
+### Mock-only x402 challenge relay flags
+
+PR #66 adds provisional x402 challenge-relay configuration and internal helpers
+only. The x402 relay remains default-off, mock-only, and not publicly wired to
+MCP clients: no tool count changes, no live x402 relay, no proof forwarding, no
+payment header, no wallet/private-key/signing logic, no payment, and no spend.
+
+The provisional flags are `STOCKTRENDS_ENABLE_X402_RELAY`,
+`STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION`, and
+`STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING`. All default to off. Only literal
+`true` enables the first two flags; `false`, `0`, `no`, and `off` disable them;
+ambiguous truthy values such as `1`, `yes`, or `on` fail startup with
+`invalid_config`. Proof forwarding is not supported in this mock-only build:
+setting `STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING=true` fails closed. x402
+relay flags cannot be combined with `STOCKTRENDS_ENABLE_PAID_TOOLS` in this PR.
+
+See the [Phase 5F x402 Challenge Relay Mock Implementation Notes](docs/PHASE5F_X402_CHALLENGE_RELAY_MOCK_IMPLEMENTATION_NOTES.md).
+
 ## Secret Safety
 
 These rules apply to every example, screenshot, recording, and shared artifact involving this server.
@@ -373,6 +391,9 @@ All variables are optional; defaults keep the server in free mode. The **Affects
 | `STOCKTRENDS_ENABLE_PAID_TOOLS` | Paid tool exposure | `false` | Exposure flag. When `true` with a configured API key, exposes the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, the base selections tool *definition*, and the four market-context tool *definitions* (total tools become 10; the internal instrument resolver adds no public tool). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. Not a secret. |
 | `STOCKTRENDS_API_KEY` | Paid exposure + execution | None | **Secret — use a placeholder (`<your-api-key>`) in all docs, examples, screenshots, and shared artifacts; never commit or paste a real value.** Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as the `X-API-Key` header to the approved origin + allowlisted paid ST-IM, indicators, base `selections/latest`, and market-context endpoints after every gate passes (no `Authorization: Bearer` fallback). Never sent for public resources (including `stocktrends://leadership/definitions`), the cost-estimate planning tool, the pricing catalog, or the credential-free instrument resolver; never logged or exposed in errors/denials/returned data. |
 | `STOCKTRENDS_ENABLE_PAID_EXECUTION` | Paid execution | `false` | Execution flag, distinct from the exposure flag. Live subscription/API-key calls to `GET /v1/stim/latest`, `GET /v1/stim/history`, `GET /v1/indicators/latest`, `GET /v1/indicators/history`, `GET /v1/selections/latest`, `GET /v1/market/regime/latest`, `GET /v1/market/regime/history`, `GET /v1/breadth/sector/latest`, and `GET /v1/leadership/summary/latest` require this to be `true` **and** the paid-tools flag, an API key, authoritative static pricing/preflight, family-scoped catalog reconciliation, and ≥1 nonzero call cap plus a budget cap covering the nonzero cost (indicators additionally require a safe resolved canonical identity; selections and market-context additionally enforce bounded always-sent limits and repeated-identical-call loop safety). The flag alone (no tools flag / no key) exposes and executes nothing. Not a secret. |
+| `STOCKTRENDS_ENABLE_X402_RELAY` | Mock-only x402 relay config | `false` | Provisional PR #66 flag. Only literal `true` enables the internal mock relay gate; `false`, `0`, `no`, and `off` disable it; ambiguous truthy values fail startup. Does not expose tools, call live endpoints, create payment, or forward proof. Not a secret. |
+| `STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION` | Mock-only x402 relay config | `false` | Provisional PR #66 flag. Only usable with `STOCKTRENDS_ENABLE_X402_RELAY=true`; enables internal mock challenge fixture normalization only. Does not perform live challenge requests; x402 relay flags cannot be combined with `STOCKTRENDS_ENABLE_PAID_TOOLS` in this mock-only build. Not a secret. |
+| `STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING` | Mock-only x402 relay config | `false` | Proof forwarding remains unsupported. Off values are accepted; `true` fails startup with `invalid_config` / proof-forwarding-not-enabled posture. No payment proof is created, accepted for forwarding, forwarded, stored, or verified. Not a secret. |
 | `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` | Paid execution | `true` | Pricing/preflight posture. Preflight is mandatory; setting this `false` denies paid execution (fail closed) rather than weakening the requirement. Not a secret. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | Paid execution | `0` | Per-session paid-call cap. `0` denies all paid calls; live execution requires an explicit nonzero value. In-memory per session; resets on restart. Not a secret. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_TOOL` | Paid execution | `0` | Per-tool paid-call cap. `0` denies; requires an explicit nonzero value. In-memory per session; resets on restart. Not a secret. |
@@ -536,3 +557,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5F x402 Contract Verification Plan](docs/PHASE5F_X402_CONTRACT_VERIFICATION_PLAN.md)
 - [Phase 5F x402 Contract Verification Report](docs/PHASE5F_X402_CONTRACT_VERIFICATION_REPORT.md)
 - [Phase 5F x402 Relay Implementation Design Memo](docs/PHASE5F_X402_RELAY_IMPLEMENTATION_DESIGN_MEMO.md)
+- [Phase 5F x402 Challenge Relay Mock Implementation Notes](docs/PHASE5F_X402_CHALLENGE_RELAY_MOCK_IMPLEMENTATION_NOTES.md)
