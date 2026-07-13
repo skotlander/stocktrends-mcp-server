@@ -15,8 +15,9 @@ final until that report is completed and reviewed.
 Like the PR #55, PR #61, and PR #62 memos, this plan performed **no network
 request at all** — not even a credential-free metadata read. Every fact below is
 drawn from the merged Phase 4–5F document set and a read-only inspection of the
-source tree at HEAD `3c47829` (`Add Phase 5F x402 relay architecture memo
-(#62)`): `src/config.ts`, `src/server.ts`, `src/resources/index.ts`,
+source tree at base/source snapshot `3c47829` (`Add Phase 5F x402 relay
+architecture memo (#62)`): `src/config.ts`, `src/server.ts`,
+`src/resources/index.ts`,
 `src/paidPolicy.ts`, `src/tools/index.ts`, `src/tools/marketContextTools.ts`,
 `src/stocktrendsClient.ts`, and `src/redaction.ts`.
 
@@ -160,7 +161,7 @@ is the report; neither is implementation.
 
 The surface this plan starts from is the **1/10/10/0/9 contract**, confirmed by
 the merged PR #60 signoff §4 and re-confirmed read-only against the source at
-HEAD `3c47829` (no live call needed or permitted):
+base/source snapshot `3c47829` (no live call needed or permitted):
 
 - **1 default/free tool** — `stocktrends_estimate_workflow_cost` (credential-free
   planning tool). No paid tool is ever visible in free mode.
@@ -402,16 +403,17 @@ truncation, prior-session authorization, or inferred intent does not count),
 PR #64 executes **any** network verification only after the operator supplies,
 verbatim as its own line:
 
-> **`AUTHORIZED: run Phase 5F x402 contract challenge verification with no API
-> key, no payment proof, no spend, and no paid output`**
+```text
+AUTHORIZED: run Phase 5F x402 contract challenge verification with no API key, no payment proof, no spend, and no paid output
+```
 
 Any future **live proof-forwarding / live x402 test** requires a **separate,
 stronger** authorization, verbatim as its own line, and does not follow from the
 challenge-only phrase above:
 
-> **`AUTHORIZED: run Phase 5F controlled live x402 proof-forwarding validation
-> for the approved route(s), with the approved wallet/facilitator, approved
-> maximum spend, and approved redaction rules`**
+```text
+AUTHORIZED: run Phase 5F controlled live x402 proof-forwarding validation for the approved route(s), with the approved wallet/facilitator, approved maximum spend, and approved redaction rules
+```
 
 Without the exact applicable phrase, **no verification is run**: the procedure
 stops at its no-network planning boundary, exactly as PR #53 stopped at the
@@ -608,8 +610,8 @@ Codex review of PR #63 should verify:
 5. **No API key / live calls / payment / proof / x402 execution** by the PR
    itself, and no MCP Inspector session.
 6. **Current baseline accurate** — the §4 counts (1/10/10/0/9), tool names,
-   resource facts, and route list match the source at HEAD `3c47829` and the
-   merged PR #60 signoff §4.
+   resource facts, and route list match the source at base/source snapshot
+   `3c47829` and the merged PR #60 signoff §4.
 7. **Route inventory accurate** — the §7 nine routes, tools, and pricing rules
    match `AUTH_CAPABLE_PAID_ENDPOINT_POLICIES` in `src/paidPolicy.ts`.
 8. **Authorization phrases clear** — the §11 challenge-only phrase and the
