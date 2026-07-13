@@ -317,6 +317,44 @@ It must not claim payment authorization, payment completion, settlement, or
 paid execution. Missing conditional values are omitted, never synthesized as
 defaults or redacted strings that a client could mistake for usable values.
 
+### Structured-versus-text serialization boundary
+
+The dedicated structured challenge-values object is the only approved MCP
+serialization location for conditional live values. Conditional live values
+must never be copied into MCP `content[].text`, generic text serialization,
+error text, logs, validation artifacts, screenshots, dumps, or output files.
+
+The current PR #69 mock handler serializes its full local/redacted result with
+`JSON.stringify` into `content[].text`. PR #72 must not reuse that boundary for
+a live result containing approved conditional values. The live handler must
+instead return conditional values only in structured content/result metadata
+and use either no text content, if MCP-compatible, or a fixed/redacted text
+summary containing no conditional value. If the target MCP client/runtime
+cannot preserve structured content without duplicating those values into text,
+the live path must omit the conditional values or fail closed; compatibility
+must never justify text leakage.
+
+### Registration truthfulness and mode separation
+
+PR #72 must use live-specific registration descriptions, annotations, and
+`_meta` rather than reusing the current mock-only registration claims:
+
+- the live description must state that one external no-key Stock Trends API
+  request may occur after all live gates pass;
+- it must also state that no API key is used, no proof is forwarded, no payment
+  header is sent, no payment or spend occurs, and no paid data is returned;
+- live annotations must use an open-world/external-call posture and must not set
+  `openWorldHint: false` for the live no-key path;
+- live `_meta` must distinguish live no-key challenge mode from mock challenge
+  mode and must not advertise `apiRequestSent: false`; static registration
+  metadata should truthfully describe a possible single external request, while
+  the invocation result records whether the request was actually sent; and
+- existing mock registrations remain unchanged: their descriptions stay
+  mock-only/no-request, their `_meta` continues to advertise no request, and
+  their closed-world annotations remain appropriate for local behavior.
+
+API-key paid registrations also remain unchanged when x402 flags are absent.
+
 ## 11. Request policy
 
 The future challenge request must satisfy every rule below:
@@ -414,6 +452,10 @@ The current default-deny redaction posture remains in force:
 - Unsafe values are never echoed in denial text.
 - Raw payload dumps and raw header dumps are forbidden.
 - Header values are never logged.
+- Conditional live values are forbidden from MCP `content[].text`, errors,
+  logs, generic serialization, validation artifacts, screenshots, dumps, and
+  output files. They may appear only in the approved structured challenge-values
+  object after every provenance and classification gate passes.
 - Changed-file secret-shaped scanning is required for PR #72 and PR #73.
 
 Recipient/address handling requires a narrow provenance exception, not a global
@@ -469,9 +511,32 @@ mocked and must prove:
 - unexpected status, shape, and value classes fail closed;
 - `x-request-id` value is omitted/redacted;
 - only typed, approved, API-authored fixture values enter structured output;
+- approved conditional live values are present only in the dedicated structured
+  challenge-values object and are absent from every `content[].text` item;
+- the live serialization boundary does not stringify the full result into text
+  when that result contains conditional live values; any live text content is a
+  fixed/redacted summary with no conditional value;
+- unique synthetic conditional-value sentinels from mocked responses are absent
+  from error text and captured logs on both success and failure paths;
+- those sentinels are absent from validation artifacts, screenshots, dumps, and
+  output files, with repository/output scanning included in acceptance;
+- a sentinel approved by the typed value policy is present in the approved
+  structured result field only, proving structured relay without generic text
+  serialization;
+- mock-mode registration descriptions remain mock-only and no-request, mock
+  `_meta` continues to advertise no request, and mock annotations remain
+  appropriate for no-network behavior;
+- live-mode registration descriptions truthfully disclose the possible single
+  external no-key Stock Trends API request and the no-key/no-proof/no-payment-
+  header/no-payment/no-spend/no-paid-data boundaries;
+- live `_meta` identifies live no-key challenge mode, does not advertise
+  `apiRequestSent: false`, and is distinct from mock `_meta`;
+- live annotations use an open-world/external-call posture and do not use
+  `openWorldHint: false`;
 - the live result contract and every required safety boolean;
 - no `api_data`;
-- existing mock codes and API-key paid behavior remain unchanged; and
+- existing mock codes, mock registration metadata, and API-key paid
+  registrations/behavior remain unchanged; and
 - all live network behavior is represented by injected/mock fetches only.
 
 PR #72 validation must not call a live or credential-free Stock Trends endpoint,
@@ -598,9 +663,11 @@ live no-key challenge-relay step.
 If PR #71 is approved, proceed next to PR #72 as a narrow, default-off
 implementation using the new explicit live flag, the existing semantic tool
 surface and nine-route allowlist, canonical-symbol/no-resolver policy, exactly
-one no-key `GET`, typed API-authored challenge-value extraction, conservative
-caps, and deterministic fail-closed results. Keep all automated network behavior
-mocked.
+one no-key `GET`, typed API-authored challenge-value extraction, structured-only
+conditional-value serialization, truthful live/open-world registration
+metadata, conservative caps, and deterministic fail-closed results. Preserve
+the existing mock and API-key registration metadata. Keep all automated network
+behavior mocked.
 
 Do not run PR #73 without the exact authorization phrase. Keep proof forwarding,
 payment, spend, remote MCP, publication, marketplace launch, and final x402
