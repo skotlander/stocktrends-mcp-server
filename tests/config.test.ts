@@ -27,6 +27,13 @@ describe("config", () => {
     });
     expect(config.paidTools.executionEnabled).toBe(false);
     expect(config.paidTools.requirePricingPreflight).toBe(true);
+    expect(config.x402Relay).toEqual({
+      relayEnabled: false,
+      challengeExecutionEnabled: false,
+      proofForwardingEnabled: false,
+      mockOnly: true,
+      mode: "disabled"
+    });
   });
 
   it("supports a configured Stock Trends API base URL", () => {
@@ -224,5 +231,86 @@ describe("config", () => {
         STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION: "-1"
       })
     ).toThrow(StockTrendsMcpError);
+  });
+
+  it("keeps provisional x402 relay flags default-off", () => {
+    const config = parseConfig({});
+
+    expect(config.x402Relay).toMatchObject({
+      relayEnabled: false,
+      challengeExecutionEnabled: false,
+      proofForwardingEnabled: false,
+      mockOnly: true,
+      mode: "disabled"
+    });
+  });
+
+  it("enables mock-only x402 challenge mode only with literal true on both gates", () => {
+    const config = parseConfig({
+      STOCKTRENDS_ENABLE_X402_RELAY: "true",
+      STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true"
+    });
+
+    expect(config.x402Relay).toMatchObject({
+      relayEnabled: true,
+      challengeExecutionEnabled: true,
+      proofForwardingEnabled: false,
+      mockOnly: true,
+      mode: "mock_challenge_enabled"
+    });
+  });
+
+  it.each(["1", "yes", "on", "enabled"])("rejects ambiguous x402 truthy value %s", (value) => {
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_ENABLE_X402_RELAY: value
+      })
+    ).toThrow(StockTrendsMcpError);
+  });
+
+  it.each(["false", "0", "no", "off"])("accepts explicit x402 off value %s", (value) => {
+    const config = parseConfig({
+      STOCKTRENDS_ENABLE_X402_RELAY: value,
+      STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: value,
+      STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING: value
+    });
+
+    expect(config.x402Relay.mode).toBe("disabled");
+    expect(config.x402Relay.proofForwardingEnabled).toBe(false);
+  });
+
+  it("rejects x402 proof forwarding true as unsupported in the mock-only build", () => {
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING: "true"
+      })
+    ).toThrow(StockTrendsMcpError);
+  });
+
+  it("fails closed when x402 challenge execution is requested without the relay gate", () => {
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true"
+      })
+    ).toThrow(StockTrendsMcpError);
+  });
+
+  it("fails closed on x402/API-key paid-mode ambiguity before reading STOCKTRENDS_API_KEY", () => {
+    const envTarget = {
+      STOCKTRENDS_ENABLE_X402_RELAY: "true",
+      STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true",
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true"
+    };
+    const env = new Proxy(envTarget, {
+      get(target, property: string | symbol) {
+        if (property === "STOCKTRENDS_API_KEY") {
+          throw new Error("STOCKTRENDS_API_KEY should not be read for a mixed x402 config.");
+        }
+
+        return typeof property === "string" ? target[property as keyof typeof target] : undefined;
+      }
+    });
+
+    expect(() => parseConfig(env)).toThrow(StockTrendsMcpError);
   });
 });

@@ -5,6 +5,7 @@ import {
   type PaidSpendPolicy,
   type PaidToolsConfig
 } from "./paidPolicy.js";
+import { parseX402RelayConfig, type X402RelayConfig } from "./x402Relay.js";
 
 export const DEFAULT_API_BASE_URL = "https://api.stocktrends.com";
 export const DEFAULT_LOG_LEVEL = "warn";
@@ -19,6 +20,7 @@ export interface StockTrendsMcpConfig {
   logLevel: StockTrendsMcpLogLevel;
   requestTimeoutMs: number;
   paidTools: PaidToolsConfig;
+  x402Relay: X402RelayConfig;
 }
 
 export type Env = Record<string, string | undefined>;
@@ -29,14 +31,17 @@ export function parseConfig(env: Env = process.env): StockTrendsMcpConfig {
   const transport = parseTransport(env.STOCKTRENDS_MCP_TRANSPORT);
   const apiBaseUrl = parseApiBaseUrl(env.STOCKTRENDS_API_BASE_URL);
   const logLevel = parseLogLevel(env.STOCKTRENDS_MCP_LOG_LEVEL);
-  const paidTools = parsePaidToolsConfig(env);
+  const paidToolsRequested = parsePaidToolsEnabled(env.STOCKTRENDS_ENABLE_PAID_TOOLS, "STOCKTRENDS_ENABLE_PAID_TOOLS");
+  const x402Relay = parseX402RelayConfig(env, { paidToolsRequested });
+  const paidTools = parsePaidToolsConfig(env, paidToolsRequested);
 
   return {
     apiBaseUrl,
     transport,
     logLevel,
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
-    paidTools
+    paidTools,
+    x402Relay
   };
 }
 
@@ -103,9 +108,7 @@ function parseApiBaseUrl(value: string | undefined): URL {
   return new URL(url.origin);
 }
 
-function parsePaidToolsConfig(env: Env): PaidToolsConfig {
-  const paidToolsRequested = parsePaidToolsEnabled(env.STOCKTRENDS_ENABLE_PAID_TOOLS, "STOCKTRENDS_ENABLE_PAID_TOOLS");
-
+function parsePaidToolsConfig(env: Env, paidToolsRequested: boolean): PaidToolsConfig {
   if (!paidToolsRequested) {
     return createPaidToolsConfig({
       requested: false,
