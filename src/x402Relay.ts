@@ -55,6 +55,8 @@ export type X402RelayErrorCode =
   | "x402_payment_required"
   | "x402_challenge_unavailable"
   | "x402_challenge_unexpected_shape"
+  | "x402_symbol_exchange_required"
+  | "x402_repeated_challenge_call"
   | "x402_proof_forwarding_not_enabled"
   | "x402_proof_invalid_shape"
   | "x402_route_not_allowlisted"
@@ -84,7 +86,7 @@ export interface X402ChallengeRelayMetadata {
   http_method: PaidHttpMethod;
   relay_mode: X402RelayMode;
   mock_only: true;
-  public_tool_wiring: "not_exposed";
+  public_tool_wiring: "not_exposed" | "existing_paid_semantic_tools";
   paid_execution_occurred: false;
   api_request_sent: false;
   auth_header_sent: false;
@@ -93,7 +95,14 @@ export interface X402ChallengeRelayMetadata {
   spend_occurred: false;
   paid_api_data_returned: false;
   automatic_paid_retries: false;
-  repeated_identical_policy: "deferred_until_public_tool_wiring_no_fetch_or_spend";
+  repeated_identical_policy:
+    | "deferred_until_public_tool_wiring_no_fetch_or_spend"
+    | "same_session_normalized_signature_denied";
+}
+
+export interface X402RelayBuildOptions {
+  publicToolWiring?: X402ChallengeRelayMetadata["public_tool_wiring"];
+  repeatedIdenticalPolicy?: X402ChallengeRelayMetadata["repeated_identical_policy"];
 }
 
 export interface X402PaymentRequiredResult {
@@ -102,6 +111,7 @@ export interface X402PaymentRequiredResult {
   api_status: 402;
   tool_name: string;
   endpoint_path: string;
+  method: PaidHttpMethod;
   http_method: PaidHttpMethod;
   challenge: {
     header_names_present: string[];
@@ -125,6 +135,7 @@ export interface X402PaymentRequiredResult {
   proof_forwarded: false;
   spend_occurred: false;
   paid_api_data_returned: false;
+  automatic_paid_retries: false;
 }
 
 export interface X402RelayErrorResult {
@@ -146,9 +157,22 @@ export interface X402RelayErrorResult {
   proof_forwarded: false;
   spend_occurred: false;
   paid_api_data_returned: false;
+  automatic_paid_retries: false;
 }
 
 export type X402ChallengeRelayResult = X402PaymentRequiredResult | X402RelayErrorResult;
+
+export interface X402ChallengeSessionState {
+  inFlightSignatures: Set<string>;
+  completedSignatures: Set<string>;
+}
+
+export function createX402ChallengeSessionState(): X402ChallengeSessionState {
+  return {
+    inFlightSignatures: new Set<string>(),
+    completedSignatures: new Set<string>()
+  };
+}
 
 export function parseX402RelayConfig(
   env: Record<string, string | undefined>,
@@ -230,45 +254,46 @@ export function createMockX402ChallengeFixture(endpointPath: string): X402MockCh
 export function buildMockX402ChallengeRelayResult(
   config: X402RelayConfig,
   request: X402ChallengeRelayRequest,
-  fixture: X402MockChallengeFixture = createMockX402ChallengeFixture(request.endpointPath)
+  fixture: X402MockChallengeFixture = createMockX402ChallengeFixture(request.endpointPath),
+  options: X402RelayBuildOptions = {}
 ): X402ChallengeRelayResult {
   const normalizedRequest = normalizeRequest(request);
 
   if (!config.relayEnabled) {
-    return failClosed(config, normalizedRequest, "x402_relay_disabled");
+    return failClosed(config, normalizedRequest, "x402_relay_disabled", options);
   }
 
   if (!config.challengeExecutionEnabled) {
-    return failClosed(config, normalizedRequest, "x402_challenge_unavailable");
+    return failClosed(config, normalizedRequest, "x402_challenge_unavailable", options);
   }
 
   if (!isX402RouteAllowlisted(normalizedRequest.endpointPath) || normalizedRequest.httpMethod !== "GET") {
-    return failClosed(config, normalizedRequest, "x402_route_not_allowlisted");
+    return failClosed(config, normalizedRequest, "x402_route_not_allowlisted", options);
   }
 
   if (hasProofLikeInput(request)) {
-    return failClosed(config, normalizedRequest, "x402_proof_forwarding_not_enabled");
+    return failClosed(config, normalizedRequest, "x402_proof_forwarding_not_enabled", options);
   }
 
   if (hasForbiddenProofMaterial(fixture)) {
-    return failClosed(config, normalizedRequest, "x402_secret_safety_violation");
+    return failClosed(config, normalizedRequest, "x402_secret_safety_violation", options);
   }
 
   if (fixture.status >= 200 && fixture.status < 300) {
-    return failClosed(config, normalizedRequest, "x402_paid_output_without_proof");
+    return failClosed(config, normalizedRequest, "x402_paid_output_without_proof", options);
   }
 
   if (fixture.status !== 402) {
-    return failClosed(config, normalizedRequest, "x402_challenge_unavailable");
+    return failClosed(config, normalizedRequest, "x402_challenge_unavailable", options);
   }
 
   if (hasPaidOutputWithoutProof(fixture.body)) {
-    return failClosed(config, normalizedRequest, "x402_paid_output_without_proof");
+    return failClosed(config, normalizedRequest, "x402_paid_output_without_proof", options);
   }
 
   const shape = normalizeChallengeShape(fixture);
   if (!shape.ok) {
-    return failClosed(config, normalizedRequest, "x402_challenge_unexpected_shape");
+    return failClosed(config, normalizedRequest, "x402_challenge_unexpected_shape", options);
   }
 
   return {
@@ -277,6 +302,7 @@ export function buildMockX402ChallengeRelayResult(
     api_status: 402,
     tool_name: normalizedRequest.toolName,
     endpoint_path: normalizedRequest.endpointPath,
+    method: normalizedRequest.httpMethod,
     http_method: normalizedRequest.httpMethod,
     challenge: {
       header_names_present: [...X402_CHALLENGE_HEADER_NAMES],
@@ -291,7 +317,7 @@ export function buildMockX402ChallengeRelayResult(
         stocktrends_preview: "<redacted-stocktrends-preview>"
       }
     },
-    mcp_metadata: safetyMetadata(config, normalizedRequest),
+    mcp_metadata: safetyMetadata(config, normalizedRequest, options),
     paid_execution_authorized: false,
     paid_execution_occurred: false,
     api_request_sent: false,
@@ -299,8 +325,63 @@ export function buildMockX402ChallengeRelayResult(
     payment_header_sent: false,
     proof_forwarded: false,
     spend_occurred: false,
-    paid_api_data_returned: false
+    paid_api_data_returned: false,
+    automatic_paid_retries: false
   };
+}
+
+export function buildPublicMockX402ChallengeRelayResult(
+  config: X402RelayConfig,
+  request: X402ChallengeRelayRequest,
+  toolInput: unknown,
+  state: X402ChallengeSessionState
+): X402ChallengeRelayResult {
+  const normalizedRequest = normalizeRequest(request);
+  const options: X402RelayBuildOptions = {
+    publicToolWiring: "existing_paid_semantic_tools",
+    repeatedIdenticalPolicy: "same_session_normalized_signature_denied"
+  };
+
+  if (!config.relayEnabled || !config.challengeExecutionEnabled) {
+    return buildMockX402ChallengeRelayResult(
+      config,
+      request,
+      createMockX402ChallengeFixture(request.endpointPath),
+      options
+    );
+  }
+
+  if (!isX402RouteAllowlisted(normalizedRequest.endpointPath) || normalizedRequest.httpMethod !== "GET") {
+    return failClosed(config, normalizedRequest, "x402_route_not_allowlisted", options);
+  }
+
+  if (containsProofLikeToolInput(toolInput)) {
+    return failClosed(config, normalizedRequest, "x402_proof_forwarding_not_enabled", options);
+  }
+
+  if (requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) && !hasCanonicalSymbolExchangeOnly(toolInput)) {
+    return failClosed(config, normalizedRequest, "x402_symbol_exchange_required", options);
+  }
+
+  const signature = buildChallengeSignature(normalizedRequest, toolInput);
+  if (state.inFlightSignatures.has(signature) || state.completedSignatures.has(signature)) {
+    return failClosed(config, normalizedRequest, "x402_repeated_challenge_call", options);
+  }
+
+  state.inFlightSignatures.add(signature);
+  const result = buildMockX402ChallengeRelayResult(
+    config,
+    request,
+    createMockX402ChallengeFixture(request.endpointPath),
+    options
+  );
+
+  state.inFlightSignatures.delete(signature);
+  if (result.status === "payment_required") {
+    state.completedSignatures.add(signature);
+  }
+
+  return result;
 }
 
 export function isX402RouteAllowlisted(endpointPath: string): boolean {
@@ -519,10 +600,75 @@ function hasPaidOutputWithoutProof(body: JsonObject): boolean {
   return body.api_data !== undefined || body.data !== undefined || body.results !== undefined || body.rows !== undefined;
 }
 
+function containsProofLikeToolInput(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => containsProofLikeToolInput(item));
+  }
+
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.entries(value).some(
+    ([key, child]) => hasForbiddenProofMaterialKey(key) || containsProofLikeToolInput(child)
+  );
+}
+
+function requiresCanonicalSymbolExchange(endpointPath: string): boolean {
+  return [
+    "/v1/stim/latest",
+    "/v1/stim/history",
+    "/v1/indicators/latest",
+    "/v1/indicators/history"
+  ].includes(endpointPath);
+}
+
+function hasCanonicalSymbolExchangeOnly(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.symbol_exchange === "string" &&
+    /^[A-Z0-9][A-Z0-9.-]{0,31}_[NQABTI]$/.test(value.symbol_exchange) &&
+    value.symbol === undefined &&
+    value.exchange === undefined
+  );
+}
+
+function buildChallengeSignature(
+  request: Required<Pick<X402ChallengeRelayRequest, "toolName" | "endpointPath">> & { httpMethod: PaidHttpMethod },
+  toolInput: unknown
+): string {
+  return JSON.stringify({
+    tool_name: request.toolName,
+    endpoint_path: request.endpointPath,
+    http_method: request.httpMethod,
+    input: normalizeSignatureValue(toolInput)
+  });
+}
+
+function normalizeSignatureValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeSignatureValue(item));
+  }
+
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, normalizeSignatureValue(value[key])])
+    );
+  }
+
+  return value;
+}
+
 function failClosed(
   config: X402RelayConfig,
   request: Required<Pick<X402ChallengeRelayRequest, "toolName" | "endpointPath">> & { httpMethod: PaidHttpMethod },
-  errorCode: Exclude<X402RelayErrorCode, "x402_payment_required">
+  errorCode: Exclude<X402RelayErrorCode, "x402_payment_required">,
+  options: X402RelayBuildOptions = {}
 ): X402RelayErrorResult {
   return {
     status: "error",
@@ -534,7 +680,7 @@ function failClosed(
       http_method: request.httpMethod,
       denial_reason: errorCode
     },
-    mcp_metadata: safetyMetadata(config, request),
+    mcp_metadata: safetyMetadata(config, request, options),
     paid_execution_authorized: false,
     paid_execution_occurred: false,
     api_request_sent: false,
@@ -542,13 +688,15 @@ function failClosed(
     payment_header_sent: false,
     proof_forwarded: false,
     spend_occurred: false,
-    paid_api_data_returned: false
+    paid_api_data_returned: false,
+    automatic_paid_retries: false
   };
 }
 
 function safetyMetadata(
   config: X402RelayConfig,
-  request: Required<Pick<X402ChallengeRelayRequest, "toolName" | "endpointPath">> & { httpMethod: PaidHttpMethod }
+  request: Required<Pick<X402ChallengeRelayRequest, "toolName" | "endpointPath">> & { httpMethod: PaidHttpMethod },
+  options: X402RelayBuildOptions = {}
 ): X402ChallengeRelayMetadata {
   return {
     tool_name: request.toolName,
@@ -556,7 +704,7 @@ function safetyMetadata(
     http_method: request.httpMethod,
     relay_mode: config.mode,
     mock_only: true,
-    public_tool_wiring: "not_exposed",
+    public_tool_wiring: options.publicToolWiring ?? "not_exposed",
     paid_execution_occurred: false,
     api_request_sent: false,
     auth_header_sent: false,
@@ -565,7 +713,8 @@ function safetyMetadata(
     spend_occurred: false,
     paid_api_data_returned: false,
     automatic_paid_retries: false,
-    repeated_identical_policy: "deferred_until_public_tool_wiring_no_fetch_or_spend"
+    repeated_identical_policy:
+      options.repeatedIdenticalPolicy ?? "deferred_until_public_tool_wiring_no_fetch_or_spend"
   };
 }
 
@@ -577,6 +726,10 @@ function errorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_requi
       return "x402 challenge execution is not enabled or the mock challenge is unavailable. No request was sent.";
     case "x402_challenge_unexpected_shape":
       return "The mock x402 challenge did not match the verified PR #64 shape. No proof path is enabled.";
+    case "x402_symbol_exchange_required":
+      return "Mock x402 challenge mode requires canonical symbol_exchange input for symbol-dependent tools. No resolver or request was used.";
+    case "x402_repeated_challenge_call":
+      return "An identical mock x402 challenge call already occurred in this server session. No retry, request, payment, or spend occurred.";
     case "x402_proof_forwarding_not_enabled":
       return "x402 proof forwarding is not enabled in this mock-only build. No proof was forwarded.";
     case "x402_proof_invalid_shape":
