@@ -581,3 +581,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5F x402 Public Challenge Relay Wiring Design Memo](docs/PHASE5F_X402_PUBLIC_CHALLENGE_RELAY_WIRING_DESIGN_MEMO.md)
 - [Phase 5F x402 Public Mock Wiring Implementation Notes](docs/PHASE5F_X402_PUBLIC_MOCK_WIRING_IMPLEMENTATION_NOTES.md)
 - [Phase 5F x402 Public Mock Wiring Validation Report](docs/PHASE5F_X402_PUBLIC_MOCK_WIRING_VALIDATION_REPORT.md)
+- [Phase 5F x402 Live No-Key Challenge Relay Plan](docs/PHASE5F_X402_LIVE_NO_KEY_CHALLENGE_RELAY_PLAN.md)
