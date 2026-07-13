@@ -324,6 +324,22 @@ describe("Phase 5F x402 mock challenge relay result normalization", () => {
     }
     expect(JSON.stringify(result)).not.toContain("placeholder-unsafe-address");
   });
+
+  it("fails closed when bare EVM-address-shaped values appear under approved mock challenge keys", () => {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const fixture = createMockX402ChallengeFixture(REQUEST.endpointPath);
+    const unsafeAddress = `0x${"1".repeat(40)}`;
+    ((fixture.body.accepted_payment_methods as Record<string, unknown>[])[0] as Record<string, unknown>).recipient = unsafeAddress;
+
+    const result = buildMockX402ChallengeRelayResult(config, REQUEST, fixture);
+    const serialized = JSON.stringify(result);
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_secret_safety_violation");
+    }
+    expect(serialized).not.toContain(unsafeAddress);
+  });
 });
 
 describe("Phase 5F x402 redaction safety", () => {

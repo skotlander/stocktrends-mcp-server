@@ -498,6 +498,7 @@ function hasForbiddenProofMaterialValue(value: string): boolean {
   }
 
   return [
+    /^0x[0-9a-fA-F]{40}$/,
     /\bAuthorization\s*:\s*(Bearer|Basic)\s+[^\s,;]+/i,
     /\b(Bearer|Basic)\s+[^\s,;]+/i,
     /\b(X-API-Key|X_API_KEY|API_KEY|STOCKTRENDS_API_KEY)\s*[:=]\s*[^<\s,;]+/i,
@@ -583,7 +584,7 @@ function errorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_requi
     case "x402_route_not_allowlisted":
       return "The endpoint is outside the nine-route x402 relay allowlist. No request was sent.";
     case "x402_mixed_mode_invalid":
-      return "API-key paid mode and x402 challenge execution cannot be combined in this mock-only build.";
+      return "API-key paid mode and active x402 relay flags cannot be combined in this mock-only build.";
     case "x402_paid_output_without_proof":
       return "Paid API data appeared without proof. The result failed closed and no paid data was returned.";
     case "x402_secret_safety_violation":
