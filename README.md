@@ -534,3 +534,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5E Local Stdio Launch Readiness Signoff](docs/PHASE5E_LOCAL_STDIO_LAUNCH_READINESS_SIGNOFF.md)
 - [Phase 5F x402 Relay Architecture Memo](docs/PHASE5F_X402_RELAY_ARCHITECTURE_MEMO.md)
 - [Phase 5F x402 Contract Verification Plan](docs/PHASE5F_X402_CONTRACT_VERIFICATION_PLAN.md)
+- [Phase 5F x402 Contract Verification Report](docs/PHASE5F_X402_CONTRACT_VERIFICATION_REPORT.md)
