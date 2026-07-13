@@ -13,6 +13,7 @@ import { registerPaidIndicatorsTools } from "./tools/indicatorsTools.js";
 import { registerPaidMarketContextTools } from "./tools/marketContextTools.js";
 import { registerPaidSelectionsTools } from "./tools/selectionsTools.js";
 import { registerPaidStimTools } from "./tools/stimTools.js";
+import { registerX402PublicMockTools } from "./tools/x402Tools.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
 export const SERVER_VERSION = "1.0.0";
@@ -84,6 +85,12 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // market, breadth, leadership). The credential-free leadership-definitions
   // public resource is registered with the other public resources above.
   registerPaidMarketContextTools(server, client, config, paidUsage, paidReconciliation);
+  // Explicit x402 relay posture reuses the same nine paid semantic tool names
+  // and their existing strict schemas. Mixed API-key/x402 configuration is
+  // rejected before API-key parsing, so these registrations can never overlap
+  // with the API-key paid registrations above. Their handlers are local and
+  // mock-only: no client/resolver/pricing/auth/fetch seam is reachable.
+  registerX402PublicMockTools(server, config);
 
   return {
     server,
@@ -112,6 +119,14 @@ export async function startStdioServer(env: Env = process.env): Promise<void> {
   } else if (config.paidTools.status === "configured_foundation_no_execution") {
     logger.warn(
       "Paid ST-IM, indicators, base selections, and market-context tools are exposed but paid execution is NOT enabled (STOCKTRENDS_ENABLE_PAID_EXECUTION is not true); every invocation fails closed with no request."
+    );
+  }
+
+  if (config.x402Relay.relayEnabled) {
+    logger.warn(
+      config.x402Relay.challengeExecutionEnabled
+        ? "Mock-only x402 challenge mode is enabled. The existing nine paid semantic tools are exposed, but every challenge result is local and shape-only: no network, resolver, API key, proof, payment header, paid output, or spend path is enabled."
+        : "x402 relay exposure is enabled with challenge behavior disabled. The existing nine paid semantic tools are exposed, but every invocation fails closed locally with no request, resolver, API key, proof, payment header, paid output, or spend."
     );
   }
 
