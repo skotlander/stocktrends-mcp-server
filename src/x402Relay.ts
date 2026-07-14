@@ -943,6 +943,74 @@ const X402_METHOD_AUTHORITY_KEYS = new Set([
   "httpmethodauthorityoverride",
   "executionmethodauthorityoverride"
 ]);
+const X402_PROTECTED_AUTHORITY_TOKEN_SEQUENCES = Object.freeze([
+  ["route"],
+  ["path"],
+  ["method"],
+  ["http", "method"],
+  ["execution", "method"],
+  ["amount"],
+  ["price"],
+  ["asset"],
+  ["token"],
+  ["payee"],
+  ["recipient"],
+  ["address"],
+  ["pay", "to"],
+  ["payto"],
+  ["network"],
+  ["chain"],
+  ["scheme"],
+  ["timeout"],
+  ["expiry"],
+  ["payment"],
+  ["proof"],
+  ["authorization"],
+  ["settlement"],
+  ["transaction"]
+] as const);
+const X402_PROTECTED_AUTHORITY_COMPACT_CONCEPTS = new Set(
+  X402_PROTECTED_AUTHORITY_TOKEN_SEQUENCES.map((tokens) => tokens.join(""))
+);
+const X402_PROTECTED_AUTHORITY_COMPACT_ALIASES = new Set(
+  [...X402_PROTECTED_AUTHORITY_COMPACT_CONCEPTS].flatMap((concept) => [
+    `${concept}authority`,
+    `authority${concept}`
+  ])
+);
+const X402_TRANSACTION_STATE_TOKENS = new Set([
+  "execution",
+  "executed",
+  "completion",
+  "completed",
+  "confirmation",
+  "confirmed",
+  "hash"
+]);
+const X402_TRANSACTION_STATE_COMPACT_KEYS = new Set([
+  "execution",
+  "executionstatus",
+  "executionstate",
+  "executionresult",
+  "executed",
+  "completion",
+  "completionstatus",
+  "completionstate",
+  "completionresult",
+  "completed",
+  "confirmation",
+  "confirmationstatus",
+  "confirmationstate",
+  "confirmationresult",
+  "confirmed",
+  "hash",
+  "hashvalue",
+  "paymenthash",
+  "transactionhash",
+  "txhash"
+]);
+const X402_SAFE_AUTONOMOUS_EXECUTION_KEY =
+  "safe_for_autonomous_execution_with_budget_controls";
 
 type JsonPathSegment = string | number;
 type ExtensionSemanticContext = "generic" | "bazaar_extensions";
@@ -1335,7 +1403,7 @@ function validateExtensionContainer(
         return "invalid";
       }
       const childPath = [...current.path, key];
-      if (isProhibitedExtensionKey(key, childPath, context, value)) {
+      if (isProhibitedExtensionKey(key, childPath, context, child, value)) {
         return "prohibited";
       }
       stack.push({ value: child, depth: current.depth + 1, path: childPath });
@@ -1349,6 +1417,7 @@ function isProhibitedExtensionKey(
   key: string,
   path: readonly JsonPathSegment[],
   context: ExtensionSemanticContext,
+  childValue: unknown,
   extensionRoot: unknown
 ): boolean {
   if (X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase())) {
@@ -1399,6 +1468,21 @@ function isProhibitedExtensionKey(
   }
 
   if (isPaymentSemanticOverride(compact)) {
+    return true;
+  }
+
+  if (isProtectedAuthorityAlias(tokens, compact)) {
+    return true;
+  }
+
+  // build_bazaar_extension() authors this single descriptive boolean at this
+  // exact info role. It does not grant request, payment, proof, settlement, or
+  // output authority. No other execution-bearing key or path is exempted.
+  if (isApprovedBazaarSafeAutonomousExecutionFlag(path, context, childValue)) {
+    return false;
+  }
+
+  if (isProhibitedTransactionState(tokens, compact)) {
     return true;
   }
 
@@ -1459,6 +1543,57 @@ function isPaymentSemanticOverride(compactKey: string): boolean {
     "expiry",
     "expiresat"
   ].includes(concept);
+}
+
+function isProtectedAuthorityAlias(tokens: readonly string[], compactKey: string): boolean {
+  if (X402_PROTECTED_AUTHORITY_COMPACT_ALIASES.has(compactKey)) {
+    return true;
+  }
+
+  if (!tokens.includes("authority")) {
+    return false;
+  }
+
+  return X402_PROTECTED_AUTHORITY_TOKEN_SEQUENCES.some((conceptTokens) =>
+    containsTokenSequence(tokens, conceptTokens)
+  );
+}
+
+function containsTokenSequence(
+  tokens: readonly string[],
+  expected: readonly string[]
+): boolean {
+  if (expected.length === 0 || expected.length > tokens.length) {
+    return false;
+  }
+  for (let start = 0; start <= tokens.length - expected.length; start += 1) {
+    if (expected.every((token, offset) => tokens[start + offset] === token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isApprovedBazaarSafeAutonomousExecutionFlag(
+  path: readonly JsonPathSegment[],
+  context: ExtensionSemanticContext,
+  value: unknown
+): boolean {
+  return (
+    context === "bazaar_extensions" &&
+    pathsEqual(path, ["bazaar", "info", X402_SAFE_AUTONOMOUS_EXECUTION_KEY]) &&
+    typeof value === "boolean"
+  );
+}
+
+function isProhibitedTransactionState(
+  tokens: readonly string[],
+  compactKey: string
+): boolean {
+  return (
+    X402_TRANSACTION_STATE_COMPACT_KEYS.has(compactKey) ||
+    tokens.some((token) => X402_TRANSACTION_STATE_TOKENS.has(token))
+  );
 }
 
 function isProhibitedMethodAuthority(

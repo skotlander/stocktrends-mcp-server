@@ -148,17 +148,61 @@ tests prove acceptance exactly at the aggregate limit and rejection at the
 first member beyond it. Only JSON-safe scalars, arrays, and plain objects are
 accepted.
 
-The prohibited-key policy tokenizes camelCase and separator/case variants
-rather than matching arbitrary substrings. Proof, signature, authorization,
-authentication-token, secret, private-key, wallet-seed, payment, settlement,
-transaction, transaction-hash, facilitator, payment execution/completion, and
-payment-semantic override concepts are checked before every Bazaar or generic
-path allowance. They therefore remain universally prohibited, including below
-ancestors named `schema`, `example`, `input`, `output`, or `info`. Consequently
-`routeOverride`, `amount_override`, `network.override`, `payToOverride`, and
-`maxTimeoutSecondsOverride` fail closed at generic, schema-root, and nested
-schema paths, while benign `proofreading_note` and `seedling_metadata` do not
-fail solely because they contain shorter character sequences.
+The prohibited-key policy tokenizes camelCase and PascalCase boundaries,
+lower-cases tokens, and treats underscores, hyphens, dots, spaces, mixed case,
+and other non-alphanumeric separators as boundaries. It compares complete
+tokens and exact compact compounds rather than arbitrary substrings. Proof,
+signature, authorization, authentication-token, secret, private-key,
+wallet-seed, payment, settlement, transaction, facilitator, semantic override,
+generic authority, and transaction-state concepts are checked before every
+Bazaar, schema, example, method-role, output-role, or generic path allowance.
+They therefore remain universally prohibited below ancestors named `schema`,
+`example`, `input`, `output`, or `info`.
+
+The generic authority predicate requires an exact `authority` token together
+with an exact protected concept token sequence, in either order, or an exact
+unseparated compact alias `<concept>authority`/`authority<concept>`. The 23
+protected concepts are route, path, method, HTTP method, execution method,
+amount, price, asset, token, payee, recipient, address, `payTo`, network, chain,
+scheme, timeout, expiry, payment, proof, authorization, settlement, and
+transaction. Thus `routeAuthority`, `authorityRoute`, `HTTP Method Authority`,
+`pay.to-authority`, `paymentAuthority`, and `authorityPayment` fail before any
+source-role allowance. Longer unrelated tokens such as `authoritative` are not
+treated as `authority`.
+
+The transaction-state predicate rejects the exact normalized tokens
+`execution`, `executed`, `completion`, `completed`, `confirmation`,
+`confirmed`, and `hash` wherever they occur as token-bounded key concepts. It
+also rejects exact unseparated compact forms for execution/completion/
+confirmation status, state, and result concepts plus `hashValue`,
+`paymentHash`, `transactionHash`, and `txHash`. Consequently standalone keys,
+camel/Pascal forms, separator variants, and state-bearing compounds fail before
+schema/example or source-role classification. Unrelated longer tokens such as
+`executioner`, `completionist`, `confirmatory`, and `hashing` remain benign.
+
+The only execution-word positive exception is the source-authored rich Bazaar
+field
+`payment_required.extensions.bazaar.info.safe_for_autonomous_execution_with_budget_controls`.
+`build_bazaar_extension()` authors it as Python `True`, serialized as a JSON
+boolean. The validator helper requires the exact relative path
+`bazaar.info.safe_for_autonomous_execution_with_budget_controls`, exact
+snake-case spelling, the Bazaar-extension context, and a boolean value. Case or
+separator variants, other paths, descendants, non-boolean values, and shorter
+execution-bearing siblings are not exempt. The field is descriptive only and
+does not affect route/method binding, request execution, payment authorization,
+retry, proof, settlement, or output.
+
+Enforcement order is explicit: prototype-pollution/unsafe keys first;
+universal proof, secret, authorization, payment, settlement, transaction,
+facilitator, override, and generic-authority rejection next; the one exact
+safe-execution boolean exception immediately before universal transaction-state
+rejection; then exact method and Bazaar descriptive roles; and finally generic
+core-shadow rejection. No Bazaar subtree or broad execution exemption exists.
+Consequently `routeOverride`, `amount_override`, `network.override`,
+`payToOverride`, and `maxTimeoutSecondsOverride` fail closed at generic,
+schema-root, and nested schema paths, while benign `proofreading_note` and
+`seedling_metadata` do not fail solely because they contain shorter character
+sequences.
 
 The previous blanket allowance for every key below `bazaar.schema` was
 removed. The remaining shadow-key exceptions are exact builder roles derived
@@ -271,6 +315,37 @@ exercise the exact permitted roles individually, verify one mocked request,
 verify no retry, fallback, or second route, prove the outbound method remains
 `GET`, and prove the descriptive sentinel is omitted from all returned output.
 
+The generic-authority matrix covers all 23 protected concepts. For each
+concept it checks camelCase, PascalCase, underscore, hyphen, dot,
+space-separated, mixed-case/separator, reversed-order, and exact compact
+spellings at the generic extension root. Five representative forward/reversed
+aliases are also exercised at seven placements: extension root, Bazaar root,
+Bazaar schema root, nested schema, fake example, array element, and a
+near-but-invalid method-source role. Every relay-path case returns
+`x402_live_challenge_prohibited_material`, performs exactly one mocked GET to
+the invoked route, performs no retry/fallback/second route, and omits injected
+keys, paths, values, sentinels, and the extension object.
+
+The transaction-state matrix covers all named execution, completion,
+confirmation, and hash forms: standalone words; `_status`, `_state`, and
+`_result`; camelCase and mixed-case/separator equivalents; `executed`,
+`completed`, and `confirmed`; `hash_value`; and `payment_hash`,
+`transaction_hash`, and `tx_hash` aliases. Representative forms are also
+rejected at nine placements: extension root, Bazaar root, Bazaar schema root,
+nested schema, fake example, array element, fake source role, below an actual
+output carrier, and below an actual method role. These cases prove that neither
+schema/example structure nor a real source role can bypass universal state
+rejection.
+
+Safe-execution positive controls accept the exact boolean field at the exact
+rich source role, keep the representative rich fixture passing, and prove the
+field and value are omitted from all MCP output. Negative controls reject
+non-boolean values, five case/separator spelling variants, the exact spelling
+at all nine non-source placements, descendants, and the shorter siblings
+`execution`, `safe_execution`, `autonomous_execution`, and
+`execution_with_budget_controls`. Benign longer-word controls confirm the
+token-boundary behavior.
+
 The output-role regression matrix accepts direct `data`, `results`, and
 `api_data` example carriers; direct output-schema carriers; a nested object
 schema carrier; and an array-items object-schema carrier at the two exact
@@ -327,14 +402,15 @@ roles; source-mirrored schema, parameter, example, and output metadata;
 acceptance of `proofreading_note` and `seedling_metadata`; omission of accepted
 extension values; and absence of raw rejected sentinels.
 
-These final method/output corrections are additive to the earlier PR #76
-hardening. The iterative stack-safety and aggregate-resource bounds, direct
-tool-input snapshot boundary, exact canonical URL and route binding,
-header/body identity, amount/network/address/timeout validation, extension
-omission, safe coarse errors, and paid-output omission remain unchanged and
-covered. The restored transport regressions, separate PR #64 mock behavior,
-API-key behavior, exact nine-route allowlist, one-request/no-retry boundary,
-and unsupported fail-closed proof-forwarding behavior also remain covered.
+These final method/output and authority/transaction-state corrections are
+additive to the earlier PR #76 hardening. The iterative stack-safety and
+aggregate-resource bounds, direct tool-input snapshot boundary, exact canonical
+URL and route binding, header/body identity, amount/network/address/timeout
+validation, extension omission, safe coarse errors, and paid-output omission
+remain unchanged and covered. The restored transport regressions, separate PR
+#64 mock behavior, API-key behavior, exact nine-route allowlist,
+one-request/no-retry boundary, and unsupported fail-closed proof-forwarding
+behavior also remain covered.
 
 ## Unchanged capability boundaries
 

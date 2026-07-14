@@ -93,6 +93,99 @@ const METHOD_ALIAS_PLACEMENTS = [
   "near-legitimate-method-role"
 ] as const;
 
+const PROTECTED_AUTHORITY_CONCEPTS = [
+  ["route", ["route"]],
+  ["path", ["path"]],
+  ["method", ["method"]],
+  ["HTTP method", ["http", "method"]],
+  ["execution method", ["execution", "method"]],
+  ["amount", ["amount"]],
+  ["price", ["price"]],
+  ["asset", ["asset"]],
+  ["token", ["token"]],
+  ["payee", ["payee"]],
+  ["recipient", ["recipient"]],
+  ["address", ["address"]],
+  ["payTo", ["pay", "to"]],
+  ["network", ["network"]],
+  ["chain", ["chain"]],
+  ["scheme", ["scheme"]],
+  ["timeout", ["timeout"]],
+  ["expiry", ["expiry"]],
+  ["payment", ["payment"]],
+  ["proof", ["proof"]],
+  ["authorization", ["authorization"]],
+  ["settlement", ["settlement"]],
+  ["transaction", ["transaction"]]
+] as const;
+
+const AUTHORITY_PLACEMENT_ALIASES = [
+  "routeAuthority",
+  "authorityRoute",
+  "Amount Authority",
+  "AUTHORITY-network",
+  "pay.to-authority"
+] as const;
+
+const TRANSACTION_STATE_VARIANTS = [
+  "execution",
+  "execution_status",
+  "executionStatus",
+  "execution_state",
+  "execution_result",
+  "executed",
+  "completion",
+  "completion_status",
+  "completionStatus",
+  "completion_state",
+  "completion_result",
+  "completed",
+  "confirmation",
+  "confirmation_status",
+  "confirmationStatus",
+  "confirmation_state",
+  "confirmation_result",
+  "confirmed",
+  "hash",
+  "hash_value",
+  "hashValue",
+  "payment_hash",
+  "transaction_hash",
+  "transactionHash",
+  "tx_hash",
+  "txHash",
+  "EXECUTION-STATUS",
+  "Execution.Status",
+  "execution status",
+  "COMPLETION-RESULT",
+  "Completion.State",
+  "completion result",
+  "CONFIRMATION-STATUS",
+  "Confirmation.Result",
+  "confirmation state",
+  "HASH-VALUE",
+  "Hash.Value",
+  "hash value",
+  "executedStatus",
+  "completedResult",
+  "confirmedState"
+] as const;
+
+const TRANSACTION_STATE_PLACEMENTS = [
+  "generic-extension-root",
+  "bazaar-root",
+  "bazaar-schema",
+  "nested-schema-property",
+  "fake-example",
+  "array",
+  "fake-source-role-path",
+  "actual-output-role",
+  "actual-method-role"
+] as const;
+
+const SAFE_AUTONOMOUS_EXECUTION_KEY =
+  "safe_for_autonomous_execution_with_budget_controls";
+
 const FAKE_OUTPUT_PLACEMENTS = [
   "info.output.example.fake[0].data",
   "info.output.example.fake.data",
@@ -1153,7 +1246,7 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       for (const placement of METHOD_ALIAS_PLACEMENTS) {
         const sentinel = `synthetic-method-authority-${placement}-marker`;
         await expectSingleGetChallengeFailure(
-          buildMethodAliasExtension(alias, placement, sentinel),
+          buildProhibitedKeyExtension(alias, placement, sentinel),
           "x402_live_challenge_prohibited_material",
           sentinel
         );
@@ -1166,12 +1259,220 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     async (placement) => {
       const sentinel = `synthetic-literal-method-${placement}-marker`;
       await expectSingleGetChallengeFailure(
-        buildMethodAliasExtension("method", placement, sentinel),
+        buildProhibitedKeyExtension("method", placement, sentinel),
         "x402_live_challenge_prohibited_material",
         sentinel
       );
     }
   );
+
+  it.each(PROTECTED_AUTHORITY_CONCEPTS)(
+    "rejects normalized generic authority aliases for protected concept %s at the generic extension root",
+    async (_concept, conceptTokens) => {
+      for (const alias of buildAuthorityAliases(conceptTokens)) {
+        const sentinel = `synthetic-${conceptTokens.join("-")}-authority-value-marker`;
+        const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+        paymentRequirements(body).extensions = { [alias]: sentinel };
+        const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+        const serialized = JSON.stringify(result);
+
+        expect(result.status, alias).toBe("error");
+        if (result.status === "error") {
+          expect(result.error.error_code, alias).toBe("x402_live_challenge_prohibited_material");
+        }
+        expect(serialized).not.toContain(sentinel);
+        expect(serialized).not.toContain(JSON.stringify(alias));
+        expect(serialized).not.toContain('"extensions"');
+      }
+    }
+  );
+
+  it.each(AUTHORITY_PLACEMENT_ALIASES)(
+    "rejects representative generic authority alias %s before every Bazaar or source-role allowance",
+    async (alias) => {
+      for (const placement of METHOD_ALIAS_PLACEMENTS) {
+        const sentinel = `synthetic-authority-${placement}-value-marker`;
+        await expectSingleGetChallengeFailure(
+          buildProhibitedKeyExtension(alias, placement, sentinel),
+          "x402_live_challenge_prohibited_material",
+          sentinel,
+          alias
+        );
+      }
+    }
+  );
+
+  it.each(TRANSACTION_STATE_VARIANTS)(
+    "rejects normalized transaction-state key %s at the generic extension root",
+    async (key) => {
+      const sentinel = "synthetic-transaction-state-value-marker";
+      const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+      paymentRequirements(body).extensions = { [key]: sentinel };
+      const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+      const serialized = JSON.stringify(result);
+
+      expect(result.status).toBe("error");
+      if (result.status === "error") {
+        expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+      }
+      expect(serialized).not.toContain(sentinel);
+      expect(serialized).not.toContain(JSON.stringify(key));
+      expect(serialized).not.toContain('"extensions"');
+    }
+  );
+
+  it.each([
+    "executionStatus",
+    "Completion-State",
+    "CONFIRMATION.RESULT",
+    "txHash"
+  ] as const)(
+    "rejects transaction-state alias %s before generic, Bazaar, schema, example, array, output, and method roles",
+    async (key) => {
+      for (const placement of TRANSACTION_STATE_PLACEMENTS) {
+        const sentinel = `synthetic-state-${placement}-value-marker`;
+        await expectSingleGetChallengeFailure(
+          buildTransactionStateExtension(key, placement, sentinel),
+          "x402_live_challenge_prohibited_material",
+          sentinel,
+          key
+        );
+      }
+    }
+  );
+
+  it("accepts only the exact source-authored safe-autonomous-execution boolean role and omits it", async () => {
+    const extension = createRepresentativeRichBazaarExtension();
+    bazaarInfo(extension)[SAFE_AUTONOMOUS_EXECUTION_KEY] = true;
+
+    const fetchFn = vi.fn<FetchLike>(async (request, init) => {
+      expect(init.method).toBe("GET");
+      expect((request as URL).pathname).toBe(REQUEST.endpointPath);
+      return canonicalLiveHttpResponse(REQUEST.endpointPath, (body) => {
+        paymentRequirements(body).extensions = extension;
+      });
+    });
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+    try {
+      const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+      const output = structured<X402LivePaymentRequiredResult>(result);
+      const serialized = `${JSON.stringify(result)}\n${contentText(result)}`;
+
+      expect(output.status).toBe("payment_required");
+      expect(output.method).toBe("GET");
+      expect(output.http_method).toBe("GET");
+      expect(output.automatic_paid_retries).toBe(false);
+      expect(output.paid_execution_authorized).toBe(false);
+      expect(output.paid_execution_occurred).toBe(false);
+      expect(output.proof_forwarded).toBe(false);
+      expect(output.spend_occurred).toBe(false);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(serialized).not.toContain(SAFE_AUTONOMOUS_EXECUTION_KEY);
+      expect(serialized).not.toContain('"extensions"');
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("accepts the exact safe-autonomous-execution role only for the source-compatible boolean type", async () => {
+    for (const value of [true, false]) {
+      const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+      const extension = createRepresentativeRichBazaarExtension();
+      bazaarInfo(extension)[SAFE_AUTONOMOUS_EXECUTION_KEY] = value;
+      paymentRequirements(body).extensions = extension;
+      expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }))).status)
+        .toBe("payment_required");
+    }
+
+    for (const value of ["true", 1, null, { descriptive: true }]) {
+      const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+      const extension = createRepresentativeRichBazaarExtension();
+      bazaarInfo(extension)[SAFE_AUTONOMOUS_EXECUTION_KEY] = value;
+      paymentRequirements(body).extensions = extension;
+      const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+      expect(result.status).toBe("error");
+      if (result.status === "error") {
+        expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+      }
+    }
+  });
+
+  it.each([
+    "safeForAutonomousExecutionWithBudgetControls",
+    "Safe_For_Autonomous_Execution_With_Budget_Controls",
+    "safe-for-autonomous-execution-with-budget-controls",
+    "safe.for.autonomous.execution.with.budget.controls",
+    "safe for autonomous execution with budget controls"
+  ] as const)("rejects safe-autonomous-execution key spelling variant %s at bazaar.info", async (key) => {
+    const sentinel = "synthetic-safe-execution-spelling-value-marker";
+    const extension = createRepresentativeRichBazaarExtension();
+    delete bazaarInfo(extension)[SAFE_AUTONOMOUS_EXECUTION_KEY];
+    bazaarInfo(extension)[key] = sentinel;
+    await expectSingleGetChallengeFailure(
+      extension,
+      "x402_live_challenge_prohibited_material",
+      sentinel,
+      key
+    );
+  });
+
+  it.each(TRANSACTION_STATE_PLACEMENTS)(
+    "rejects the exact safe-autonomous-execution key outside its source path at %s",
+    async (placement) => {
+      const sentinel = `synthetic-safe-execution-${placement}-value-marker`;
+      await expectSingleGetChallengeFailure(
+        buildTransactionStateExtension(SAFE_AUTONOMOUS_EXECUTION_KEY, placement, sentinel),
+        "x402_live_challenge_prohibited_material",
+        sentinel,
+        SAFE_AUTONOMOUS_EXECUTION_KEY
+      );
+    }
+  );
+
+  it.each([
+    "execution",
+    "safe_execution",
+    "autonomous_execution",
+    "execution_with_budget_controls"
+  ] as const)("rejects shorter execution-bearing sibling %s beside the exact safe role", async (key) => {
+    const sentinel = "synthetic-short-execution-value-marker";
+    const extension = createRepresentativeRichBazaarExtension();
+    bazaarInfo(extension)[key] = sentinel;
+    await expectSingleGetChallengeFailure(
+      extension,
+      "x402_live_challenge_prohibited_material",
+      sentinel,
+      key
+    );
+  });
+
+  it("rejects descendants below the exact safe-autonomous-execution field", async () => {
+    const sentinel = "synthetic-safe-execution-descendant-value-marker";
+    const extension = createRepresentativeRichBazaarExtension();
+    bazaarInfo(extension)[SAFE_AUTONOMOUS_EXECUTION_KEY] = { execution_status: sentinel };
+    await expectSingleGetChallengeFailure(
+      extension,
+      "x402_live_challenge_prohibited_material",
+      sentinel,
+      SAFE_AUTONOMOUS_EXECUTION_KEY
+    );
+  });
+
+  it("accepts benign longer authority and transaction-state words without substring matching", async () => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(body).extensions = {
+      synthetic_vendor: {
+        authoritative_summary: "synthetic descriptive metadata",
+        executioner_note: "synthetic editorial metadata",
+        completionist_profile: "synthetic taxonomy metadata",
+        confirmatory_note: "synthetic review metadata",
+        hashing_algorithm: "synthetic classification metadata"
+      }
+    };
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }))).status)
+      .toBe("payment_required");
+  });
 
   it("accepts exact output-example carriers and structurally valid output-schema property roles", async () => {
     const extension = createRepresentativeRichBazaarExtension();
@@ -2327,7 +2628,8 @@ async function expectSingleGetChallengeFailure(
   expectedErrorCode:
     | "x402_live_challenge_prohibited_material"
     | "x402_live_challenge_paid_output_without_proof",
-  sentinel: string
+  sentinel: string,
+  prohibitedKey?: string
 ): Promise<void> {
   const requestedPaths: string[] = [];
   const fetchFn = vi.fn<FetchLike>(async (request, init) => {
@@ -2358,6 +2660,9 @@ async function expectSingleGetChallengeFailure(
     expect(fetchFn).toHaveBeenCalledTimes(1);
     expect(requestedPaths).toEqual([REQUEST.endpointPath]);
     expect(serialized).not.toContain(sentinel);
+    if (prohibitedKey !== undefined) {
+      expect(serialized).not.toContain(JSON.stringify(prohibitedKey));
+    }
     expect(serialized).not.toContain('"extensions"');
   } finally {
     await client.close();
@@ -2394,36 +2699,95 @@ function setRichExamplesMethod(extension: Record<string, unknown>, value: string
   examples[0].method = value;
 }
 
-function buildMethodAliasExtension(
-  alias: string,
+function buildProhibitedKeyExtension(
+  key: string,
   placement: (typeof METHOD_ALIAS_PLACEMENTS)[number],
   sentinel: string
 ): Record<string, unknown> {
   if (placement === "generic-extension-root") {
-    return { [alias]: sentinel };
+    return { [key]: sentinel };
   }
 
   const extension = createRepresentativeRichBazaarExtension();
   if (placement === "bazaar-root") {
-    bazaarRoot(extension)[alias] = sentinel;
+    bazaarRoot(extension)[key] = sentinel;
   } else if (placement === "bazaar-schema") {
-    bazaarSchema(extension)[alias] = sentinel;
+    bazaarSchema(extension)[key] = sentinel;
   } else if (placement === "nested-schema-property") {
     const schemaProperties = bazaarSchema(extension).properties as Record<string, unknown>;
     const inputSchema = schemaProperties.input as Record<string, unknown>;
     const inputProperties = inputSchema.properties as Record<string, unknown>;
     inputProperties.synthetic_method_alias_container = {
       type: "object",
-      properties: { [alias]: { type: "string", const: sentinel } }
+      properties: { [key]: { type: "string", const: sentinel } }
     };
   } else if (placement === "fake-example") {
-    bazaarInfo(extension).fake_example = { [alias]: sentinel };
+    bazaarInfo(extension).fake_example = { [key]: sentinel };
   } else if (placement === "array") {
-    bazaarInfo(extension).synthetic_method_aliases = [{ [alias]: sentinel }];
+    bazaarInfo(extension).synthetic_method_aliases = [{ [key]: sentinel }];
   } else {
     const input = bazaarInfo(extension).input as Record<string, unknown>;
     const example = input.example as Record<string, unknown>;
-    example.synthetic_nested_method_role = { [alias]: sentinel };
+    example.synthetic_nested_method_role = { [key]: sentinel };
+  }
+  return extension;
+}
+
+function buildAuthorityAliases(conceptTokens: readonly string[]): string[] {
+  const pascal = conceptTokens.map((token) => token[0].toUpperCase() + token.slice(1)).join("");
+  const camel = conceptTokens[0] + pascal.slice(conceptTokens[0].length);
+  const compact = conceptTokens.join("");
+  return [...new Set([
+    `${camel}Authority`,
+    `${pascal}Authority`,
+    `${conceptTokens.join("_")}_authority`,
+    `${conceptTokens.join("-")}-authority`,
+    `${conceptTokens.join(".")}.authority`,
+    `${conceptTokens.join(" ")} authority`,
+    `authority${pascal}`,
+    `Authority${pascal}`,
+    `authority_${conceptTokens.join("_")}`,
+    `AUTHORITY-${conceptTokens.map((token) => token.toUpperCase()).join(".")}`,
+    `${compact}authority`,
+    `authority${compact}`
+  ])];
+}
+
+function buildTransactionStateExtension(
+  key: string,
+  placement: (typeof TRANSACTION_STATE_PLACEMENTS)[number],
+  sentinel: string
+): Record<string, unknown> {
+  if (placement === "generic-extension-root") {
+    return { [key]: sentinel };
+  }
+
+  const extension = createRepresentativeRichBazaarExtension();
+  if (placement === "bazaar-root") {
+    bazaarRoot(extension)[key] = sentinel;
+  } else if (placement === "bazaar-schema") {
+    bazaarSchema(extension)[key] = sentinel;
+  } else if (placement === "nested-schema-property") {
+    const schemaProperties = bazaarSchema(extension).properties as Record<string, unknown>;
+    const inputSchema = schemaProperties.input as Record<string, unknown>;
+    const inputProperties = inputSchema.properties as Record<string, unknown>;
+    inputProperties.synthetic_transaction_state_container = {
+      type: "object",
+      properties: { [key]: { type: "string", const: sentinel } }
+    };
+  } else if (placement === "fake-example") {
+    bazaarInfo(extension).fake_example = { [key]: sentinel };
+  } else if (placement === "array") {
+    bazaarInfo(extension).synthetic_transaction_states = [{ [key]: sentinel }];
+  } else if (placement === "fake-source-role-path") {
+    bazaarInfo(extension).synthetic_source_role = { [key]: sentinel };
+  } else if (placement === "actual-output-role") {
+    const output = bazaarInfo(extension).output as Record<string, unknown>;
+    const example = output.example as Record<string, unknown>;
+    example.data = { [key]: sentinel };
+  } else {
+    const input = bazaarInfo(extension).input as Record<string, unknown>;
+    input.method = { [key]: sentinel };
   }
   return extension;
 }
