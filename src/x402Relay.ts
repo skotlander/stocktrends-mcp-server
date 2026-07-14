@@ -67,12 +67,18 @@ export const X402_LIVE_CHALLENGE_FIELD_CATEGORIES: readonly string[] = Object.fr
 ]);
 
 export const MAX_X402_PAYMENT_REQUIRED_DECODED_BYTES = 32 * 1024;
-export const X402_EXTENSION_MAX_DEPTH = 6;
-export const X402_EXTENSION_MAX_OBJECT_MEMBERS = 32;
-export const X402_EXTENSION_MAX_TOTAL_MEMBERS = 128;
-export const X402_EXTENSION_MAX_ARRAY_LENGTH = 32;
+export const X402_EXTENSION_MAX_DEPTH = 12;
+export const X402_EXTENSION_MAX_OBJECT_MEMBERS = 64;
+export const X402_EXTENSION_MAX_TOTAL_MEMBERS = 512;
+export const X402_EXTENSION_MAX_ARRAY_LENGTH = 64;
 export const X402_EXTENSION_MAX_STRING_BYTES = 2 * 1024;
-export const X402_EXTENSION_MAX_TOTAL_BYTES = 16 * 1024;
+export const X402_EXTENSION_MAX_TOTAL_BYTES = 24 * 1024;
+
+const X402_LIVE_RESPONSE_MAX_DEPTH = 32;
+const X402_LIVE_RESPONSE_MAX_OBJECT_MEMBERS = 1_024;
+const X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS = 8_192;
+const X402_LIVE_RESPONSE_MAX_ARRAY_LENGTH = 256;
+const X402_LIVE_RESPONSE_MAX_STRING_BYTES = 64 * 1024;
 
 export type X402RelayMode =
   | "disabled"
@@ -648,10 +654,30 @@ export async function executePublicLiveX402ChallengeRelay(
     );
   }
 
-  if (
-    (response.status >= 200 && response.status < 300) ||
-    (response.body !== null && hasLivePaidOutputWithoutProof(response.body))
-  ) {
+  let responseTreeScan: JsonTreeScanResult;
+  try {
+    responseTreeScan = scanBoundedJsonTree(response.body);
+  } catch {
+    return failClosedLive(
+      normalizedRequest,
+      state,
+      "x402_live_challenge_unexpected_shape",
+      true,
+      response.status
+    );
+  }
+
+  if (!responseTreeScan.valid) {
+    return failClosedLive(
+      normalizedRequest,
+      state,
+      "x402_live_challenge_unexpected_shape",
+      true,
+      response.status
+    );
+  }
+
+  if ((response.status >= 200 && response.status < 300) || responseTreeScan.hasPaidOutput) {
     return failClosedLive(
       normalizedRequest,
       state,
@@ -671,7 +697,16 @@ export async function executePublicLiveX402ChallengeRelay(
     );
   }
 
-  const shapeError = validateLiveChallengeShape(response, normalizedRequest.endpointPath);
+  let shapeError: X402LiveShapeError | null;
+  try {
+    shapeError = validateLiveChallengeShape(
+      response,
+      normalizedRequest.endpointPath,
+      responseTreeScan
+    );
+  } catch {
+    shapeError = "x402_live_challenge_unexpected_shape";
+  }
   if (shapeError) {
     return failClosedLive(normalizedRequest, state, shapeError, true, response.status);
   }
@@ -830,6 +865,7 @@ const X402_PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "prototype", "constr
 const X402_EXTENSION_SHADOW_KEYS = new Set([
   "route",
   "path",
+  "method",
   "url",
   "resource",
   "amount",
@@ -862,8 +898,22 @@ const X402_EXTENSION_SHADOW_KEYS = new Set([
   "settlement",
   "metering",
   "transaction",
-  "transactionhash"
+  "transactionhash",
+  "apidata",
+  "data",
+  "results",
+  "rows",
+  "records"
 ]);
+
+type JsonPathSegment = string | number;
+type ExtensionSemanticContext = "generic" | "bazaar_extensions";
+
+interface JsonTreeScanResult {
+  valid: boolean;
+  hasForbiddenMaterial: boolean;
+  hasPaidOutput: boolean;
+}
 
 type HeaderDecodeResult =
   | { ok: true; value: Record<string, unknown> }
@@ -873,10 +923,15 @@ type ExtensionValidationResult = "ok" | "invalid" | "prohibited";
 
 function validateLiveChallengeShape(
   response: X402LiveChallengeResponse,
-  endpointPath: string
+  endpointPath: string,
+  responseTreeScan: JsonTreeScanResult
 ): X402LiveShapeError | null {
   if (response.body === null || !isPlainRecord(response.body)) {
     return "x402_live_challenge_unexpected_shape";
+  }
+
+  if (responseTreeScan.hasForbiddenMaterial) {
+    return "x402_live_challenge_prohibited_material";
   }
 
   if (response.paymentRequiredHeaderState === "missing") {
@@ -960,7 +1015,7 @@ function decodeStandardBase64JsonObject(value: string): HeaderDecodeResult {
     return { ok: false, error: "invalid" };
   }
 
-  if (!isPlainRecord(parsed) || !isSafeDecodedJsonTree(parsed)) {
+  if (!isPlainRecord(parsed) || !scanBoundedJsonTree(parsed).valid) {
     return { ok: false, error: "shape" };
   }
 
@@ -973,9 +1028,6 @@ function validateCanonicalLiveChallenge(
   apiBaseOrigin: string
 ): X402LiveShapeError | null {
   const bodyKeys = Object.keys(body);
-  if (hasForbiddenLiveResponseMaterial(body)) {
-    return "x402_live_challenge_prohibited_material";
-  }
 
   const allowedBodyKeys = new Set([...X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS, "stocktrends_preview"]);
   if (bodyKeys.some((key) => !allowedBodyKeys.has(key))) {
@@ -1078,7 +1130,10 @@ function validateCanonicalLiveChallenge(
     return "x402_live_challenge_value_not_approved";
   }
 
-  const extensionsValidation = validateExtensionContainer(requirements.extensions);
+  const extensionsValidation = validateExtensionContainer(
+    requirements.extensions,
+    "bazaar_extensions"
+  );
   if (extensionsValidation === "prohibited") {
     return "x402_live_challenge_prohibited_material";
   }
@@ -1120,6 +1175,9 @@ function validateAcceptedExtra(
   extra: Record<string, unknown>,
   resource: Record<string, unknown>
 ): ExtensionValidationResult {
+  if (Object.keys(extra).length > X402_EXTENSION_MAX_OBJECT_MEMBERS) {
+    return "invalid";
+  }
   if (!X402_EXTRA_REQUIRED_KEYS.every((key) => hasOwn(extra, key))) {
     return "invalid";
   }
@@ -1139,107 +1197,245 @@ function validateAcceptedExtra(
   ) {
     return "prohibited";
   }
-  if (jsonUtf8ByteLength(extra) > X402_EXTENSION_MAX_TOTAL_BYTES) {
-    return "invalid";
-  }
 
   const unknownExtra = Object.fromEntries(
     Object.entries(extra).filter(([key]) => !X402_EXTRA_KNOWN_KEYS.has(key))
   );
-  return validateExtensionContainer(unknownExtra);
+  const knownAggregateMembers =
+    Object.keys(extra).filter((key) => X402_EXTRA_KNOWN_KEYS.has(key)).length +
+    Object.keys(resource).length +
+    (Array.isArray(resource.tags) ? resource.tags.length : 0);
+  const unknownValidation = validateExtensionContainer(
+    unknownExtra,
+    "generic",
+    knownAggregateMembers
+  );
+  if (unknownValidation !== "ok") {
+    return unknownValidation;
+  }
+  return jsonUtf8ByteLength(extra) <= X402_EXTENSION_MAX_TOTAL_BYTES ? "ok" : "invalid";
 }
 
-function validateExtensionContainer(value: unknown): ExtensionValidationResult {
-  if (!isPlainRecord(value)) {
-    return "invalid";
-  }
-  if (jsonUtf8ByteLength(value) > X402_EXTENSION_MAX_TOTAL_BYTES) {
-    return "invalid";
-  }
-
-  const state = { totalMembers: 0 };
-  return validateExtensionValue(value, 0, state);
-}
-
-function validateExtensionValue(
+function validateExtensionContainer(
   value: unknown,
-  depth: number,
-  state: { totalMembers: number }
+  context: ExtensionSemanticContext = "generic",
+  initialTotalMembers = 0
 ): ExtensionValidationResult {
-  if (depth > X402_EXTENSION_MAX_DEPTH) {
-    return "invalid";
-  }
-
-  if (value === null || typeof value === "boolean") {
-    return "ok";
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? "ok" : "invalid";
-  }
-  if (typeof value === "string") {
-    if (!isBoundedUtf8String(value, 0, X402_EXTENSION_MAX_STRING_BYTES)) {
-      return "invalid";
-    }
-    return hasForbiddenLiveResponseMaterial(value) ? "prohibited" : "ok";
-  }
-  if (Array.isArray(value)) {
-    if (value.length > X402_EXTENSION_MAX_ARRAY_LENGTH) {
-      return "invalid";
-    }
-    for (const child of value) {
-      const result = validateExtensionValue(child, depth + 1, state);
-      if (result !== "ok") return result;
-    }
-    return "ok";
-  }
   if (!isPlainRecord(value)) {
     return "invalid";
   }
 
-  const entries = Object.entries(value);
-  if (entries.length > X402_EXTENSION_MAX_OBJECT_MEMBERS) {
+  let totalMembers = initialTotalMembers;
+  if (totalMembers > X402_EXTENSION_MAX_TOTAL_MEMBERS) {
     return "invalid";
   }
-  state.totalMembers += entries.length;
-  if (state.totalMembers > X402_EXTENSION_MAX_TOTAL_MEMBERS) {
-    return "invalid";
-  }
+  const stack: Array<{ value: unknown; depth: number; path: JsonPathSegment[] }> = [
+    { value, depth: 0, path: [] }
+  ];
 
-  for (const [key, child] of entries) {
-    if (!isBoundedUtf8String(key, 1, 128)) {
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.depth > X402_EXTENSION_MAX_DEPTH) {
       return "invalid";
     }
-    if (isProhibitedExtensionKey(key)) {
-      return "prohibited";
+
+    if (current.value === null || typeof current.value === "boolean") {
+      continue;
     }
-    const result = validateExtensionValue(child, depth + 1, state);
-    if (result !== "ok") return result;
+    if (typeof current.value === "number") {
+      if (!Number.isFinite(current.value)) return "invalid";
+      continue;
+    }
+    if (typeof current.value === "string") {
+      if (!isBoundedUtf8String(current.value, 0, X402_EXTENSION_MAX_STRING_BYTES)) {
+        return "invalid";
+      }
+      if (hasForbiddenLiveResponseMaterial(current.value)) {
+        return "prohibited";
+      }
+      continue;
+    }
+
+    if (Array.isArray(current.value)) {
+      if (current.value.length > X402_EXTENSION_MAX_ARRAY_LENGTH) {
+        return "invalid";
+      }
+      totalMembers += current.value.length;
+      if (totalMembers > X402_EXTENSION_MAX_TOTAL_MEMBERS) {
+        return "invalid";
+      }
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({
+          value: current.value[index],
+          depth: current.depth + 1,
+          path: [...current.path, index]
+        });
+      }
+      continue;
+    }
+
+    if (!isPlainRecord(current.value)) {
+      return "invalid";
+    }
+
+    const entries = Object.entries(current.value);
+    if (entries.length > X402_EXTENSION_MAX_OBJECT_MEMBERS) {
+      return "invalid";
+    }
+    totalMembers += entries.length;
+    if (totalMembers > X402_EXTENSION_MAX_TOTAL_MEMBERS) {
+      return "invalid";
+    }
+
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      if (!isBoundedUtf8String(key, 1, 128)) {
+        return "invalid";
+      }
+      const childPath = [...current.path, key];
+      if (isProhibitedExtensionKey(key, childPath, context)) {
+        return "prohibited";
+      }
+      stack.push({ value: child, depth: current.depth + 1, path: childPath });
+    }
   }
-  return "ok";
+
+  return jsonUtf8ByteLength(value) <= X402_EXTENSION_MAX_TOTAL_BYTES ? "ok" : "invalid";
 }
 
-function isProhibitedExtensionKey(key: string): boolean {
+function isProhibitedExtensionKey(
+  key: string,
+  path: readonly JsonPathSegment[],
+  context: ExtensionSemanticContext
+): boolean {
   if (X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase())) {
     return true;
   }
-  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return (
-    X402_EXTENSION_SHADOW_KEYS.has(normalized) ||
+
+  const tokens = tokenizeIdentifier(key);
+  const compact = tokens.join("");
+  const tokenSet = new Set(tokens);
+
+  if (
     [
       "proof",
       "signature",
       "authorization",
       "privatekey",
-      "seed",
+      "seedphrase",
       "mnemonic",
-      "bearer",
+      "bearertoken",
       "apikey",
       "credential",
       "walletsecret",
-      "walletseed"
-    ]
-      .some((token) => normalized.includes(token))
+      "walletseed",
+      "paymentproof",
+      "paymentsignature",
+      "paymentheader",
+      "paymentenvelope"
+    ].includes(compact) ||
+    tokenSet.has("proof") ||
+    tokenSet.has("signature") ||
+    tokenSet.has("authorization") ||
+    tokenSet.has("mnemonic") ||
+    (tokenSet.has("private") && tokenSet.has("key")) ||
+    (tokenSet.has("wallet") && (tokenSet.has("seed") || tokenSet.has("secret"))) ||
+    (tokenSet.has("seed") && tokenSet.has("phrase")) ||
+    (tokenSet.has("auth") && tokenSet.has("token")) ||
+    (tokenSet.has("bearer") && tokenSet.has("token")) ||
+    (tokenSet.has("api") && tokenSet.has("key"))
+  ) {
+    return true;
+  }
+
+  if (isPaymentSemanticOverride(compact)) {
+    return true;
+  }
+
+  const approvedBazaarDiscoveryPath =
+    context === "bazaar_extensions" && isApprovedBazaarDiscoveryPath(path);
+  if (approvedBazaarDiscoveryPath) {
+    return false;
+  }
+
+  return (
+    X402_EXTENSION_SHADOW_KEYS.has(compact) ||
+    tokenSet.has("payment") ||
+    tokenSet.has("settlement") ||
+    tokenSet.has("transaction") ||
+    tokenSet.has("facilitator")
   );
+}
+
+function tokenizeIdentifier(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function isPaymentSemanticOverride(compactKey: string): boolean {
+  if (!compactKey.endsWith("override")) {
+    return false;
+  }
+  const concept = compactKey.slice(0, -"override".length);
+  return [
+    "route",
+    "path",
+    "url",
+    "resource",
+    "amount",
+    "amountusd",
+    "price",
+    "pricing",
+    "payment",
+    "asset",
+    "token",
+    "payto",
+    "payee",
+    "recipient",
+    "address",
+    "network",
+    "chain",
+    "chainid",
+    "family",
+    "scheme",
+    "timeout",
+    "maxtimeoutseconds",
+    "expiry",
+    "expiresat"
+  ].includes(concept);
+}
+
+function isApprovedBazaarDiscoveryPath(path: readonly JsonPathSegment[]): boolean {
+  if (path[0] !== "bazaar") {
+    return false;
+  }
+  if (path[1] === "schema") {
+    return true;
+  }
+  if (path[1] !== "info") {
+    return false;
+  }
+
+  const area = path[2];
+  if ((area === "family" || area === "endpoint_family") && path.length === 3) {
+    return true;
+  }
+  return [
+    "input",
+    "output",
+    "examples",
+    "related_endpoints",
+    "next_recommended_calls",
+    "interpretation_dependencies",
+    "inference_contract",
+    "inference_provider",
+    "provider",
+    "provenance_reference"
+  ].includes(String(area));
 }
 
 function isApprovedRouteResource(value: string, endpointPath: string, apiBaseOrigin: string): boolean {
@@ -1247,6 +1443,11 @@ function isApprovedRouteResource(value: string, endpointPath: string, apiBaseOri
     return true;
   }
   if (!isBoundedUtf8String(value, 1, 2_048)) {
+    return false;
+  }
+
+  const canonicalAbsoluteResource = `${apiBaseOrigin}${endpointPath}`;
+  if (value !== canonicalAbsoluteResource) {
     return false;
   }
 
@@ -1268,10 +1469,7 @@ function isApprovedRouteResource(value: string, endpointPath: string, apiBaseOri
     return false;
   }
 
-  // Compare the raw, pre-normalization path to reject dot segments, encoded
-  // route tricks, trailing variants, and other URL-parser normalization.
-  const rawAbsolute = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]+(\/[^?#]*)?$/.exec(value);
-  return rawAbsolute !== null && (rawAbsolute[1] ?? "/") === endpointPath;
+  return parsed.href === canonicalAbsoluteResource;
 }
 
 function isCanonicalPositiveAtomicAmount(value: unknown): value is string {
@@ -1326,42 +1524,49 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Object.getPrototypeOf(value) === Object.prototype;
 }
 
-function isSafeDecodedJsonTree(value: unknown, depth = 0): boolean {
-  if (depth > 32) return false;
-  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) {
-    return value.length <= 256 && value.every((child) => isSafeDecodedJsonTree(child, depth + 1));
-  }
-  if (!isPlainRecord(value)) return false;
-  const entries = Object.entries(value);
-  return (
-    entries.length <= 1_024 &&
-    entries.every(
-      ([key, child]) =>
-        !X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase()) &&
-        isSafeDecodedJsonTree(child, depth + 1)
-    )
-  );
-}
-
 function jsonStructuralEqual(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((child, index) => jsonStructuralEqual(child, right[index]))
-    );
+  const stack: Array<[unknown, unknown]> = [[left, right]];
+  let comparedMembers = 0;
+
+  while (stack.length > 0) {
+    const [leftValue, rightValue] = stack.pop()!;
+    if (Object.is(leftValue, rightValue)) {
+      continue;
+    }
+
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      if (!Array.isArray(leftValue) || !Array.isArray(rightValue) || leftValue.length !== rightValue.length) {
+        return false;
+      }
+      comparedMembers += leftValue.length;
+      if (comparedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) {
+        return false;
+      }
+      for (let index = leftValue.length - 1; index >= 0; index -= 1) {
+        stack.push([leftValue[index], rightValue[index]]);
+      }
+      continue;
+    }
+
+    if (!isPlainRecord(leftValue) || !isPlainRecord(rightValue)) {
+      return false;
+    }
+    const leftKeys = Object.keys(leftValue);
+    const rightKeys = Object.keys(rightValue);
+    if (leftKeys.length !== rightKeys.length || leftKeys.some((key) => !hasOwn(rightValue, key))) {
+      return false;
+    }
+    comparedMembers += leftKeys.length;
+    if (comparedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) {
+      return false;
+    }
+    for (let index = leftKeys.length - 1; index >= 0; index -= 1) {
+      const key = leftKeys[index];
+      stack.push([leftValue[key], rightValue[key]]);
+    }
   }
-  if (!isPlainRecord(left) || !isPlainRecord(right)) return false;
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  return (
-    leftKeys.length === rightKeys.length &&
-    leftKeys.every((key) => hasOwn(right, key) && jsonStructuralEqual(left[key], right[key]))
-  );
+
+  return true;
 }
 
 function jsonUtf8ByteLength(value: unknown): number {
@@ -1388,38 +1593,129 @@ function approvedLiveTopLevelKeys(body: JsonObject | null): string[] {
   ];
 }
 
-function hasLivePaidOutputWithoutProof(body: JsonObject): boolean {
-  return collectKeys(body).some((key) =>
-    ["api_data", "data", "results", "rows", "records"].includes(key.toLowerCase().replace(/[-\s]/g, "_"))
-  );
+function scanBoundedJsonTree(value: unknown): JsonTreeScanResult {
+  const result: JsonTreeScanResult = {
+    valid: true,
+    hasForbiddenMaterial: false,
+    hasPaidOutput: false
+  };
+  let totalMembers = 0;
+  const stack: Array<{ value: unknown; depth: number; path: JsonPathSegment[] }> = [
+    { value, depth: 0, path: [] }
+  ];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.depth > X402_LIVE_RESPONSE_MAX_DEPTH) {
+      result.valid = false;
+      return result;
+    }
+
+    if (current.value === null || typeof current.value === "boolean") {
+      continue;
+    }
+    if (typeof current.value === "number") {
+      if (!Number.isFinite(current.value)) {
+        result.valid = false;
+        return result;
+      }
+      continue;
+    }
+    if (typeof current.value === "string") {
+      if (!isBoundedUtf8String(current.value, 0, X402_LIVE_RESPONSE_MAX_STRING_BYTES)) {
+        result.valid = false;
+        return result;
+      }
+      if (hasForbiddenLiveString(current.value)) {
+        result.hasForbiddenMaterial = true;
+      }
+      continue;
+    }
+
+    if (Array.isArray(current.value)) {
+      if (current.value.length > X402_LIVE_RESPONSE_MAX_ARRAY_LENGTH) {
+        result.valid = false;
+        return result;
+      }
+      totalMembers += current.value.length;
+      if (totalMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) {
+        result.valid = false;
+        return result;
+      }
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({
+          value: current.value[index],
+          depth: current.depth + 1,
+          path: [...current.path, index]
+        });
+      }
+      continue;
+    }
+
+    if (!isPlainRecord(current.value)) {
+      result.valid = false;
+      return result;
+    }
+    const entries = Object.entries(current.value);
+    if (entries.length > X402_LIVE_RESPONSE_MAX_OBJECT_MEMBERS) {
+      result.valid = false;
+      return result;
+    }
+    totalMembers += entries.length;
+    if (totalMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) {
+      result.valid = false;
+      return result;
+    }
+
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      if (
+        !isBoundedUtf8String(key, 1, 256) ||
+        X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase())
+      ) {
+        result.valid = false;
+        return result;
+      }
+      const childPath = [...current.path, key];
+      const compactKey = tokenizeIdentifier(key).join("");
+      if (
+        X402_EXTENSION_SHADOW_KEYS.has(compactKey) &&
+        ["apidata", "data", "results", "rows", "records"].includes(compactKey) &&
+        !isApprovedFullResponseBazaarDiscoveryPath(childPath)
+      ) {
+        result.hasPaidOutput = true;
+      }
+      stack.push({ value: child, depth: current.depth + 1, path: childPath });
+    }
+  }
+
+  return result;
+}
+
+function isApprovedFullResponseBazaarDiscoveryPath(path: readonly JsonPathSegment[]): boolean {
+  const bazaarIndex = path.findIndex((segment) => segment === "bazaar");
+  if (bazaarIndex < 1 || path[bazaarIndex - 1] !== "extensions") {
+    return false;
+  }
+  return isApprovedBazaarDiscoveryPath(path.slice(bazaarIndex));
 }
 
 function hasForbiddenLiveResponseMaterial(value: unknown): boolean {
-  if (typeof value === "string") {
-    if (isRedactedPlaceholder(value.trim())) {
-      return false;
-    }
+  return scanBoundedJsonTree(value).hasForbiddenMaterial;
+}
 
-    return [
-      /\bAuthorization\s*:\s*(Bearer|Basic)\s+[^\s,;]+/i,
-      /\b(Bearer|Basic)\s+[^\s,;]+/i,
-      /\b(X-API-Key|X_API_KEY|API_KEY|STOCKTRENDS_API_KEY)\s*[:=]\s*[^<\s,;]+/i,
-      /\b(PAYMENT-SIGNATURE|PAYMENT_SIGNATURE|PAYMENT-PROOF|PAYMENT_PROOF|PAYMENT-ENVELOPE|PAYMENT_ENVELOPE|X402-PROOF|X402_PROOF|X-PAYMENT|PAYMENT_HEADER)\s*[:=]\s*[^<\s,;]+/i,
-      /\b(WALLET_PRIVATE_KEY|WALLET-PRIVATE-KEY|PRIVATE_KEY|PRIVATE-KEY|SEED_PHRASE|SEED-PHRASE)\s*[:=]\s*[^<\s,;]+/i
-    ].some((pattern) => pattern.test(value));
+function hasForbiddenLiveString(value: string): boolean {
+  if (isRedactedPlaceholder(value.trim())) {
+    return false;
   }
 
-  if (Array.isArray(value)) {
-    return value.some((item) => hasForbiddenLiveResponseMaterial(item));
-  }
-
-  if (isRecord(value)) {
-    return Object.entries(value).some(
-      ([key, child]) => hasForbiddenProofMaterialKey(key) || hasForbiddenLiveResponseMaterial(child)
-    );
-  }
-
-  return false;
+  return [
+    /\bAuthorization\s*:\s*(Bearer|Basic)\s+[^\s,;]+/i,
+    /\b(Bearer|Basic)\s+[^\s,;]+/i,
+    /\b(X-API-Key|X_API_KEY|API_KEY|STOCKTRENDS_API_KEY)\s*[:=]\s*[^<\s,;]+/i,
+    /\b(PAYMENT-SIGNATURE|PAYMENT_SIGNATURE|PAYMENT-PROOF|PAYMENT_PROOF|PAYMENT-ENVELOPE|PAYMENT_ENVELOPE|X402-PROOF|X402_PROOF|X-PAYMENT|PAYMENT_HEADER)\s*[:=]\s*[^<\s,;]+/i,
+    /\b(WALLET_PRIVATE_KEY|WALLET-PRIVATE-KEY|PRIVATE_KEY|PRIVATE-KEY|SEED_PHRASE|SEED-PHRASE)\s*[:=]\s*[^<\s,;]+/i
+  ].some((pattern) => pattern.test(value));
 }
 
 function hasExactMembers(actual: ReadonlySet<string>, expected: readonly string[]): boolean {
@@ -1475,15 +1771,29 @@ function detectFieldCategories(value: unknown): { present: Set<string>; unexpect
 }
 
 function collectKeys(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => collectKeys(item));
+  const keys: string[] = [];
+  const stack: unknown[] = [value];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (Array.isArray(current)) {
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        stack.push(current[index]);
+      }
+      continue;
+    }
+    if (!isRecord(current)) {
+      continue;
+    }
+    const entries = Object.entries(current);
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      keys.push(key);
+      stack.push(child);
+    }
   }
 
-  if (isRecord(value)) {
-    return Object.entries(value).flatMap(([key, child]) => [key, ...collectKeys(child)]);
-  }
-
-  return [];
+  return keys;
 }
 
 function hasProofLikeInput(request: X402ChallengeRelayRequest): boolean {
@@ -1496,20 +1806,31 @@ function hasProofLikeInput(request: X402ChallengeRelayRequest): boolean {
 }
 
 function hasForbiddenProofMaterial(value: unknown): boolean {
-  if (typeof value === "string") {
-    return hasForbiddenProofMaterialValue(value);
+  const stack: unknown[] = [value];
+  let visitedMembers = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === "string" && hasForbiddenProofMaterialValue(current)) {
+      return true;
+    }
+    if (Array.isArray(current)) {
+      visitedMembers += current.length;
+      if (visitedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) return true;
+      stack.push(...current);
+      continue;
+    }
+    if (isRecord(current)) {
+      const entries = Object.entries(current);
+      visitedMembers += entries.length;
+      if (visitedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) return true;
+      for (const [key, child] of entries) {
+        if (hasForbiddenProofMaterialKey(key)) {
+          return true;
+        }
+        stack.push(child);
+      }
+    }
   }
-
-  if (Array.isArray(value)) {
-    return value.some((item) => hasForbiddenProofMaterial(item));
-  }
-
-  if (isRecord(value)) {
-    return Object.entries(value).some(
-      ([key, child]) => hasForbiddenProofMaterialKey(key) || hasForbiddenProofMaterial(child)
-    );
-  }
-
   return false;
 }
 
@@ -1562,17 +1883,30 @@ function hasPaidOutputWithoutProof(body: JsonObject): boolean {
 }
 
 function containsProofLikeToolInput(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some((item) => containsProofLikeToolInput(item));
+  const stack: unknown[] = [value];
+  let visitedMembers = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (Array.isArray(current)) {
+      visitedMembers += current.length;
+      if (visitedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) return true;
+      stack.push(...current);
+      continue;
+    }
+    if (!isRecord(current)) {
+      continue;
+    }
+    const entries = Object.entries(current);
+    visitedMembers += entries.length;
+    if (visitedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) return true;
+    for (const [key, child] of entries) {
+      if (hasForbiddenProofMaterialKey(key)) {
+        return true;
+      }
+      stack.push(child);
+    }
   }
-
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return Object.entries(value).some(
-    ([key, child]) => hasForbiddenProofMaterialKey(key) || containsProofLikeToolInput(child)
-  );
+  return false;
 }
 
 function requiresCanonicalSymbolExchange(endpointPath: string): boolean {

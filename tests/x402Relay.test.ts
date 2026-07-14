@@ -25,6 +25,7 @@ import {
   X402_EXTENSION_MAX_OBJECT_MEMBERS,
   X402_EXTENSION_MAX_STRING_BYTES,
   X402_EXTENSION_MAX_TOTAL_BYTES,
+  X402_EXTENSION_MAX_TOTAL_MEMBERS,
   X402_LIVE_CHALLENGE_FIELD_CATEGORIES,
   X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS,
   MAX_X402_PAYMENT_REQUIRED_DECODED_BYTES,
@@ -387,7 +388,7 @@ describe("Phase 5F x402 public mock tool invocation", () => {
 });
 
 describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
-  it("accepts one canonical compact challenge and returns only safe shape metadata", async () => {
+  it("accepts the source-shaped compact Bazaar challenge and returns only safe shape metadata", async () => {
     const fetchFn = vi.fn<FetchLike>(async (input, init) => {
       expect((input as URL).origin).toBe("https://api.stocktrends.com");
       expect((input as URL).pathname).toBe("/v1/stim/latest");
@@ -400,7 +401,7 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
         expect(headers.has(forbidden)).toBe(false);
       }
       return canonicalLiveHttpResponse("/v1/stim/latest", (body) => {
-        paymentRequirements(body).extensions = { vendor: { note: LIVE_VALUE_SENTINEL } };
+        compactBazaarInfo(body).description = LIVE_VALUE_SENTINEL;
       });
     });
     const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
@@ -420,7 +421,11 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       api_status: 402,
       tool_name: "stocktrends_get_stim_latest",
       endpoint_path: "/v1/stim/latest",
+      method: "GET",
+      http_method: "GET",
       challenge_source: "api_no_key_live",
+      paid_execution_authorized: false,
+      paid_execution_occurred: false,
       api_request_sent: true,
       auth_header_sent: false,
       payment_header_sent: false,
@@ -444,25 +449,28 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     await server.close();
   });
 
-  it.each([true, false])("accepts a bounded rich extension with assetTransferMethod present=%s", async (present) => {
+  it.each([true, false])("accepts a representative source-shaped rich Bazaar extension with assetTransferMethod present=%s", async (present) => {
     const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
     const extra = acceptedExtra(body);
     if (!present) delete extra.assetTransferMethod;
     extra.vendor_metadata = { mode: "rich", flags: [true, false], optional: null };
-    paymentRequirements(body).extensions = {
-      bazaar: { mode: "rich", schema: { fields: ["synthetic-a", "synthetic-b"] } }
-    };
+    paymentRequirements(body).extensions = createRepresentativeRichBazaarExtension();
     body.stocktrends_preview = { envelope_note: "synthetic-known-preview" };
 
     const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
     expect(result.status).toBe("payment_required");
     if (result.status === "payment_required") {
       expect(result.challenge.top_level_body_keys_present).toContain("stocktrends_preview");
+      expect(result.method).toBe("GET");
+      expect(result.http_method).toBe("GET");
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain("synthetic-discovery-family");
+      expect(serialized).not.toContain("/v1/synthetic/discovery/example");
     }
   });
 
   it.each(PUBLIC_MOCK_INVOCATIONS)(
-    "accepts the canonical challenge for exact tool/route mapping $name",
+    "accepts the default compact source-shaped challenge for exact tool/route mapping $name",
     async (invocation) => {
       const fetchFn = vi.fn<FetchLike>(async (input, init) => {
         expect(init.method).toBe("GET");
@@ -500,6 +508,30 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     if (noStandard.status === "error") {
       expect(noStandard.error.error_code).toBe("x402_live_challenge_header_missing");
     }
+  });
+
+  it("rejects duplicated Payment-Required values when Node combines them deterministically", async () => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    const encoded = encodeJson(paymentRequirements(body));
+    const headers = new Headers([
+      ["content-type", "application/json"],
+      ["payment-required", encoded],
+      ["payment-required", encoded]
+    ]);
+    expect(headers.get("payment-required")).toBe(`${encoded}, ${encoded}`);
+
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      new Response(JSON.stringify(body), { status: 402, headers })
+    );
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const output = structured<X402LiveRelayErrorResult>(result);
+
+    expect(output.error.error_code).toBe("x402_live_challenge_header_invalid");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
   });
 
   it.each([
@@ -679,20 +711,50 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
 
   it.each([
     ["relative", REQUEST.endpointPath, true],
-    ["same-origin absolute", `https://api.stocktrends.com${REQUEST.endpointPath}`, true],
+    ["lowercase canonical configured origin", `https://api.stocktrends.com${REQUEST.endpointPath}`, true],
+    ["mixed-case scheme", `HTTPS://api.stocktrends.com${REQUEST.endpointPath}`, false],
+    ["mixed-case hostname", `https://API.StockTrends.com${REQUEST.endpointPath}`, false],
+    ["explicit default port", `https://api.stocktrends.com:443${REQUEST.endpointPath}`, false],
+    ["zero-padded default port", `https://api.stocktrends.com:0443${REQUEST.endpointPath}`, false],
+    ["wrong non-default port", `https://api.stocktrends.com:8443${REQUEST.endpointPath}`, false],
     ["wrong origin", `https://example.com${REQUEST.endpointPath}`, false],
-    ["wrong path", "https://api.stocktrends.com/v1/market/regime/history", false],
+    ["wrong endpoint on same origin", "https://api.stocktrends.com/v1/market/regime/history", false],
+    ["another allowlisted endpoint for a different tool", "https://api.stocktrends.com/v1/selections/latest", false],
     ["credentials", `https://user:pass@api.stocktrends.com${REQUEST.endpointPath}`, false],
     ["fragment", `https://api.stocktrends.com${REQUEST.endpointPath}#fragment`, false],
     ["query", `https://api.stocktrends.com${REQUEST.endpointPath}?limit=1`, false],
-    ["dot normalization", "https://api.stocktrends.com/v1/market/other/../regime/latest", false],
-    ["encoded path", "https://api.stocktrends.com/v1/market/regime/%6catest", false],
-    ["trailing route", `https://api.stocktrends.com${REQUEST.endpointPath}/`, false]
+    ["backslash", `https://api.stocktrends.com\\v1/market/regime/latest`, false],
+    ["duplicate slash", "https://api.stocktrends.com/v1/market//regime/latest", false],
+    ["encoded slash", "https://api.stocktrends.com/v1/market%2fregime/latest", false],
+    ["encoded backslash", "https://api.stocktrends.com/v1/market%5cregime/latest", false],
+    ["double encoding", "https://api.stocktrends.com/v1/market%252fregime/latest", false],
+    ["dot segment", "https://api.stocktrends.com/v1/market/other/../regime/latest", false],
+    ["parser-normalized encoded path", "https://api.stocktrends.com/v1/market/regime/%6catest", false],
+    ["trailing slash", `https://api.stocktrends.com${REQUEST.endpointPath}/`, false]
   ])("validates route-bound resource URL: %s", async (_name, resourceUrl, valid) => {
     const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
     setAllResourceUrls(body, resourceUrl);
     const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
     expect(result.status).toBe(valid ? "payment_required" : "error");
+  });
+
+  it("accepts only an exactly configured canonical non-default origin and port", async () => {
+    const canonical = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    setAllResourceUrls(canonical, `https://api.synthetic.test:8443${REQUEST.endpointPath}`);
+    const accepted = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, {
+      body: canonical,
+      apiBaseOrigin: "https://api.synthetic.test:8443"
+    }));
+
+    const wrongPort = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    setAllResourceUrls(wrongPort, `https://api.synthetic.test:9443${REQUEST.endpointPath}`);
+    const rejected = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, {
+      body: wrongPort,
+      apiBaseOrigin: "https://api.synthetic.test:8443"
+    }));
+
+    expect(accepted.status).toBe("payment_required");
+    expect(rejected.status).toBe("error");
   });
 
   it.each(["top-level", "extra copy"])("rejects disagreement among resource copies: %s", async (where) => {
@@ -754,8 +816,34 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
   it("accepts bounded unknown members only in extra and extensions", async () => {
     const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
     acceptedExtra(body).vendor_metadata = { mode: "synthetic", flags: [1, true, null] };
-    paymentRequirements(body).extensions = { bazaar: { mode: "compact", fields: ["a", "b"] } };
+    paymentRequirements(body).extensions = { synthetic_vendor: { note: "bounded metadata", fields: ["a", "b"] } };
     expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }))).status).toBe("payment_required");
+  });
+
+  it("accepts family, method, path, schemas, and examples only at source-authored Bazaar discovery paths", async () => {
+    const compact = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(compact).extensions = createCompactBazaarExtension();
+    const rich = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(rich).extensions = createRepresentativeRichBazaarExtension();
+
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: compact }))).status)
+      .toBe("payment_required");
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: rich }))).status)
+      .toBe("payment_required");
+
+    for (const [key, value] of [
+      ["family", "synthetic-family"],
+      ["method", "GET"],
+      ["path", "/v1/synthetic/unapproved"]
+    ] as const) {
+      const unapproved = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+      paymentRequirements(unapproved).extensions = { synthetic_vendor: { [key]: value } };
+      const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: unapproved }));
+      expect(result.status).toBe("error");
+      if (result.status === "error") {
+        expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+      }
+    }
   });
 
   it.each([
@@ -775,7 +863,7 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     ["members", () => Object.fromEntries(Array.from({ length: X402_EXTENSION_MAX_OBJECT_MEMBERS + 1 }, (_, i) => [`k${i}`, i]))],
     ["array", () => ({ items: Array.from({ length: X402_EXTENSION_MAX_ARRAY_LENGTH + 1 }, () => 1) })],
     ["string", () => ({ note: "x".repeat(X402_EXTENSION_MAX_STRING_BYTES + 1) })],
-    ["total", () => ({ items: Array.from({ length: 20 }, () => "x".repeat(1_000)) })]
+    ["total", () => ({ items: Array.from({ length: 30 }, () => "x".repeat(1_000)) })]
   ])("rejects extension %s overflow", async (_name, buildExtension) => {
     const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
     const extension = buildExtension();
@@ -786,17 +874,55 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }))).status).toBe("error");
   });
 
+  it("counts array elements and object entries against one shared aggregate extension budget", async () => {
+    const exactlyAtLimit = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(exactlyAtLimit).extensions = aggregateSiblingArrays(8, 63);
+    expect(countAggregateMembers(paymentRequirements(exactlyAtLimit).extensions)).toBe(
+      X402_EXTENSION_MAX_TOTAL_MEMBERS
+    );
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: exactlyAtLimit }))).status)
+      .toBe("payment_required");
+
+    const arrayOverflow = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(arrayOverflow).extensions = aggregateSiblingArrays(9, 56);
+    expect(countAggregateMembers(paymentRequirements(arrayOverflow).extensions)).toBe(
+      X402_EXTENSION_MAX_TOTAL_MEMBERS + 1
+    );
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: arrayOverflow }))).status)
+      .toBe("error");
+
+    const objectOverflow = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(objectOverflow).extensions = aggregateSiblingObjects(9, 56);
+    expect(countAggregateMembers(paymentRequirements(objectOverflow).extensions)).toBe(
+      X402_EXTENSION_MAX_TOTAL_MEMBERS + 1
+    );
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: objectOverflow }))).status)
+      .toBe("error");
+  });
+
   it("rejects prototype-pollution keys in decoded extension objects", async () => {
     const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
     paymentRequirements(body).extensions = JSON.parse('{"__proto__":{"polluted":true}}');
     const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
     expect(result.status).toBe("error");
     if (result.status === "error") {
-      expect(result.error.error_code).toBe("x402_live_challenge_header_shape_not_approved");
+      expect(result.error.error_code).toBe("x402_live_challenge_unexpected_shape");
     }
   });
 
-  it.each(["payment_signature", "authorization", "private_key", "seed_phrase", "amount", "payTo", "settlement"])(
+  it.each([
+    "proof",
+    "payment_signature",
+    "authorization",
+    "authToken",
+    "privateKey",
+    "wallet_seed",
+    "payment",
+    "amount",
+    "payTo",
+    "settlement",
+    "transaction_hash"
+  ])(
     "rejects prohibited or core-shadow extension key %s",
     async (key) => {
       const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
@@ -809,6 +935,42 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       expect(JSON.stringify(result)).not.toContain("synthetic-prohibited-marker");
     }
   );
+
+  it.each([
+    "routeOverride",
+    "route_override",
+    "ROUTE-OVERRIDE",
+    "amountOverride",
+    "amount_override",
+    "assetOverride",
+    "payee_override",
+    "network.override",
+    "schemeOverride",
+    "payToOverride",
+    "timeout_override",
+    "maxTimeoutSecondsOverride"
+  ])("rejects tokenized payment-semantic override key %s", async (key) => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(body).extensions = { synthetic_vendor: { [key]: "synthetic-override-marker" } };
+    const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+    }
+    expect(JSON.stringify(result)).not.toContain("synthetic-override-marker");
+  });
+
+  it("accepts benign longer words instead of substring-matching proof or seed", async () => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(body).extensions = {
+      synthetic_vendor: {
+        proofreading_note: "synthetic editorial metadata",
+        seedling_metadata: "synthetic taxonomy metadata"
+      }
+    };
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }))).status)
+      .toBe("payment_required");
+  });
 
   it.each(["extra", "stocktrends_preview"])("applies prohibited-material rules to %s", async (container) => {
     const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
@@ -842,7 +1004,7 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       vi.spyOn(console, method).mockImplementation((...args: unknown[]) => capturedLogs.push(args.join(" ")))
     );
     const fetchFn = vi.fn<FetchLike>(async () => canonicalLiveHttpResponse(REQUEST.endpointPath, (body) => {
-      paymentRequirements(body).extensions = { vendor: { note: LIVE_VALUE_SENTINEL } };
+      compactBazaarInfo(body).description = LIVE_VALUE_SENTINEL;
     }, { "x-unrelated-response-header": LIVE_VALUE_SENTINEL }));
     const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
 
@@ -911,6 +1073,31 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     await server.close();
   });
 
+  it("fails direct live-helper use while the live flag is absent or disabled without reserving or fetching", async () => {
+    for (const env of [
+      X402_ENV,
+      { ...X402_ENV, STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: "off" }
+    ]) {
+      const config = parseConfig(env).x402Relay;
+      const state = createX402LiveChallengeSessionState();
+      const fetchChallenge = vi.fn(async () => canonicalInjectedResponse(REQUEST.endpointPath));
+      const result = await executePublicLiveX402ChallengeRelay(
+        config,
+        REQUEST,
+        {},
+        state,
+        fetchChallenge
+      );
+
+      expect(result.status).toBe("error");
+      if (result.status === "error") {
+        expect(result.error.error_code).toBe("x402_live_challenge_disabled");
+      }
+      expect(state.totalReserved).toBe(0);
+      expect(fetchChallenge).not.toHaveBeenCalled();
+    }
+  });
+
   it.each([{ symbol: "IBM" }, { symbol_exchange: "IBM_N", symbol: "IBM", exchange: "N" }])(
     "fails non-canonical symbol input before resolver or network",
     async (arguments_) => {
@@ -944,6 +1131,29 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     expect(fetchChallenge).not.toHaveBeenCalled();
     expect(proofState.totalReserved).toBe(0);
     expect(routeState.totalReserved).toBe(0);
+  });
+
+  it("rejects a mismatched paid tool and route even when both are independently allowlisted", async () => {
+    const config = parseConfig(X402_LIVE_ENV).x402Relay;
+    const state = createX402LiveChallengeSessionState();
+    const fetchChallenge = vi.fn(async () => canonicalInjectedResponse("/v1/market/regime/history"));
+    const result = await executePublicLiveX402ChallengeRelay(
+      config,
+      {
+        toolName: "stocktrends_get_market_regime_latest",
+        endpointPath: "/v1/market/regime/history"
+      },
+      {},
+      state,
+      fetchChallenge
+    );
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_route_not_allowlisted");
+    }
+    expect(state.totalReserved).toBe(0);
+    expect(fetchChallenge).not.toHaveBeenCalled();
   });
 
   it("keeps consumed-attempt, per-tool, and per-session caps unchanged", async () => {
@@ -998,6 +1208,66 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     await server.close();
   });
 
+  it.each(["stocktrends_preview", "unknown_body_field", "extensions", "extra"] as const)(
+    "fails closed without RangeError for deeply nested %s in direct and public live paths",
+    async (target) => {
+      const sentinel = `synthetic-deep-${target}-sentinel`;
+      const directBody = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+      setDeepChallengeValue(directBody, target, nestedObject(5_000, sentinel));
+      const directResponse = canonicalInjectedResponse(REQUEST.endpointPath, {
+        body: directBody,
+        headerValue: "e30="
+      });
+      const config = parseConfig(X402_LIVE_ENV).x402Relay;
+      const state = createX402LiveChallengeSessionState();
+      const fetchChallenge = vi.fn(async () => directResponse);
+
+      const direct = await executePublicLiveX402ChallengeRelay(
+        config,
+        REQUEST,
+        {},
+        state,
+        fetchChallenge
+      );
+      expect(direct.status).toBe("error");
+      if (direct.status === "error") {
+        expect(direct.error.error_code).toBe("x402_live_challenge_unexpected_shape");
+      }
+      expect(JSON.stringify(direct)).not.toContain(sentinel);
+      expect(state.totalReserved).toBe(1);
+      expect(fetchChallenge).toHaveBeenCalledTimes(1);
+
+      const directRepeat = await executePublicLiveX402ChallengeRelay(
+        config,
+        REQUEST,
+        {},
+        state,
+        fetchChallenge
+      );
+      expect(directRepeat.status === "error" && directRepeat.error.error_code)
+        .toBe("x402_live_challenge_repeated_call");
+      expect(fetchChallenge).toHaveBeenCalledTimes(1);
+
+      const deepHttp = deepChallengeHttpResponse(target, sentinel);
+      const fetchFn = vi.fn<FetchLike>(async () => deepHttp);
+      const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+      const publicResult = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+      const publicBody = structured<X402LiveRelayErrorResult>(publicResult);
+      expect(publicBody.error.error_code).toBe("x402_live_challenge_unexpected_shape");
+      expect(`${JSON.stringify(publicResult)}\n${contentText(publicResult)}`).not.toContain(sentinel);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+
+      const publicRepeat = structured<X402LiveRelayErrorResult>(
+        await client.callTool({ name: REQUEST.toolName, arguments: {} })
+      );
+      expect(publicRepeat.error.error_code).toBe("x402_live_challenge_repeated_call");
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+
+      await client.close();
+      await server.close();
+    }
+  );
+
   it("fails closed on redirects, network failures, and paid output without proof", async () => {
     const cases: Array<[FetchLike, string]> = [
       [async () => new Response(null, { status: 302, headers: { location: "https://example.com" } }), "x402_live_challenge_unexpected_status"],
@@ -1044,6 +1314,16 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       expect(streamed.metrics.cancelled).toBe(true);
     }
   );
+
+  it("does not trust a dishonest under-limit Content-Length when the streamed body exceeds 64 KiB", async () => {
+    const marker = "synthetic-dishonest-content-length-marker";
+    const streamed = oversizedStreamingJsonResponse(marker, "1024");
+    const response = await fetchDirectNoKeyChallenge(async () => streamed.response);
+
+    expect(response.body).toBeNull();
+    expect(streamed.metrics.pulls).toBeGreaterThan(0);
+    expect(streamed.metrics.cancelled).toBe(true);
+  });
 
   it("maps an oversized streamed challenge to a safe local error", async () => {
     const marker = "synthetic-streamed-body-value-that-must-not-leak";
@@ -1467,7 +1747,7 @@ function createCanonicalLiveChallengeBody(endpointPath: string): Record<string, 
         }
       }
     ],
-    extensions: {}
+    extensions: createCompactBazaarExtension()
   };
   return {
     error: "payment_required",
@@ -1484,6 +1764,210 @@ function createCanonicalLiveChallengeBody(endpointPath: string): Record<string, 
     accepted_payment_methods: ["x402"],
     payment_required: requirements
   };
+}
+
+function createCompactBazaarExtension(): Record<string, unknown> {
+  const inputSchema = {
+    type: "object",
+    properties: {
+      synthetic_symbol: {
+        type: "string",
+        pattern: "^[A-Z]{1,8}-[A-Z]$"
+      }
+    },
+    required: ["synthetic_symbol"],
+    additionalProperties: false
+  };
+  const outputSchema = {
+    type: "object",
+    description: "Synthetic JSON market-context response.",
+    properties: {
+      type: { type: "string", const: "json" },
+      format: { type: "string" },
+      example: {}
+    },
+    required: ["type"],
+    additionalProperties: true
+  };
+
+  return {
+    bazaar: {
+      info: {
+        title: "Synthetic Market Context",
+        description: "Synthetic discovery description for a mocked challenge fixture.",
+        category: "synthetic-market",
+        family: "synthetic-discovery-family",
+        tools_manifest: "https://synthetic.invalid/tools.json",
+        metadataUrl: "https://synthetic.invalid/ai-context.json",
+        schemaUrl: "https://synthetic.invalid/tools.json",
+        pricing_catalog: "https://synthetic.invalid/pricing.json",
+        input: {
+          type: "http",
+          method: "GET",
+          queryParams: { synthetic_symbol: "SYNTH-N" }
+        },
+        output: {
+          type: "json",
+          format: "application/json",
+          example: { request_id: "req_synthetic_compact" }
+        },
+        role: "synthetic-context-reader"
+      },
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {
+          input: {
+            type: "object",
+            properties: {
+              type: { type: "string", const: "http" },
+              method: { type: "string", enum: ["GET"] },
+              queryParams: inputSchema
+            },
+            required: ["type", "method"],
+            additionalProperties: false
+          },
+          output: outputSchema,
+          title: { type: "string" },
+          description: { type: "string" },
+          category: { type: "string" },
+          family: { type: "string" },
+          tools_manifest: { type: "string" },
+          metadataUrl: { type: "string" },
+          schemaUrl: { type: "string" },
+          pricing_catalog: { type: "string" }
+        },
+        required: ["input"],
+        additionalProperties: true
+      }
+    }
+  };
+}
+
+function createRepresentativeRichBazaarExtension(): Record<string, unknown> {
+  const safeExample = {
+    method: "GET",
+    path: "/v1/synthetic/discovery/example",
+    query: { synthetic_limit: 3 }
+  };
+  const inputSchema = {
+    type: "object",
+    properties: {
+      synthetic_limit: {
+        type: "integer",
+        minimum: 1,
+        maximum: 10,
+        default: 3,
+        example: 3,
+        description: "Synthetic bounded discovery input."
+      },
+      payment_context: {
+        type: "string",
+        enum: ["synthetic-descriptive-only"],
+        description: "Describes a payment-related API concept without authorizing payment."
+      }
+    },
+    required: [],
+    description: "Synthetic query parameters for discovery metadata.",
+    additionalProperties: false,
+    "x-stocktrends-input-location": "query",
+    "x-stocktrends-parameter-source": "query"
+  };
+  const outputSchema = {
+    type: "object",
+    description: "Synthetic rich market-context response schema.",
+    properties: {
+      type: { type: "string", const: "json" },
+      description: { type: "string" },
+      example: {},
+      response_shape: { type: "array", items: { type: "string" } }
+    },
+    required: ["type", "description", "example"],
+    additionalProperties: true
+  };
+
+  return {
+    bazaar: {
+      info: {
+        service_name: "Synthetic Discovery Service",
+        service_category: "synthetic-market-research",
+        title: "Synthetic Rich Market Context",
+        description: "Synthetic representative rich Bazaar discovery metadata.",
+        analytical_role: "synthetic-context-reader",
+        research_goal: "Exercise source-authored rich discovery structure.",
+        endpoint_family: "synthetic-discovery-family",
+        workflow_context: "Synthetic workflow context.",
+        interpretation_dependencies: {
+          dependency: "synthetic-prior-context",
+          guidance: "Use only as fixture metadata.",
+          required_steps: ["inspect synthetic context", "return no extension values"]
+        },
+        inference_contract: null,
+        inference_provider: null,
+        cognition_architecture: "synthetic-none",
+        provenance_reference: { source: "synthetic-source-builder-mirror" },
+        related_endpoints: ["/v1/synthetic/discovery/related"],
+        next_recommended_calls: ["/v1/synthetic/discovery/next"],
+        safe_for_autonomous_execution_with_budget_controls: true,
+        state_mutation: false,
+        market_research_context: true,
+        decision_support_context: true,
+        not_investment_advice: true,
+        not_investment_adviser: true,
+        developer_portal: "https://synthetic.invalid/developers",
+        ai_context: "https://synthetic.invalid/ai-context.json",
+        tools_manifest: "https://synthetic.invalid/tools.json",
+        workflows: "https://synthetic.invalid/workflows.json",
+        pricing_catalog: "https://synthetic.invalid/pricing.json",
+        input: {
+          type: "http",
+          method: "GET",
+          schema: inputSchema,
+          parameters: [
+            {
+              name: "synthetic_limit",
+              in: "query",
+              input_location: "query",
+              parameter_source: "query",
+              required: false,
+              schema: inputSchema.properties.synthetic_limit,
+              description: "Synthetic bounded discovery input.",
+              example: 3,
+              style: "form",
+              explode: true
+            }
+          ],
+          example: safeExample,
+          query: inputSchema
+        },
+        output: {
+          type: "json",
+          description: "Synthetic rich JSON output metadata.",
+          example: { request_id: "req_synthetic_rich", data: { status: "synthetic" } },
+          response_shape: ["request_id", "data.status"],
+          schema: outputSchema
+        },
+        examples: [safeExample]
+      },
+      schema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        title: "Synthetic Rich Market Context",
+        description: "Synthetic representative direct callable-parameter schema.",
+        properties: {
+          input: inputSchema,
+          output: outputSchema
+        },
+        required: ["input", "output"]
+      }
+    }
+  };
+}
+
+function compactBazaarInfo(body: Record<string, unknown>): Record<string, unknown> {
+  const extensions = paymentRequirements(body).extensions as Record<string, unknown>;
+  const bazaar = extensions.bazaar as Record<string, unknown>;
+  return bazaar.info as Record<string, unknown>;
 }
 
 function paymentRequirements(body: Record<string, unknown>): Record<string, unknown> {
@@ -1526,6 +2010,88 @@ function extensionNesting(depth: number): Record<string, unknown> {
     value = { nested: value };
   }
   return value;
+}
+
+function aggregateSiblingArrays(siblingCount: number, arrayLength: number): Record<string, unknown> {
+  return Object.fromEntries(
+    Array.from({ length: siblingCount }, (_, sibling) => [
+      `synthetic_array_${sibling}`,
+      Array.from({ length: arrayLength }, (_, index) => index)
+    ])
+  );
+}
+
+function aggregateSiblingObjects(siblingCount: number, memberCount: number): Record<string, unknown> {
+  return Object.fromEntries(
+    Array.from({ length: siblingCount }, (_, sibling) => [
+      `synthetic_object_${sibling}`,
+      Object.fromEntries(
+        Array.from({ length: memberCount }, (_, index) => [`synthetic_member_${index}`, index])
+      )
+    ])
+  );
+}
+
+function countAggregateMembers(value: unknown): number {
+  let total = 0;
+  const stack = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (Array.isArray(current)) {
+      total += current.length;
+      for (const child of current) stack.push(child);
+    } else if (current && typeof current === "object") {
+      const entries = Object.entries(current);
+      total += entries.length;
+      for (const [, child] of entries) stack.push(child);
+    }
+  }
+  return total;
+}
+
+type DeepChallengeTarget = "stocktrends_preview" | "unknown_body_field" | "extensions" | "extra";
+
+function nestedObject(depth: number, sentinel: string): Record<string, unknown> {
+  let value: unknown = sentinel;
+  for (let index = 0; index < depth; index += 1) {
+    value = { n: value };
+  }
+  return value as Record<string, unknown>;
+}
+
+function setDeepChallengeValue(
+  body: Record<string, unknown>,
+  target: DeepChallengeTarget,
+  value: unknown
+): void {
+  if (target === "stocktrends_preview") {
+    body.stocktrends_preview = { synthetic_nested: value };
+  } else if (target === "unknown_body_field") {
+    body.synthetic_unknown = { synthetic_nested: value };
+  } else if (target === "extensions") {
+    paymentRequirements(body).extensions = { synthetic_nested: value };
+  } else {
+    acceptedExtra(body).synthetic_nested = value;
+  }
+}
+
+function deepChallengeHttpResponse(target: DeepChallengeTarget, sentinel: string): Response {
+  const placeholder = "synthetic-deep-placeholder";
+  const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+  setDeepChallengeValue(body, target, placeholder);
+  const paymentRequiredHeader = encodeJson(paymentRequirements(body));
+  const deepJson = `${'{"n":'.repeat(5_000)}${JSON.stringify(sentinel)}${"}".repeat(5_000)}`;
+  const rawBody = JSON.stringify(body).replace(JSON.stringify(placeholder), deepJson);
+  if (Buffer.byteLength(rawBody) > MAX_X402_CHALLENGE_RESPONSE_BYTES) {
+    throw new Error("synthetic deep challenge must remain under the transport body cap");
+  }
+  return new Response(rawBody, {
+    status: 402,
+    headers: {
+      "content-type": "application/json",
+      "payment-required": paymentRequiredHeader
+    }
+  });
 }
 
 async function fetchDirectNoKeyChallenge(fetchFn: FetchLike) {

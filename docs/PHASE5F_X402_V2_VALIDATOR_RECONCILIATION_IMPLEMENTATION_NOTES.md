@@ -10,13 +10,14 @@ It remains a validation-and-safe-omission change. It does not construct or
 forward proof, make a payment, retry a paid call, relay raw challenge values, or
 return paid output.
 
-The five supplied Stock Trends API payment files remained external source
-evidence and were not copied into this repository. `payments/x402.py` and
-`payments/enforcement.py` were the primary authority for the challenge body,
-requirements object, standard `Payment-Required` value, and no-signature
-enforcement flow. `mpp.py`, `mpp_client.py`, and `policy_provider.py` confirmed
-that MPP and payment-policy behavior are separate and do not redefine the x402
-challenge fields.
+The Stock Trends API files remained external source evidence and were not
+copied into this repository. `payments/x402.py` and `payments/enforcement.py`
+were the primary authority for the challenge body, requirements object,
+standard `Payment-Required` value, and no-signature enforcement flow.
+`discovery/endpoint_metadata.py`, including the implementations and directly
+called shape helpers for `build_compact_bazaar_extension()` and
+`build_bazaar_extension()`, was the authority for compact and rich Bazaar
+discovery structure.
 
 ## Files changed
 
@@ -63,14 +64,18 @@ a bounded plain object with safe JSON structures. It uses the platform
 
 JavaScript's standard JSON parser does not expose duplicate-key detection. The
 implementation does not add a custom JSON parser for that one limitation. All
-post-parse key, type, length, value, recursive-bound, and structural-identity
+post-parse key, type, length, value, iterative-bound, and structural-identity
 checks remain strict.
 
-Before semantic validation or extension filtering, a deterministic structural
-comparison requires the decoded header object and `body.payment_required` to
-have identical JSON types, keys, array lengths/order, and values. Object key
-order is ignored. Divergence returns a stable coarse error without a path or
-value.
+Before paid-output scanning, semantic validation, extension filtering, or
+structural comparison, the full parsed response tree is traversed iteratively
+with an explicit stack and maximum depth, per-object members, aggregate
+members, array length, key length, and string length. The decoded header tree
+passes the same bounded validation. Structural comparison is also iterative
+and requires the decoded header object and `body.payment_required` to have
+identical JSON types, keys, array lengths/order, and values. Object key order is
+ignored. Excessive structure and divergence return stable coarse errors
+without a path, key, or value.
 
 ## Resource, value, and network binding
 
@@ -80,10 +85,15 @@ The top-level resource string, the requirements resource URL, and
 `accepts[0].extra.resource.url` must agree, and the two resource objects must be
 structurally equal.
 
-A resource may be the exact allowlisted route or an absolute URL with the exact
-configured API origin and exact route pathname. Credentials, fragments,
-queries, alternate/trailing paths, encoded tricks, and parser-normalized route
-changes fail closed. The existing nine-route allowlist is unchanged.
+A resource may be the exact invoked route or an absolute URL whose raw string
+is exactly `<canonical configured origin><exact invoked endpoint path>`. That
+raw equality check occurs before URL parsing; parsing remains defense-in-depth.
+Mixed-case scheme or host, an unconfigured explicit default port, zero-padded
+ports, wrong ports, credentials, fragments, queries, backslashes, duplicate
+slashes, alternate/trailing paths, encoded separators, double encoding, dot
+segments, and other parser-normalized route changes fail closed. A configured
+canonical non-default port is accepted only in that exact raw serialization.
+The existing nine-route allowlist and exact tool-to-route binding are unchanged.
 
 Atomic amounts are bounded positive canonical digit strings and are never
 converted to USD. `pricing.amount_usd` is a bounded positive fixed-six decimal
@@ -102,12 +112,32 @@ Unknown members are allowed only inside `accepts[0].extra`,
 `version`, and the exact resource copy; `assetTransferMethod` remains optional.
 `extensions` and the optional preview must be plain objects.
 
-Every extension container has explicit depth, per-object member, total-member,
-array, string, and total UTF-8 size bounds. Only JSON-safe scalars, arrays, and
-plain objects are accepted. Prototype-pollution keys, proof/signature/auth or
-private-key/seed material, and keys that shadow route, pricing, amount, asset,
-payee, network, scheme, timeout, settlement, or authorization meaning are
-rejected. Extension data is ignored for payment semantics.
+Every extension container is traversed iteratively with explicit depth,
+per-object member, aggregate member, array, string, and total UTF-8 size bounds.
+Object entries and array elements count against the same 512-member aggregate
+budget, so sibling arrays and sibling objects cannot bypass it. The focused
+tests prove acceptance exactly at the aggregate limit and rejection at the
+first member beyond it. Only JSON-safe scalars, arrays, and plain objects are
+accepted.
+
+The prohibited-key policy tokenizes camelCase and separator/case variants
+rather than matching arbitrary substrings. Proof, signature, authorization,
+auth-token, private-key, wallet-seed, payment, settlement, transaction, and
+payment-semantic override concepts remain prohibited at unapproved paths.
+Consequently `routeOverride`, `amount_override`, `network.override`,
+`payToOverride`, and `maxTimeoutSecondsOverride` fail closed, while benign
+`proofreading_note` and `seedling_metadata` do not fail solely because they
+contain shorter character sequences.
+
+The policy is also path- and semantic-role-aware for the source-authored
+`extensions.bazaar` discovery hierarchy. Compact `bazaar.info.family`,
+discovery `info.input.method`, rich safe-example `method` and `path`, input and
+output schemas, parameters, and examples are treated as descriptive metadata,
+not as invoked-route, HTTP-execution, payment amount, payee, asset, network,
+timeout, proof, settlement, or authorization authority. The same shadow or
+override concepts remain rejected outside approved Bazaar discovery paths.
+All extension data continues to be ignored for payment semantics and omitted
+from MCP output and errors.
 
 ## Safe output and failure behavior
 
@@ -125,16 +155,33 @@ No structured challenge-value relay was added.
 
 ## Mocked tests
 
-`tests/x402Relay.test.ts` now builds synthetic canonical compact and rich
-challenges and matching standard-base64 headers. Coverage includes all nine
-tool/route bindings; header presence, decoding, UTF-8/JSON/object and size
-failures; exact header/body identity; canonical body, pricing, requirements,
-resource, accepted-entry, amount, address, network, and timeout rules;
-cross-field mismatches; optional `assetTransferMethod` and preview behavior;
-extension bounds and prohibited material; sentinel omission; and the existing
-manual-redirect, one-request, body-stream cap, paid-output-without-proof,
-reservation/cap, symbol-policy, surface-count, mock-mode, and API-key-mode
-regressions. All HTTP behavior is injected or mocked.
+`tests/x402Relay.test.ts` now builds hand-reviewed synthetic fixtures that
+mirror the current compact Bazaar builder hierarchy and a representative rich
+builder hierarchy, including compact `bazaar.info.family`, rich
+`info.input.method`, safe-example `path`, schemas, parameters, output metadata,
+and examples. Header and body requirements are built from the same synthetic
+object. Values are clearly synthetic; no response capture or live request was
+used.
+
+Coverage includes compact acceptance for all nine tool/route bindings;
+representative rich acceptance; extension-value omission; header presence,
+decoding, UTF-8/JSON/object and size failures; exact header/body identity;
+canonical body, pricing, requirements, raw resource serialization,
+accepted-entry, amount, address, network, and timeout rules; cross-field
+mismatches; optional `assetTransferMethod` and preview behavior; path-aware
+extension semantics; shared array/object aggregate bounds; override aliases;
+benign substring cases; and deep optional preview, unknown body, extensions,
+and extra trees through both the direct helper and public MCP handler.
+
+Security regressions restored from `origin/main` in canonical-v2 form cover
+direct helper use with the live flag absent or disabled, independently
+allowlisted tool/route mismatch, dishonest under-limit `Content-Length` with an
+over-limit stream, exact `method`/`http_method` and paid-execution safety flags,
+and duplicated `Payment-Required` values as deterministically combined by
+Node's `Headers`. Existing manual-redirect, one-request, no-retry,
+paid-output-without-proof, reservation/cap, symbol-policy, surface-count,
+mock-mode, API-key-mode, and public PR #64 mock-only regressions remain covered.
+All HTTP behavior is injected or mocked.
 
 ## Unchanged capability boundaries
 
