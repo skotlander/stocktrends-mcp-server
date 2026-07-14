@@ -40,17 +40,28 @@ v1 should support API-key first:
 - Public endpoints should remain callable without credentials.
 - Paid tools should be disabled unless credentials are configured and local policy allows paid calls.
 
-## 4. x402 and Wallet Handling Deferred
+## 4. Default-Off x402 Challenge Groundwork; Payment and Wallet Handling Deferred
 
-x402-aware behavior is not part of v1 implementation.
+The v1 implementation now contains default-off mock challenge relay groundwork
+and a separately gated, default-off live no-key challenge relay path. The live
+path is limited to one capped no-key GET for safe HTTP 402 shape inspection; it
+does not relay conditional challenge values, send payment/proof/auth headers,
+return paid data, retry, or spend. Automated coverage is mocked-network only.
+Live no-key challenge validation has not run and is not authorized by this
+document.
 
-Deferred requirements:
+Still deferred and not approved:
 
-- No private keys, seed phrases, wallet configuration, or signing clients in the initial MCP server.
-- No automatic payment retries.
-- No production x402 payment tests from the MCP adapter during architecture or initial scaffold work.
-- Future x402 mode may inspect HTTP 402 previews and present pricing/payment metadata, but payment authorization must be explicit and auditable.
-- Wallet custody, spending caps, payment challenge validation, replay protection, and failed-payment handling need a dedicated design review.
+- Proof forwarding, payment, signing, wallet custody/configuration, private keys,
+  seed phrases, settlement verification, and failed-payment handling.
+- Automatic payment retries or fallback from challenge inspection into paid
+  execution.
+- Live x402/payment validation, production payment tests, remote MCP transport,
+  package/directory publication, and marketplace claims.
+- Any final, fulfilled, settled, completed, or transaction-complete x402 claim;
+  the existing relay groundwork establishes challenge inspection only.
+- Any broader challenge-value relay, replay policy, or payment authorization
+  beyond a separately reviewed and auditable design.
 
 ## 5. Paid Call Safety
 
@@ -191,7 +202,9 @@ Before any runtime code is merged:
 - [ ] Define startup diagnostics.
 - [ ] Define OpenAPI/tools manifest compatibility checks.
 - [ ] Confirm no direct database access is introduced.
-- [ ] Confirm x402/wallet behavior remains deferred.
+- [ ] Confirm x402 proof forwarding, payment, signing, wallet custody, and
+      settlement verification remain deferred; default-off challenge inspection
+      remains within its separately reviewed no-key boundary.
 - [ ] Complete a separate review before any remote HTTP/SSE transport.
 
 ## 15. Paid ST-IM and Indicators Live Execution (Subscription/API-Key)
@@ -343,10 +356,11 @@ must agree before any call:
 
 ### 15.6 Explicitly still deferred / out of scope
 
-Unchanged from the conservative baseline and reconfirmed: **no x402, no wallet,
-no OAuth, no remote MCP transport, no `Authorization: Bearer` fallback, no
-payment header, no database access, no control-plane access, and no dynamic
-registration** from `/v1/ai/tools` or `/v1/workflows`. The MCP server remains a
+Unchanged for the subscription/API-key execution path and reconfirmed: **no
+x402 proof forwarding or payment, no wallet, no OAuth, no remote MCP transport,
+no `Authorization: Bearer` fallback, no payment header, no database access, no
+control-plane access, and no dynamic registration** from `/v1/ai/tools` or
+`/v1/workflows`. The MCP server remains a
 thin adapter over the front-facing Stock Trends API and never computes or
 reinterprets ST-IM data or produces investment advice. **Live API validation is
 performed only under separate, explicit operator authorization after merge —

@@ -15,6 +15,7 @@ export interface PublicEndpointResponse {
 
 export type JsonObject = Record<string, unknown>;
 export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
+export const MAX_X402_CHALLENGE_RESPONSE_BYTES = 64 * 1024;
 
 // Selected, non-secret ST-IM response metadata headers captured from a paid
 // response. Every field is optional (the metering middleware only emits each
@@ -60,6 +61,19 @@ export interface PublicDiscoveryRequest {
 export interface PublicDiscoveryResult {
   status: number;
   data: JsonObject | null;
+}
+
+export interface NoKeyX402ChallengeRequest {
+  endpointPath: string;
+  toolName: string;
+  searchParams: URLSearchParams;
+  approvedHeaderNames: readonly string[];
+}
+
+export interface NoKeyX402ChallengeResponse {
+  status: number;
+  approvedHeaderNamesPresent: string[];
+  body: JsonObject | null;
 }
 
 export class StockTrendsClient {
@@ -229,6 +243,72 @@ export class StockTrendsClient {
     };
   }
 
+  // Dedicated live no-key x402 challenge path. It is deliberately separate
+  // from both public-resource/discovery reads and the API-key paid path: one
+  // GET attempt, no credentials, no auth/payment/proof header, no body, no
+  // redirect following, and no retry. Only approved header NAMES are observed;
+  // header values (including x-request-id) are never read or returned.
+  async fetchNoKeyX402Challenge(request: NoKeyX402ChallengeRequest): Promise<NoKeyX402ChallengeResponse> {
+    const url = this.buildUrl(request.endpointPath);
+
+    for (const [key, value] of request.searchParams) {
+      url.searchParams.append(key, value);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+    const safeData = { endpointPath: request.endpointPath, toolName: request.toolName };
+    let response: Response;
+
+    try {
+      response = await this.fetchFn(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "stocktrends-mcp-server/1.0"
+        },
+        credentials: "omit",
+        redirect: "manual",
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) {
+        throw new StockTrendsMcpError("timeout", safeData);
+      }
+
+      throw new StockTrendsMcpError("api_unavailable", safeData);
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const approvedHeaderNamesPresent = request.approvedHeaderNames
+      .map((name) => name.toLowerCase())
+      .filter((name) => response.headers.has(name));
+    let body: JsonObject | null = null;
+    const declaredLengthApproved = hasApprovedX402ChallengeContentLength(response);
+
+    if (!declaredLengthApproved) {
+      controller.abort();
+      await cancelResponseBody(response);
+    } else if (isJsonResponse(response)) {
+      try {
+        const rawBody = await readBoundedX402ChallengeBody(response, () => controller.abort());
+        if (rawBody !== null) {
+          const parsed: unknown = JSON.parse(rawBody);
+          body = isJsonObject(parsed) ? parsed : null;
+        }
+      } catch {
+        body = null;
+      }
+    }
+
+    return {
+      status: response.status,
+      approvedHeaderNamesPresent,
+      body
+    };
+  }
+
   // Explicitly gated paid GET path. Reachable only from inside the coupled paid
   // execution boundary, AFTER every preflight gate has passed and the caller has
   // built the `X-API-Key` header. It performs exactly one attempt, never
@@ -346,6 +426,92 @@ function isJsonResponse(response: Response): boolean {
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasApprovedX402ChallengeContentLength(response: Response): boolean {
+  const rawLength = response.headers.get("content-length");
+  if (rawLength === null) {
+    return true;
+  }
+
+  if (!/^(?:0|[1-9]\d*)$/.test(rawLength)) {
+    return false;
+  }
+
+  const declaredLength = Number(rawLength);
+  return (
+    Number.isSafeInteger(declaredLength) &&
+    declaredLength >= 0 &&
+    declaredLength <= MAX_X402_CHALLENGE_RESPONSE_BYTES
+  );
+}
+
+async function readBoundedX402ChallengeBody(
+  response: Response,
+  abortRequest: () => void
+): Promise<string | null> {
+  if (!response.body) {
+    return null;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (!(value instanceof Uint8Array)) {
+        abortRequest();
+        await reader.cancel();
+        return null;
+      }
+
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_X402_CHALLENGE_RESPONSE_BYTES) {
+        abortRequest();
+        await reader.cancel();
+        return null;
+      }
+
+      chunks.push(value);
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    abortRequest();
+    try {
+      await reader.cancel();
+    } catch {
+      // The stream may already be aborted or closed. Keep failure local.
+    }
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  if (!response.body) {
+    return;
+  }
+
+  try {
+    await response.body.cancel();
+  } catch {
+    // The body may already be aborted or locked. No body data is observed.
+  }
 }
 
 function isAbortError(error: unknown): boolean {
