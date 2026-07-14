@@ -57,7 +57,13 @@ validated query parameters, and the approved challenge header-name set. It:
 - sets credentials to `omit`, redirect handling to `manual`, and sends no body;
 - performs no retry or alternate request;
 - observes approved response header names only and never reads their values;
-- parses a bounded JSON object in memory only; and
+- rejects malformed, negative, non-finite, or over-64-KiB declared
+  `Content-Length` before body reads;
+- consumes the response stream incrementally, aborting/cancelling as soon as
+  accumulated bytes exceed 64 KiB even when the declaration is absent or
+  dishonest;
+- parses a bounded JSON object in memory only after the streaming cap passes;
+  and
 - records only endpoint path, tool name, method, and status in safe errors.
 
 The live handler is the only x402 caller of this method. It performs no
@@ -83,8 +89,15 @@ PR #64 approved response shape, not conditional live value safety. PR #72
 therefore implements the plan's safest option: it relays no conditional values.
 
 An accepted HTTP 402 response must have the exact approved header-name set,
-top-level body-key set, field-category set, route binding, bounded object/array
-shape, and approved nested category paths. Missing shape fails
+top-level body-key set, field-category set, route binding, and approved nested
+field map. Amounts use bounded positive decimal/numeric representations;
+asset/network/rule/family fields use bounded identifiers; recipient/address
+fields use a strict address-shaped string; expiry fields use positive integer
+timestamps or calendar-valid UTC timestamps; challenge/correlation/nonce fields
+use bounded identifiers; and accepted-method, pricing, and preview objects have
+required fields plus exclusive recipient/address and expiry alternatives.
+Wrong types, malformed values, missing required nested fields, or unexpected
+nested material fail closed. Missing shape fails
 `x402_live_challenge_unexpected_shape`; extra/unapproved paths, categories, or
 types fail `x402_live_challenge_value_not_approved`.
 

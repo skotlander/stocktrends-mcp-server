@@ -27,7 +27,11 @@ import {
   type X402PaymentRequiredResult,
   type X402RelayErrorResult
 } from "../src/x402Relay.js";
-import type { FetchLike } from "../src/stocktrendsClient.js";
+import {
+  MAX_X402_CHALLENGE_RESPONSE_BYTES,
+  StockTrendsClient,
+  type FetchLike
+} from "../src/stocktrendsClient.js";
 import { connectMcp, jsonResponse } from "./helpers.js";
 
 const X402_ENV = {
@@ -463,6 +467,154 @@ describe("Phase 5F x402 live no-key challenge invocation", () => {
     await server.close();
   });
 
+  it.each([
+    {
+      name: "numeric asset",
+      mutate: (body: Record<string, unknown>) => { liveAcceptedPaymentMethod(body).asset = 7331; }
+    },
+    {
+      name: "boolean asset",
+      mutate: (body: Record<string, unknown>) => { livePricing(body).asset = true; }
+    },
+    {
+      name: "numeric network",
+      mutate: (body: Record<string, unknown>) => { liveAcceptedPaymentMethod(body).network = 7332; }
+    },
+    {
+      name: "boolean network",
+      mutate: (body: Record<string, unknown>) => { livePricing(body).network = false; }
+    },
+    {
+      name: "numeric recipient",
+      mutate: (body: Record<string, unknown>) => { liveAcceptedPaymentMethod(body).recipient = 7333; }
+    },
+    {
+      name: "boolean address",
+      mutate: (body: Record<string, unknown>) => {
+        const method = liveAcceptedPaymentMethod(body);
+        delete method.recipient;
+        method.address = true;
+      }
+    },
+    {
+      name: "object recipient",
+      mutate: (body: Record<string, unknown>) => {
+        livePricing(body).recipient = { marker: "synthetic-malformed-recipient-object" };
+      }
+    },
+    {
+      name: "array address",
+      mutate: (body: Record<string, unknown>) => {
+        const preview = livePreview(body);
+        delete preview.address;
+        preview.recipient = ["synthetic-malformed-recipient-array"];
+      }
+    },
+    {
+      name: "malformed expiry",
+      mutate: (body: Record<string, unknown>) => {
+        livePreview(body).expires_at = "2030-02-31T00:00:00Z";
+      }
+    },
+    {
+      name: "numeric challenge identifier",
+      mutate: (body: Record<string, unknown>) => { livePreview(body).challenge_id = 7334; }
+    },
+    {
+      name: "boolean correlation identifier",
+      mutate: (body: Record<string, unknown>) => { livePreview(body).correlation_id = true; }
+    },
+    {
+      name: "array nonce identifier",
+      mutate: (body: Record<string, unknown>) => {
+        livePreview(body).nonce = ["synthetic-malformed-nonce-array"];
+      }
+    },
+    {
+      name: "unexpected accepted-payment-method structure",
+      mutate: (body: Record<string, unknown>) => {
+        liveAcceptedPaymentMethod(body).details = { marker: "synthetic-malformed-method-structure" };
+      }
+    }
+  ])("fails closed for field-specific live challenge validation: $name", async ({ mutate }) => {
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      liveChallengeResponse(REQUEST.endpointPath, undefined, {}, mutate)
+    );
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const body = structured<X402LiveRelayErrorResult>(result);
+    const serialized = JSON.stringify(body);
+    const text = contentText(result);
+
+    expect(result.isError).toBe(true);
+    expect(body.error.error_code).toBe("x402_live_challenge_value_not_approved");
+    expect(body.api_request_sent).toBe(true);
+    expect("api_data" in body).toBe(false);
+    expect(serialized).not.toContain("challenge_values");
+    expect(serialized).not.toContain("synthetic-malformed-");
+    expect(text).not.toContain("synthetic-malformed-");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("accepts strict synthetic conditional fields while continuing to omit every value", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      liveChallengeResponse(REQUEST.endpointPath, undefined, {}, (body) => {
+        liveAcceptedPaymentMethod(body).amount = 2.5;
+        liveAcceptedPaymentMethod(body).expiry = 1_893_456_000;
+        livePricing(body).amount = 2.5;
+      })
+    );
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const body = structured<X402LivePaymentRequiredResult>(result);
+
+    expect(result.isError).not.toBe(true);
+    expect(body.status).toBe("payment_required");
+    expect(body.challenge.conditional_values_relayed).toBe(false);
+    expect("challenge_values" in body.challenge).toBe(false);
+    expect(contentText(result)).not.toContain("base-sepolia");
+
+    await client.close();
+    await server.close();
+  });
+
+  it("does not leak a malformed conditional value through structured output, text, or logs", async () => {
+    const malformedMarker = "synthetic-malformed-live-recipient-marker";
+    const capturedLogs: string[] = [];
+    const logSpies = (["log", "warn", "error"] as const).map((method) =>
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        capturedLogs.push(args.map((arg) => String(arg)).join(" "));
+      })
+    );
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      liveChallengeResponse(REQUEST.endpointPath, undefined, {}, (body) => {
+        liveAcceptedPaymentMethod(body).recipient = { marker: malformedMarker };
+      })
+    );
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    try {
+      const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+      const body = structured<X402LiveRelayErrorResult>(result);
+
+      expect(body.error.error_code).toBe("x402_live_challenge_value_not_approved");
+      expect(JSON.stringify(body)).not.toContain(malformedMarker);
+      expect(contentText(result)).not.toContain(malformedMarker);
+      expect(capturedLogs.join("\n")).not.toContain(malformedMarker);
+    } finally {
+      for (const spy of logSpies) {
+        spy.mockRestore();
+      }
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("preserves exact mock-only invocation behavior when the live flag is explicitly off", async () => {
     const fetchFn = vi.fn<FetchLike>(async () => liveChallengeResponse(REQUEST.endpointPath));
     const { client, server } = await connectMcp(fetchFn, {
@@ -790,6 +942,98 @@ describe("Phase 5F x402 live no-key challenge invocation", () => {
       await client.close();
       await server.close();
     }
+  });
+
+  it("accepts an under-limit streamed JSON object when Content-Length is absent", async () => {
+    const expectedBody = createValidLiveChallengeBody(REQUEST.endpointPath);
+    const streamed = streamingJsonResponse(chunkText(JSON.stringify(expectedBody), 97));
+
+    const response = await fetchDirectNoKeyChallenge(async () => streamed.response);
+
+    expect(response.body).toEqual(expectedBody);
+    expect(streamed.metrics.cancelled).toBe(false);
+    expect(streamed.metrics.pulls).toBeGreaterThan(0);
+  });
+
+  it("stops an absent-Content-Length stream as soon as accumulated bytes exceed 64 KiB", async () => {
+    const streamed = oversizedStreamingJsonResponse("synthetic-over-limit-body-marker");
+
+    const response = await fetchDirectNoKeyChallenge(async () => streamed.response);
+
+    expect(response.body).toBeNull();
+    expect(streamed.metrics.cancelled).toBe(true);
+    expect(streamed.metrics.pulls).toBeLessThan(streamed.metrics.totalChunks);
+  });
+
+  it.each(["malformed", "-1", "Infinity"])(
+    "rejects invalid declared Content-Length %s before reading the response body",
+    async (declaredLength) => {
+      const streamed = streamingJsonResponse([JSON.stringify({ ok: true })], declaredLength);
+
+      const response = await fetchDirectNoKeyChallenge(async () => streamed.response);
+
+      expect(response.body).toBeNull();
+      expect(streamed.metrics.pulls).toBe(0);
+      expect(streamed.metrics.cancelled).toBe(true);
+    }
+  );
+
+  it("rejects a declared Content-Length over 64 KiB before reading the response body", async () => {
+    const streamed = streamingJsonResponse(
+      [JSON.stringify({ ok: true })],
+      String(MAX_X402_CHALLENGE_RESPONSE_BYTES + 1)
+    );
+
+    const response = await fetchDirectNoKeyChallenge(async () => streamed.response);
+
+    expect(response.body).toBeNull();
+    expect(streamed.metrics.pulls).toBe(0);
+    expect(streamed.metrics.cancelled).toBe(true);
+  });
+
+  it("does not trust an under-limit declaration when the streamed body exceeds 64 KiB", async () => {
+    const streamed = oversizedStreamingJsonResponse(undefined, "128");
+
+    const response = await fetchDirectNoKeyChallenge(async () => streamed.response);
+
+    expect(response.body).toBeNull();
+    expect(streamed.metrics.cancelled).toBe(true);
+    expect(streamed.metrics.pulls).toBeLessThan(streamed.metrics.totalChunks);
+  });
+
+  it("accepts an exact-64-KiB JSON object and rejects the first byte beyond the limit", async () => {
+    const exactBody = exactSizeJsonObject(MAX_X402_CHALLENGE_RESPONSE_BYTES);
+    const exact = streamingJsonResponse([exactBody]);
+    const over = streamingJsonResponse([`${exactBody}x`]);
+
+    const exactResponse = await fetchDirectNoKeyChallenge(async () => exact.response);
+    const overResponse = await fetchDirectNoKeyChallenge(async () => over.response);
+
+    expect(exactResponse.body).toEqual(JSON.parse(exactBody));
+    expect(exact.metrics.cancelled).toBe(false);
+    expect(overResponse.body).toBeNull();
+    expect(over.metrics.cancelled).toBe(true);
+  });
+
+  it("maps an oversized streamed challenge to a safe local error without leaking body content", async () => {
+    const bodyMarker = "synthetic-streamed-body-value-that-must-not-leak";
+    const streamed = oversizedStreamingJsonResponse(bodyMarker, undefined, liveChallengeHeaders());
+    const fetchFn = vi.fn<FetchLike>(async () => streamed.response);
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const body = structured<X402LiveRelayErrorResult>(result);
+
+    expect(body.error.error_code).toBe("x402_live_challenge_unexpected_shape");
+    expect(body.api_status).toBe(402);
+    expect(body.api_request_sent).toBe(true);
+    expect(JSON.stringify(body)).not.toContain(bodyMarker);
+    expect(contentText(result)).not.toContain(bodyMarker);
+    expect(streamed.metrics.cancelled).toBe(true);
+    expect(streamed.metrics.pulls).toBeLessThan(streamed.metrics.totalChunks);
+
+    await client.close();
+    await server.close();
   });
 
   it("builds only route-bound, validated query parameters with bounded defaults", () => {
@@ -1132,28 +1376,169 @@ describe("Phase 5F x402 redaction safety", () => {
 function liveChallengeResponse(
   endpointPath: string,
   conditionalValueSentinel?: string,
-  extraBody: Record<string, unknown> = {}
+  extraBody: Record<string, unknown> = {},
+  mutateBody?: (body: Record<string, unknown>) => void
 ): Response {
-  const fixture = createMockX402ChallengeFixture(endpointPath);
+  const body = createValidLiveChallengeBody(endpointPath);
 
   if (conditionalValueSentinel) {
-    fixture.body.protocol = conditionalValueSentinel;
-    (fixture.body.pricing as Record<string, unknown>).amount = conditionalValueSentinel;
-    ((fixture.body.accepted_payment_methods as Record<string, unknown>[])[0] as Record<string, unknown>).network =
-      conditionalValueSentinel;
+    body.protocol = conditionalValueSentinel;
+    liveAcceptedPaymentMethod(body).network = conditionalValueSentinel;
+    livePricing(body).network = conditionalValueSentinel;
   }
 
+  mutateBody?.(body);
+
   return jsonResponse(
-    { ...fixture.body, ...extraBody },
+    { ...body, ...extraBody },
     402,
-    {
-      "payment-required": "<redacted-payment-required>",
-      "x-request-id": "<redacted-request-id>",
-      "x-stocktrends-payment-required": "<redacted-payment-required>",
-      "x-stocktrends-accepted-payment-methods": "<redacted-accepted-payment-methods>",
-      "x-stocktrends-pricing-rule": "<redacted-pricing-rule>"
-    }
+    liveChallengeHeaders()
   );
+}
+
+function createValidLiveChallengeBody(endpointPath: string): Record<string, unknown> {
+  const fixture = createMockX402ChallengeFixture(endpointPath);
+  const syntheticRecipient = `0x${"a".repeat(40)}`;
+
+  fixture.body.accepted_payment_methods = [
+    {
+      amount: "1.25",
+      asset: "USDC",
+      network: "base-sepolia",
+      recipient: syntheticRecipient
+    }
+  ];
+  fixture.body.pricing = {
+    amount: "1.25",
+    asset: "USDC",
+    network: "base-sepolia",
+    recipient: syntheticRecipient,
+    pricing_rule: "synthetic-rule",
+    family: "synthetic-family"
+  };
+  fixture.body.stocktrends_preview = {
+    expires_at: "2030-01-01T00:00:00Z",
+    challenge_id: "synthetic-challenge-id",
+    nonce: "synthetic-nonce",
+    correlation_id: "synthetic-correlation-id",
+    address: syntheticRecipient
+  };
+
+  return fixture.body;
+}
+
+function liveAcceptedPaymentMethod(body: Record<string, unknown>): Record<string, unknown> {
+  return (body.accepted_payment_methods as Record<string, unknown>[])[0] as Record<string, unknown>;
+}
+
+function livePricing(body: Record<string, unknown>): Record<string, unknown> {
+  return body.pricing as Record<string, unknown>;
+}
+
+function livePreview(body: Record<string, unknown>): Record<string, unknown> {
+  return body.stocktrends_preview as Record<string, unknown>;
+}
+
+function liveChallengeHeaders(): Record<string, string> {
+  return {
+    "payment-required": "<redacted-payment-required>",
+    "x-request-id": "<redacted-request-id>",
+    "x-stocktrends-payment-required": "<redacted-payment-required>",
+    "x-stocktrends-accepted-payment-methods": "<redacted-accepted-payment-methods>",
+    "x-stocktrends-pricing-rule": "<redacted-pricing-rule>"
+  };
+}
+
+async function fetchDirectNoKeyChallenge(fetchFn: FetchLike) {
+  const client = new StockTrendsClient(parseConfig(X402_LIVE_ENV), fetchFn);
+  return client.fetchNoKeyX402Challenge({
+    endpointPath: REQUEST.endpointPath,
+    toolName: REQUEST.toolName,
+    searchParams: new URLSearchParams(),
+    approvedHeaderNames: X402_CHALLENGE_HEADER_NAMES
+  });
+}
+
+interface StreamingResponseMetrics {
+  pulls: number;
+  cancelled: boolean;
+  totalChunks: number;
+}
+
+function streamingJsonResponse(
+  chunks: readonly string[],
+  declaredLength?: string,
+  extraHeaders: Record<string, string> = {}
+): { response: Response; metrics: StreamingResponseMetrics } {
+  const encoder = new TextEncoder();
+  const metrics: StreamingResponseMetrics = {
+    pulls: 0,
+    cancelled: false,
+    totalChunks: chunks.length
+  };
+  let index = 0;
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (index >= chunks.length) {
+          controller.close();
+          return;
+        }
+
+        metrics.pulls += 1;
+        controller.enqueue(encoder.encode(chunks[index]));
+        index += 1;
+      },
+      cancel() {
+        metrics.cancelled = true;
+      }
+    },
+    { highWaterMark: 0 }
+  );
+  const headers = new Headers({
+    "content-type": "application/json",
+    ...extraHeaders
+  });
+  if (declaredLength !== undefined) {
+    headers.set("content-length", declaredLength);
+  }
+
+  return {
+    response: new Response(stream, { status: 402, headers }),
+    metrics
+  };
+}
+
+function oversizedStreamingJsonResponse(
+  marker?: string,
+  declaredLength?: string,
+  extraHeaders: Record<string, string> = {}
+): { response: Response; metrics: StreamingResponseMetrics } {
+  const payloadChunks = Array.from({ length: 40 }, () => "x".repeat(2_048));
+  return streamingJsonResponse(
+    [`{\"padding\":\"${marker ?? ""}`, ...payloadChunks, "\"}"],
+    declaredLength,
+    extraHeaders
+  );
+}
+
+function chunkText(value: string, chunkSize: number): string[] {
+  const chunks: string[] = [];
+  for (let offset = 0; offset < value.length; offset += chunkSize) {
+    chunks.push(value.slice(offset, offset + chunkSize));
+  }
+  return chunks;
+}
+
+function exactSizeJsonObject(byteLength: number): string {
+  const prefix = "{\"padding\":\"";
+  const suffix = "\"}";
+  const paddingLength = byteLength - prefix.length - suffix.length;
+  if (paddingLength < 0) {
+    throw new Error("requested JSON size is too small");
+  }
+
+  return `${prefix}${"x".repeat(paddingLength)}${suffix}`;
 }
 
 function contentText(result: unknown): string {

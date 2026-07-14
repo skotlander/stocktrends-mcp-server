@@ -760,33 +760,36 @@ type X402LiveShapeError =
   | "x402_live_challenge_unexpected_shape"
   | "x402_live_challenge_value_not_approved";
 
-const X402_LIVE_ACCEPTED_METHOD_FIELDS = new Set([
-  "amount",
-  "asset",
-  "network",
-  "recipient",
-  "address",
-  "expiry",
-  "expires_at"
-]);
-const X402_LIVE_PRICING_FIELDS = new Set([
-  "amount",
-  "asset",
-  "network",
-  "recipient",
-  "address",
-  "pricing_rule",
-  "family"
-]);
-const X402_LIVE_PREVIEW_FIELDS = new Set([
-  "expiry",
-  "expires_at",
-  "challenge_id",
-  "correlation_id",
-  "nonce",
-  "recipient",
-  "address"
-]);
+type X402ConditionalFieldValidator = (value: unknown) => boolean;
+type X402ConditionalFieldValidators = Readonly<Record<string, X402ConditionalFieldValidator>>;
+
+const X402_LIVE_ACCEPTED_METHOD_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
+  amount: isApprovedLiveAmount,
+  asset: isApprovedLiveIdentifier,
+  network: isApprovedLiveIdentifier,
+  recipient: isApprovedLiveRecipient,
+  address: isApprovedLiveRecipient,
+  expiry: isApprovedLiveExpiry,
+  expires_at: isApprovedLiveExpiry
+});
+const X402_LIVE_PRICING_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
+  amount: isApprovedLiveAmount,
+  asset: isApprovedLiveIdentifier,
+  network: isApprovedLiveIdentifier,
+  recipient: isApprovedLiveRecipient,
+  address: isApprovedLiveRecipient,
+  pricing_rule: isApprovedLiveIdentifier,
+  family: isApprovedLiveIdentifier
+});
+const X402_LIVE_PREVIEW_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
+  expiry: isApprovedLiveExpiry,
+  expires_at: isApprovedLiveExpiry,
+  challenge_id: isApprovedLiveChallengeIdentifier,
+  correlation_id: isApprovedLiveChallengeIdentifier,
+  nonce: isApprovedLiveChallengeIdentifier,
+  recipient: isApprovedLiveRecipient,
+  address: isApprovedLiveRecipient
+});
 
 function validateLiveChallengeShape(
   response: X402LiveChallengeResponse,
@@ -829,10 +832,10 @@ function validateLiveChallengeShape(
 
   if (
     !response.body.accepted_payment_methods.every(
-      (entry) => isRecord(entry) && hasOnlyBoundedScalarFields(entry, X402_LIVE_ACCEPTED_METHOD_FIELDS)
+      (entry) => isRecord(entry) && isApprovedLiveAcceptedPaymentMethod(entry)
     ) ||
-    !hasOnlyBoundedScalarFields(response.body.pricing, X402_LIVE_PRICING_FIELDS) ||
-    !hasOnlyBoundedScalarFields(response.body.stocktrends_preview, X402_LIVE_PREVIEW_FIELDS)
+    !isApprovedLivePricing(response.body.pricing) ||
+    !isApprovedLivePreview(response.body.stocktrends_preview)
   ) {
     return "x402_live_challenge_value_not_approved";
   }
@@ -852,21 +855,136 @@ function validateLiveChallengeShape(
   return null;
 }
 
-function hasOnlyBoundedScalarFields(value: Record<string, unknown>, allowedFields: ReadonlySet<string>): boolean {
-  const entries = Object.entries(value);
+function isApprovedLiveAcceptedPaymentMethod(value: Record<string, unknown>): boolean {
   return (
-    entries.length > 0 &&
-    entries.length <= allowedFields.size &&
-    entries.every(([key, child]) => allowedFields.has(key) && isBoundedConditionalScalar(child))
+    hasOnlyApprovedConditionalFields(value, X402_LIVE_ACCEPTED_METHOD_VALIDATORS) &&
+    hasRequiredConditionalFields(value, ["amount", "asset", "network"]) &&
+    hasExactlyOneConditionalField(value, ["recipient", "address"]) &&
+    hasAtMostOneConditionalField(value, ["expiry", "expires_at"])
   );
 }
 
-function isBoundedConditionalScalar(value: unknown): boolean {
-  if (typeof value === "string") {
-    return value.length > 0 && value.length <= 512;
+function isApprovedLivePricing(value: Record<string, unknown>): boolean {
+  return (
+    hasOnlyApprovedConditionalFields(value, X402_LIVE_PRICING_VALIDATORS) &&
+    hasRequiredConditionalFields(value, ["amount", "asset", "network", "pricing_rule", "family"]) &&
+    hasExactlyOneConditionalField(value, ["recipient", "address"])
+  );
+}
+
+function isApprovedLivePreview(value: Record<string, unknown>): boolean {
+  return (
+    hasOnlyApprovedConditionalFields(value, X402_LIVE_PREVIEW_VALIDATORS) &&
+    hasRequiredConditionalFields(value, ["challenge_id", "correlation_id", "nonce"]) &&
+    hasExactlyOneConditionalField(value, ["expiry", "expires_at"]) &&
+    hasExactlyOneConditionalField(value, ["recipient", "address"])
+  );
+}
+
+function hasOnlyApprovedConditionalFields(
+  value: Record<string, unknown>,
+  validators: X402ConditionalFieldValidators
+): boolean {
+  const entries = Object.entries(value);
+  return (
+    entries.length > 0 &&
+    entries.length <= Object.keys(validators).length &&
+    entries.every(([key, child]) => {
+      const validator = validators[key];
+      return typeof validator === "function" && validator(child);
+    })
+  );
+}
+
+function hasRequiredConditionalFields(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  return fields.every((field) => Object.prototype.hasOwnProperty.call(value, field));
+}
+
+function hasExactlyOneConditionalField(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  return fields.filter((field) => Object.prototype.hasOwnProperty.call(value, field)).length === 1;
+}
+
+function hasAtMostOneConditionalField(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  return fields.filter((field) => Object.prototype.hasOwnProperty.call(value, field)).length <= 1;
+}
+
+function isApprovedLiveAmount(value: unknown): boolean {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 && value <= Number.MAX_SAFE_INTEGER;
   }
 
-  return typeof value === "number" ? Number.isFinite(value) : typeof value === "boolean";
+  if (typeof value !== "string" || value.length === 0 || value.length > 64) {
+    return false;
+  }
+
+  if (!/^(?:0|[1-9]\d{0,31})(?:\.\d{1,18})?$/.test(value)) {
+    return false;
+  }
+
+  return BigInt(value.replace(".", "")) > 0n;
+}
+
+function isApprovedLiveIdentifier(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value)
+  );
+}
+
+function isApprovedLiveRecipient(value: unknown): boolean {
+  return typeof value === "string" && /^0x[0-9A-Fa-f]{40}$/.test(value);
+}
+
+function isApprovedLiveExpiry(value: unknown): boolean {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0;
+  }
+
+  if (typeof value !== "string" || value.length === 0 || value.length > 64) {
+    return false;
+  }
+
+  if (/^[1-9]\d{9,12}$/.test(value)) {
+    const timestamp = Number(value);
+    return Number.isSafeInteger(timestamp) && timestamp > 0;
+  }
+
+  const match = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.(\d{1,3}))?Z$/.exec(value);
+  if (!match) {
+    return false;
+  }
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionText = ""] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const millisecond = Number(fractionText.padEnd(3, "0"));
+  const timestamp = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+  const parsed = new Date(timestamp);
+
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day &&
+    parsed.getUTCHours() === hour &&
+    parsed.getUTCMinutes() === minute &&
+    parsed.getUTCSeconds() === second &&
+    parsed.getUTCMilliseconds() === millisecond
+  );
+}
+
+function isApprovedLiveChallengeIdentifier(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 256 &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(value)
+  );
 }
 
 function isBoundedString(value: unknown, maxLength: number): value is string {

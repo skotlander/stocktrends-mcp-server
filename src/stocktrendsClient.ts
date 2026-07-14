@@ -285,14 +285,15 @@ export class StockTrendsClient {
       .map((name) => name.toLowerCase())
       .filter((name) => response.headers.has(name));
     let body: JsonObject | null = null;
-    const declaredLength = Number(response.headers.get("content-length"));
-    const declaredLengthApproved =
-      !Number.isFinite(declaredLength) || declaredLength < 0 || declaredLength <= MAX_X402_CHALLENGE_RESPONSE_BYTES;
+    const declaredLengthApproved = hasApprovedX402ChallengeContentLength(response);
 
-    if (declaredLengthApproved && isJsonResponse(response)) {
+    if (!declaredLengthApproved) {
+      controller.abort();
+      await cancelResponseBody(response);
+    } else if (isJsonResponse(response)) {
       try {
-        const rawBody = await response.text();
-        if (new TextEncoder().encode(rawBody).byteLength <= MAX_X402_CHALLENGE_RESPONSE_BYTES) {
+        const rawBody = await readBoundedX402ChallengeBody(response, () => controller.abort());
+        if (rawBody !== null) {
           const parsed: unknown = JSON.parse(rawBody);
           body = isJsonObject(parsed) ? parsed : null;
         }
@@ -425,6 +426,92 @@ function isJsonResponse(response: Response): boolean {
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasApprovedX402ChallengeContentLength(response: Response): boolean {
+  const rawLength = response.headers.get("content-length");
+  if (rawLength === null) {
+    return true;
+  }
+
+  if (!/^(?:0|[1-9]\d*)$/.test(rawLength)) {
+    return false;
+  }
+
+  const declaredLength = Number(rawLength);
+  return (
+    Number.isSafeInteger(declaredLength) &&
+    declaredLength >= 0 &&
+    declaredLength <= MAX_X402_CHALLENGE_RESPONSE_BYTES
+  );
+}
+
+async function readBoundedX402ChallengeBody(
+  response: Response,
+  abortRequest: () => void
+): Promise<string | null> {
+  if (!response.body) {
+    return null;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (!(value instanceof Uint8Array)) {
+        abortRequest();
+        await reader.cancel();
+        return null;
+      }
+
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_X402_CHALLENGE_RESPONSE_BYTES) {
+        abortRequest();
+        await reader.cancel();
+        return null;
+      }
+
+      chunks.push(value);
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    abortRequest();
+    try {
+      await reader.cancel();
+    } catch {
+      // The stream may already be aborted or closed. Keep failure local.
+    }
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  if (!response.body) {
+    return;
+  }
+
+  try {
+    await response.body.cancel();
+  } catch {
+    // The body may already be aborted or locked. No body data is observed.
+  }
 }
 
 function isAbortError(error: unknown): boolean {
