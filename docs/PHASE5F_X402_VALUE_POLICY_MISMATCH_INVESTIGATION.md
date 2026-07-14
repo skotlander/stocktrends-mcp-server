@@ -8,7 +8,7 @@ The live PR #77 failure does not identify a rejected live field, path, value, or
 
 Current local API source does, however, expose a concrete source/validator mismatch before any live observation is needed. The compact core builder in `payments/x402.py` creates the canonical seven-key challenge shape expected by the merged MCP validator. The final response assembly in `middleware/metering.py` then replaces `accepted_payment_methods: ["x402"]` with the route policy's full enabled-rail list. Under the repository's default route policy for `GET /v1/market/regime/latest`, that list contains three rail identifiers. The MCP validator requires the array to contain exactly one element, `"x402"`, and therefore returns `x402_live_challenge_value_not_approved` at `src/x402Relay.ts:1150-1158` before it examines the rest of the challenge.
 
-That final-response mismatch is confirmed from current source and existing tests, but it is not proven to be the field rejected in PR #77. The deployed API revision and effective runtime policy are not identified by any local deployment marker. A runtime policy overlay can also alter the enabled-rail list.
+That final-response mismatch is confirmed from current source, while existing API tests independently confirm the default multi-rail condition on other registered paid routes. The tests do not prove the target route's exact final list, and the mismatch is not proven to be the field rejected in PR #77. The deployed API revision and effective runtime policy are not identified by any local deployment marker. A runtime policy overlay can also alter the enabled-rail list.
 
 There is a second current-source incompatibility behind the first one. For a registered route, final response assembly adds the rich `stocktrends_preview` object even when the payment requirements use compact Bazaar metadata. If the outer payment-method list were synthetically narrowed to `["x402"]`, the current MCP generic-extension rules would reject that rich preview as `x402_live_challenge_prohibited_material`, including because its descriptive preview keys contain payment and HTTP-method semantics outside the explicitly allowed compact Bazaar paths.
 
@@ -94,13 +94,16 @@ All production emissions of `x402_live_challenge_value_not_approved` are in `val
 | `src/x402Relay.ts:1251` | requirements extensions | extension object is structurally invalid, over bounds, or contains an unapproved non-prohibited shape | null/array root, excessive depth/size/members, malformed compact Bazaar shape |
 | `src/x402Relay.ts:1260` | optional `stocktrends_preview` | preview is structurally invalid or over bounds without a prohibited semantic key | null/array root, excessive depth/size/members, invalid key/value type |
 
-Related failures normally use different codes:
+Related failures use distinct adjacent classifications:
 
-- missing canonical root keys, a non-object body, or an invalid bounded JSON tree use `x402_live_challenge_unexpected_shape`;
+- a successful `2xx` response without proof, or a response whose bounded-tree scan detects paid-output carriers without proof, uses `x402_live_challenge_paid_output_without_proof`;
+- a transport failure before any response is received and a received non-`402` status not already classified by the earlier paid-output branch are grouped under `x402_live_challenge_unexpected_status`; the transport case has no HTTP response status to report;
+- an oversized response body, missing canonical root keys, a non-object body, or another invalid bounded JSON tree uses `x402_live_challenge_unexpected_shape`;
+- invalid bounded tool input uses `x402_tool_input_invalid` before signature reservation and before any outbound request;
+- a malformed or missing standard header and decoded header/body inequality have their own header classifications;
 - prohibited proof, authorization, payment, settlement, transaction, facilitator, method-authority, or protected shadow-key material uses `x402_live_challenge_prohibited_material`;
-- a syntactically valid but unsupported accepted network uses `x402_live_challenge_network_unsupported`;
-- header absence, header shape/encoding, and header/body inequality have their own header codes;
-- paid-output carriers outside narrowly approved Bazaar schema paths use `x402_live_paid_output_without_proof`.
+- a syntactically valid but unsupported accepted network uses `x402_live_challenge_network_unsupported`; and
+- canonical value-policy failures remain `x402_live_challenge_value_not_approved` at the seventeen production return sites mapped above.
 
 The whole-response bounded scan does not emit `x402_live_challenge_value_not_approved`. It supplies shape, prohibited-material, and paid-output classifications before or around canonical validation. Therefore the live code proves that a value-policy branch was reached, but it does not identify a subtree.
 
@@ -117,7 +120,7 @@ For this registered route, current local source assembles the following response
   protocol: "x402",
   resource: <canonical-resource-url-or-route-path>,
   pricing: {
-    amount_usd: <positive-fixed-six-usd-string>,
+    amount_usd: <runtime-fixed-six-usd-string>,
     unit: "request",
     network: <canonical-eip155-network>,
     token: <evm-address>,
@@ -147,7 +150,7 @@ payment_required: {
   accepts: [{
     scheme: <bounded-scheme-identifier>,
     network: <canonical-eip155-network>,
-    amount: <positive-atomic-string>,
+    amount: <runtime-atomic-unit-string>,
     asset: <evm-address>,
     payTo: <evm-address>,
     maxTimeoutSeconds: <positive-integer-json-number>,
@@ -162,7 +165,7 @@ payment_required: {
 }
 ```
 
-`assetTransferMethod` is optional and omitted when the source configuration is empty. The other three `extra` keys are mandatory in the current builder.
+`assetTransferMethod` is optional and omitted when the source configuration is empty. The other three `extra` keys are mandatory in the current builder. The MCP contract requires both runtime amount strings to represent positive values, but the API formatter and converter do not themselves establish that positivity.
 
 ### Compact Bazaar extension
 
@@ -200,29 +203,31 @@ This rich preview is not created by `build_compact_bazaar_extension()` and is no
 
 1. **Route registration.** `routers/market.py:14-28` registers `GET /market/regime/latest` on the market router. `main.py:389-424` includes that router in the v1 application and mounts it at `/v1`, producing `/v1/market/regime/latest`.
 2. **Endpoint metadata lookup.** `discovery/endpoint_metadata.py:1067-1088` contains the route registry entry. The compact and rich builders resolve this entry through the registry lookup functions.
-3. **Pricing resolution.** `payments/policy_provider.py:281-287` maps the exact method/path to pricing rule `market_regime_latest` and the default enabled rails. `pricing/classifier.py:253-275` selects an agent-payment decision for an unauthenticated request when agent pay is enabled. `middleware/metering.py:270-323` resolves the runtime unit price from `api_pricing_rules`; missing or failed pricing resolution produces a zero-valued source result rather than a source-static route amount.
+3. **Pricing resolution.** `payments/policy_provider.py:281-287` maps the exact method/path to pricing rule `market_regime_latest` and the default enabled rails. `pricing/classifier.py:253-275` selects an agent-payment decision for an unauthenticated request when agent pay is enabled. `middleware/metering.py:257-323` resolves the runtime unit price from `api_pricing_rules`; missing or failed pricing resolution produces a zero-valued source result rather than a source-static route amount. `safe_decimal()` preserves a successfully parsed negative `Decimal` and does not enforce positivity.
 4. **Resource construction.** `payments/x402.py:272-329` joins the configured API base with the route when a base is configured, resolves the route description, and constructs the six-key ResourceInfo object. It copies that object into accepted `extra.resource`.
 5. **Compact Bazaar construction.** The same requirements builder normalizes challenge mode and calls `build_compact_bazaar_extension()` for compact mode. `discovery/endpoint_metadata.py:2726-2798` builds the registry-backed compact object and schemas.
-6. **Requirements construction.** `build_x402_requirements()` creates the exact four-key requirements object and the one-entry accepted array shown above. Amount conversion produces an atomic integer string.
-7. **Challenge body construction.** `payments/x402.py:356-399` formats the USD amount as a six-decimal string and creates the canonical seven-key outer body with `accepted_payment_methods: ["x402"]`.
+6. **Requirements construction.** `build_x402_requirements()` creates the exact four-key requirements object and the one-entry accepted array shown above. `_to_atomic_units()` produces an integer string but does not reject zero or negative input.
+7. **Challenge body construction.** `payments/x402.py:356-399` formats the USD amount as a six-decimal string and creates the canonical seven-key outer body with `accepted_payment_methods: ["x402"]`; that formatting also preserves a negative sign.
 8. **Standard header construction.** The same function serializes the requirements object as compact JSON, UTF-8 bytes, then base64 for the standard payment-required header. The header represents the same requirements object placed in the body.
 9. **Enforcement response construction.** `payments/enforcement.py:46-90` calls the challenge builder when the payment material is absent and returns the body/header pair to metering middleware.
 10. **Final middleware and serialization.** `middleware/metering.py:1239-1298` shallow-copies the body, replaces the outer accepted-method list with the effective route-policy list, injects the rich route preview, constructs `JSONResponse`, attaches `PAYMENT-REQUIRED`, and adds pricing/accepted-method response headers. Request-ID middleware adds a request-ID header after the response; the MCP relay retains only its presence, never its value.
 
 Environment-dependent source inputs include challenge mode, network, scheme, token identity metadata, asset-transfer method, decimal conversion, payee, and API base URL. Payment-policy configuration can also be loaded through a runtime overlay. No environment values were inspected.
 
+Symbolically, for a runtime price `p < 0`, the source can produce a negative fixed-six USD string from `f"{p:.6f}"` and a negative atomic-unit string from `str(int((p * 10^d).quantize(1)))`. The MCP rejects that result at its positive pricing predicate under `x402_live_challenge_value_not_approved` before reaching the accepted atomic-amount predicate. A zero runtime price is rejected by the same pricing predicate. Neither zero nor negative runtime pricing can be confirmed or excluded without operational pricing data.
+
 ## 8. Offline source-generated compact fixture result
 
 The result has two boundaries that must not be conflated:
 
 1. **Core builder boundary: compatible.** The exact compact core shape from `build_x402_challenge()` matches the source-shaped compact fixture already exercised through the actual merged MCP relay validator in `tests/x402Relay.test.ts`. That existing injected-seam test passes the canonical seven-key body, header/body requirements equality, ResourceInfo, accepted entry, copied resource, and compact Bazaar validation. Source comparison found no current core-builder field that differs from that accepted contract.
-2. **Final route response boundary: incompatible.** Current local default final-response source replaces the one-element outer methods array with the route policy's three enabled rail identifiers. `tests/test_402_preview.py:527-535` asserts that final list. The MCP's first applicable check is `src/x402Relay.ts:1150-1158`, so the deterministic first rejection category is `challenge-root-value`, path `accepted_payment_methods`, value category `multi-element array of bounded rail strings`, coarse result `x402_live_challenge_value_not_approved`.
+2. **Final route response boundary: incompatible.** Current local default final-response source replaces the one-element outer methods array with the route policy's three enabled rail identifiers. `tests/test_402_preview.py:527-535` independently confirms inclusion of the default rails on the registered paid route `/v1/indicators/latest`; because it converts the list to a set and uses a subset assertion, it does not prove exact cardinality, exact ordering, or the target route's final list. The exact default rail list for `/v1/market/regime/latest` is established by its `EndpointPaymentPolicy` in `payments/policy_provider.py:281-287`, the effective-policy return path in `get_accepted_payment_methods_for_path()`, and final-response assembly in `middleware/metering.py:1261-1274`. The MCP's first applicable check is `src/x402Relay.ts:1150-1158`, so the deterministic first rejection category is `challenge-root-value`, path `accepted_payment_methods`, value category `multi-element array of bounded rail strings`, coarse result `x402_live_challenge_value_not_approved`.
 
 A temporary, untracked bridge test was prepared to invoke the actual Python builder and feed only its synthetic output into the actual TypeScript relay seam. The managed execution policy did not authorize running a newly created unsandboxed cross-repository harness. The harness was deleted immediately and was not replaced with an indirect workaround. It printed no challenge object and made no network request.
 
-Consequently, this report does not claim a newly executed one-process API-builder-to-MCP-validator fixture. The pass statement for the core boundary rests on exact source equivalence plus the existing merged MCP source-shaped test. The final-response failure rests on exact current source, exact validator precedence, and existing API assertions for the mutated array. This limitation does not make the rejected category in the current local final source ambiguous, but it prevents describing the result as a fresh cross-repository execution.
+Consequently, this report does not claim a newly executed one-process API-builder-to-MCP-validator fixture. The pass statement for the core boundary rests on exact source equivalence plus the existing merged MCP source-shaped test. The final-response failure rests on exact current target-route policy and final-assembly source plus exact validator precedence; the API test independently confirms the default-rail/multi-element condition on another registered paid route without proving the target route's exact cardinality or ordering. This limitation does not make the rejected category in the current local final source ambiguous, but it prevents describing the result as a fresh cross-repository execution.
 
-The PR #77 live failure was **not** reproduced in a way tied to the deployed response. The same coarse code is reproduced by the current local final-response shape at source/test level, but deployment-source alignment is unknown.
+The PR #77 live failure was **not** reproduced in a way tied to the deployed response. The same coarse code is deterministically reached by the current local final-response shape under source/validator analysis, but deployment-source alignment is unknown.
 
 ## 9. Synthetic candidate matrix
 
@@ -231,12 +236,13 @@ The matrix is bounded to candidates derived from current source, current validat
 | Candidate and source basis | Synthetic mutation/category | MCP outcome | Same coarse code? | Plausible for deployed route | Confidence |
 |---|---|---|---|---|---|
 | Current compact core builder; MCP source-shaped fixture | canonical seven-key body, positive symbolic values, compact Bazaar, one x402 method | pass | no | yes as the enforcement boundary | confirmed |
-| Current final middleware and default policy; API preview test | replace outer methods with the three enabled route-policy rails | `x402_live_challenge_value_not_approved` at root literals/methods | yes | yes; exact current default source | confirmed |
+| Current final middleware and target route's effective default policy; API default-rail inclusion test on another paid route | replace outer methods with the three enabled target route-policy rails | `x402_live_challenge_value_not_approved` at root literals/methods | yes | yes; exact current default source | confirmed |
 | Current final middleware with an x402-only overlay | retain `["x402"]` and omit preview for component isolation | pass | no | possible only if effective policy and route registration produce that shape | plausible |
 | Current rich preview with methods synthetically narrowed | add current registered-route rich preview outside Bazaar | `x402_live_challenge_prohibited_material` | no | yes in current final source, but masked by the earlier methods failure under default policy | confirmed |
-| Runtime pricing lookup failure path | zero fixed-six price and corresponding zero atomic amount | `x402_live_challenge_value_not_approved` at pricing before accepted amount | yes | possible on a missing/failed pricing row; not established live | plausible |
-| USD JSON type/format mutation | JSON number, non-six-decimal string, negative value, or malformed string | `x402_live_challenge_value_not_approved` | yes | current builder always emits a six-decimal string; zero remains a separate runtime case | excluded except zero |
-| Atomic amount format mutation | JSON number, leading-zero string, decimal string, or zero string | `x402_live_challenge_value_not_approved` | yes | current converter emits an integer string; zero is possible only from zero price | excluded except zero |
+| Runtime pricing lookup failure/default | zero fixed-six price and corresponding zero atomic amount | `x402_live_challenge_value_not_approved` at pricing before accepted amount | yes | source-derived possible on a missing/failed pricing row; cannot be confirmed or excluded without operational pricing data | weak |
+| Negative runtime pricing row | for symbolic `p < 0`, a negative fixed-six USD string and negative atomic-unit string | `x402_live_challenge_value_not_approved` at pricing before accepted amount | yes | current `safe_decimal()` and `_to_atomic_units()` do not reject the negative value; cannot be confirmed or excluded without operational pricing data | weak |
+| USD JSON type/format mutation | JSON number, inappropriate numeric precision, or malformed fixed-six formatting introduced outside the source formatter | `x402_live_challenge_value_not_approved` | yes | current builder always emits a fixed-six string | excluded current source |
+| Atomic amount format mutation | JSON number, invalid leading-zero string, decimal string, or other malformed integer string | `x402_live_challenge_value_not_approved` | yes | current converter emits a base-ten integer string; runtime-price sign/value cases are classified separately above | excluded current source |
 | Payee configuration category | empty or non-address-shaped payee string | `x402_live_challenge_value_not_approved` | yes | environment-dependent source path exists; value not inspected | plausible |
 | Network spelling/configuration | syntactically valid but noncanonical network | `x402_live_challenge_network_unsupported` | no | environment-dependent source path exists | plausible, different code |
 | Pricing/accepted network disagreement | individually valid unequal identifiers | `x402_live_challenge_value_not_approved` | yes | current builder passes one variable into both positions; no current post-builder mutation found | excluded in current source |
@@ -251,7 +257,8 @@ The matrix is bounded to candidates derived from current source, current validat
 | Unknown outer response key | middleware-added non-allowlisted root | `x402_live_challenge_value_not_approved` | yes | no current source path found beyond the allowlisted preview | weak |
 | Response/header requirements divergence | mutate requirements after header serialization | `x402_live_challenge_header_body_mismatch` | no | current middleware mutates only outer fields and preview | excluded current source |
 | Historical pre-canonical-v2 requirements | requirements without current ResourceInfo/extensions shape; accepted entry with older keys | `x402_live_challenge_value_not_approved` at requirements or accepted exact-key checks | yes | possible only if an older revision remains deployed | confirmed historical, deployment unknown |
-| Historical partial ResourceInfo/extra copy | omit later-added service identity or copied resource fields | `x402_live_challenge_value_not_approved` | yes | possible only if an intermediate revision remains deployed | confirmed historical, deployment unknown |
+| Historical pre-`ef3799e...` ResourceInfo | omit the later-added ResourceInfo service fields | `x402_live_challenge_value_not_approved` at original `payment_required.resource` validation | yes | possible only if an older revision remains deployed | confirmed historical, deployment unknown |
+| Historical pre-`a4630dc...` accepted extra | omit or incompatibly shape the copied `accepted[0].extra.resource` | `x402_live_challenge_value_not_approved` at accepted-extra validation | yes | possible only if an older revision remains deployed | confirmed historical, deployment unknown |
 | Rich challenge mode selection | select full/rich Bazaar instead of compact | bounded Bazaar-specific outcome depends on exact selected source revision and object | not established by a fresh bridge | environment-selectable, but local operations guidance specifies compact for production | weak |
 
 ## 10. Relevant API Git-history findings
@@ -267,10 +274,10 @@ Local history shows multiple contract transitions relevant to the same coarse va
 | `ad4246e695916df7c96f71fd435964f18c7b4f0a` (2026-05-16) | introduced compact challenge mode | created the compact Bazaar selection now expected by MCP |
 | `cb2146078e6da7a595c8fda70a03f23204c995ab` (2026-05-20) | made compact mode the default while preserving rich final preview injection | explains why “compact requirements” does not imply a compact-only outer response |
 | `b31b869c1ccce3e0a44a08c37c6b5bff068f24a1` (2026-05-20) | normalized compact schema construction | relevant to exact compact Bazaar paths and boolean/array/object types |
-| `ef3799e45fa357e9e047ee5b3392af67438bec65` (2026-05-22) | added Bazaar service identity metadata | relevant to compact extension string fields |
-| `a4630dc99d833a98d513e462cd2da3519d2a4d8d` (2026-06-02) | added the current ResourceInfo service fields and `extra.resource` copy | intermediate older shapes would fail current ResourceInfo or extra validation with the same coarse code |
+| `ef3799e45fa357e9e047ee5b3392af67438bec65` (2026-05-22) | introduced the ResourceInfo service fields `serviceName`, `tags`, and `iconUrl` | its parent has an older three-field ResourceInfo shape that would fail the current MCP's exact top-level/requirement `resource` validation |
+| `a4630dc99d833a98d513e462cd2da3519d2a4d8d` (2026-06-02) | refactored the already-six-field ResourceInfo into a reusable object and added a structural copy under `accepted[0].extra.resource` | absence or incompatible shape of that copied resource reaches accepted-extra validation, not the original top-level/requirement ResourceInfo branch |
 
-The historical shapes demonstrate that source/version drift can reproduce the coarse error, but they do not prove that any such revision is deployed.
+These are distinct validator boundaries: `payment_required.resource` is checked as the original top-level/requirement ResourceInfo before the accepted entry, while `accepted[0].extra.resource` is checked later as a required structural copy during accepted-extra validation. The historical shapes demonstrate that source/version drift can reproduce the coarse error, but they do not prove that either historical revision was deployed.
 
 ## 11. Deployment-source alignment assessment
 
@@ -293,7 +300,7 @@ The current local source can itself reach the observed coarse code, so deployed-
 3. Whole-response prohibited-material and paid-output scans normally use different codes.
 4. The current API compact core builder authors the exact canonical requirements shape represented by the existing passing MCP source-shaped fixture.
 5. Current final middleware changes the outer accepted-method array after the challenge/header pair is built.
-6. The default route policy for `GET /v1/market/regime/latest` contains three enabled rails, and an existing API test asserts the final three-element list.
+6. The default route policy for `GET /v1/market/regime/latest` contains three enabled rails, and current final-response assembly writes that effective policy list into the body. An existing API test independently confirms inclusion of the default rails on another registered paid route, but does not assert exact cardinality, exact ordering, or the target route's final list.
 7. That current final source shape first reaches the MCP root value-policy branch and returns the same coarse code as PR #77.
 8. Current final source also injects a rich preview outside compact Bazaar requirements; if reached after correcting the methods mismatch, current generic-extension policy classifies it as prohibited material.
 9. The standard header remains a serialization of the original requirements object; current outer-method and preview mutations do not create a header/body requirements mismatch.
@@ -304,8 +311,8 @@ The current local source can itself reach the observed coarse code, so deployed-
 
 The following are excluded as explanations arising from the current local builder path, though malformed synthetic objects can still make the validator reject them:
 
-- Python `Decimal` becoming a JSON number in `pricing.amount_usd`; current builder formats a string explicitly;
-- a leading-zero, decimal, or JSON-number atomic amount from the current converter; it emits a base-ten integer string;
+- a malformed JSON-number type, inappropriate numeric precision, or malformed fixed-six `pricing.amount_usd` string introduced by the current builder; it formats a fixed-six string explicitly;
+- an invalid leading-zero, decimal, malformed, or JSON-number atomic amount introduced by the current converter; it emits a base-ten integer string;
 - address letter casing alone; the validator accepts either hexadecimal letter case;
 - a timeout string or fractional number from the current enforcement call; current source supplies an integer default;
 - explicit null for the optional transfer method; current source emits a non-empty string or omits it;
@@ -320,7 +327,7 @@ An unsupported network is not excluded as a possible deployment configuration is
 The live field remains unknown. Source-derived hypotheses that can still fit the observed code include:
 
 - the deployed final response used a multi-rail outer `accepted_payment_methods` array, as current default local source does;
-- deployed pricing resolution produced a zero value, reaching the positive-price check;
+- deployed pricing resolution produced a zero value, or a negative runtime pricing row passed through `safe_decimal()` and `_to_atomic_units()`, reaching the positive-price check; both are weak source-derived hypotheses that cannot be confirmed or excluded without operational pricing data;
 - an environment-derived payee or resource-origin category failed its shape/binding predicate;
 - a policy overlay changed the final enabled-rail list or otherwise changed route response metadata;
 - the deployed service used an older requirements or ResourceInfo revision still rejected by current exact-key rules;
