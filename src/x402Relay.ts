@@ -929,9 +929,27 @@ const X402_EXTENSION_SHADOW_KEYS = new Set([
   "records"
 ]);
 const X402_PAID_OUTPUT_SHAPE_KEYS = new Set(["apidata", "data", "results", "rows", "records"]);
+const X402_SOURCE_OUTPUT_CARRIER_KEYS = new Set(["api_data", "data", "results", "rows", "records"]);
+const X402_METHOD_AUTHORITY_KEYS = new Set([
+  "httpmethod",
+  "executionmethod",
+  "methodauthority",
+  "methodoverride",
+  "httpmethodauthority",
+  "httpmethodoverride",
+  "executionmethodauthority",
+  "executionmethodoverride",
+  "methodauthorityoverride",
+  "httpmethodauthorityoverride",
+  "executionmethodauthorityoverride"
+]);
 
 type JsonPathSegment = string | number;
 type ExtensionSemanticContext = "generic" | "bazaar_extensions";
+type BazaarOutputCarrierRole =
+  | "source_output_example_carrier"
+  | "source_output_schema_property"
+  | "not_approved";
 
 interface JsonTreeScanResult {
   valid: boolean;
@@ -1317,7 +1335,7 @@ function validateExtensionContainer(
         return "invalid";
       }
       const childPath = [...current.path, key];
-      if (isProhibitedExtensionKey(key, childPath, context)) {
+      if (isProhibitedExtensionKey(key, childPath, context, value)) {
         return "prohibited";
       }
       stack.push({ value: child, depth: current.depth + 1, path: childPath });
@@ -1330,7 +1348,8 @@ function validateExtensionContainer(
 function isProhibitedExtensionKey(
   key: string,
   path: readonly JsonPathSegment[],
-  context: ExtensionSemanticContext
+  context: ExtensionSemanticContext,
+  extensionRoot: unknown
 ): boolean {
   if (X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase())) {
     return true;
@@ -1383,8 +1402,16 @@ function isProhibitedExtensionKey(
     return true;
   }
 
+  // HTTP-method authority is an execution semantic. Literal descriptive
+  // `method` is allowed only at the five exact Python-builder roles below;
+  // aliases and authority/override compounds are rejected before any broader
+  // Bazaar discovery-path allowance is considered.
+  if (isProhibitedMethodAuthority(tokens, compact, path, context)) {
+    return true;
+  }
+
   const approvedBazaarDiscoveryPath =
-    context === "bazaar_extensions" && isApprovedBazaarDiscoveryPath(path);
+    context === "bazaar_extensions" && isApprovedBazaarDiscoveryPath(path, extensionRoot);
   if (approvedBazaarDiscoveryPath) {
     return false;
   }
@@ -1434,7 +1461,53 @@ function isPaymentSemanticOverride(compactKey: string): boolean {
   ].includes(concept);
 }
 
-function isApprovedBazaarDiscoveryPath(path: readonly JsonPathSegment[]): boolean {
+function isProhibitedMethodAuthority(
+  tokens: readonly string[],
+  compactKey: string,
+  path: readonly JsonPathSegment[],
+  context: ExtensionSemanticContext
+): boolean {
+  if (compactKey === "method") {
+    return context !== "bazaar_extensions" || !isApprovedBazaarDescriptiveMethodPath(path);
+  }
+
+  if (X402_METHOD_AUTHORITY_KEYS.has(compactKey)) {
+    return true;
+  }
+
+  const tokenSet = new Set(tokens);
+  return (
+    tokenSet.has("method") &&
+    (
+      tokenSet.has("http") ||
+      tokenSet.has("execution") ||
+      tokenSet.has("authority") ||
+      tokenSet.has("override")
+    )
+  );
+}
+
+function isApprovedBazaarDescriptiveMethodPath(path: readonly JsonPathSegment[]): boolean {
+  return (
+    pathsEqual(path, ["bazaar", "info", "input", "method"]) ||
+    pathsEqual(path, ["bazaar", "schema", "properties", "input", "properties", "method"]) ||
+    pathsEqual(path, ["bazaar", "info", "interpretation_dependencies", "dependency", "method"]) ||
+    pathsEqual(path, ["bazaar", "info", "input", "example", "method"]) ||
+    (
+      path.length === 5 &&
+      path[0] === "bazaar" &&
+      path[1] === "info" &&
+      path[2] === "examples" &&
+      typeof path[3] === "number" &&
+      path[4] === "method"
+    )
+  );
+}
+
+function isApprovedBazaarDiscoveryPath(
+  path: readonly JsonPathSegment[],
+  extensionRoot: unknown
+): boolean {
   const lastSegment = path[path.length - 1];
   if (path[0] !== "bazaar" || typeof lastSegment !== "string") {
     return false;
@@ -1455,11 +1528,7 @@ function isApprovedBazaarDiscoveryPath(path: readonly JsonPathSegment[]): boolea
   // builder declares it in JSON Schema; the rich builder may also copy the
   // registry-authored interpretation dependency method. These values describe
   // discovery metadata and never override the separately bound GET request.
-  if (
-    pathsEqual(path, ["bazaar", "info", "input", "method"]) ||
-    pathsEqual(path, ["bazaar", "schema", "properties", "input", "properties", "method"]) ||
-    pathsEqual(path, ["bazaar", "info", "interpretation_dependencies", "dependency", "method"])
-  ) {
+  if (isApprovedBazaarDescriptiveMethodPath(path)) {
     return true;
   }
 
@@ -1467,7 +1536,6 @@ function isApprovedBazaarDiscoveryPath(path: readonly JsonPathSegment[]): boolea
   // request-example roles. method/path here are inert example metadata, not
   // authority over the invoked route or the actual GET method.
   if (
-    pathsEqual(path, ["bazaar", "info", "input", "example", "method"]) ||
     pathsEqual(path, ["bazaar", "info", "input", "example", "path"]) ||
     (
       path.length === 5 &&
@@ -1475,30 +1543,13 @@ function isApprovedBazaarDiscoveryPath(path: readonly JsonPathSegment[]): boolea
       path[1] === "info" &&
       path[2] === "examples" &&
       typeof path[3] === "number" &&
-      (path[4] === "method" || path[4] === "path")
+      path[4] === "path"
     )
   ) {
     return true;
   }
 
-  // Rich output examples and output-schema property declarations may name the
-  // response-shape carriers that the API builder is documenting. Only those
-  // carrier names are exempted, only in these output roles; other shadow names
-  // remain prohibited even below schema/example/output ancestors.
-  const compactKey = tokenizeIdentifier(lastSegment).join("");
-  if (!X402_PAID_OUTPUT_SHAPE_KEYS.has(compactKey)) {
-    return false;
-  }
-  if (hasPathPrefix(path, ["bazaar", "info", "output", "example"])) {
-    return true;
-  }
-  return (
-    path[path.length - 2] === "properties" &&
-    (
-      hasPathPrefix(path, ["bazaar", "info", "output", "schema"]) ||
-      hasPathPrefix(path, ["bazaar", "schema", "properties", "output"])
-    )
-  );
+  return classifyBazaarOutputCarrierPath(path, extensionRoot) !== "not_approved";
 }
 
 function pathsEqual(
@@ -1508,11 +1559,132 @@ function pathsEqual(
   return path.length === expected.length && path.every((segment, index) => segment === expected[index]);
 }
 
-function hasPathPrefix(
+function classifyBazaarOutputCarrierPath(
   path: readonly JsonPathSegment[],
-  prefix: readonly JsonPathSegment[]
+  extensionRoot: unknown
+): BazaarOutputCarrierRole {
+  const carrier = path[path.length - 1];
+  if (typeof carrier !== "string" || !X402_SOURCE_OUTPUT_CARRIER_KEYS.has(carrier)) {
+    return "not_approved";
+  }
+
+  // The rich builder's output example is one object. Only its immediate
+  // carrier properties are descriptive; arrays, ancestors, and descendants do
+  // not inherit this role.
+  if (
+    path.length === 5 &&
+    pathsEqual(path.slice(0, 4), ["bazaar", "info", "output", "example"])
+  ) {
+    return "source_output_example_carrier";
+  }
+
+  const schemaRoots: readonly (readonly JsonPathSegment[])[] = [
+    ["bazaar", "info", "output", "schema"],
+    ["bazaar", "schema", "properties", "output"]
+  ];
+  for (const schemaRootPath of schemaRoots) {
+    if (
+      path.length > schemaRootPath.length &&
+      pathsEqual(path.slice(0, schemaRootPath.length), schemaRootPath) &&
+      isSourceOutputSchemaCarrierDeclaration(
+        path.slice(schemaRootPath.length),
+        getJsonPathValue(extensionRoot, schemaRootPath)
+      )
+    ) {
+      return "source_output_schema_property";
+    }
+  }
+
+  return "not_approved";
+}
+
+// The current compact/rich helpers attach an object schema at exactly these
+// roots. From there, a carrier must be a property name immediately after a
+// structurally valid JSON Schema `properties` node. Nested object properties
+// and object-valued array `items` are supported; arbitrary keys, arrays,
+// interposed nodes, and property names that masquerade as schema structure are
+// not source-authored roles.
+function isSourceOutputSchemaCarrierDeclaration(
+  suffix: readonly JsonPathSegment[],
+  schemaRoot: unknown
 ): boolean {
-  return path.length > prefix.length && prefix.every((segment, index) => path[index] === segment);
+  if (
+    suffix.length < 2 ||
+    suffix[suffix.length - 2] !== "properties" ||
+    typeof suffix[suffix.length - 1] !== "string" ||
+    !X402_SOURCE_OUTPUT_CARRIER_KEYS.has(suffix[suffix.length - 1] as string) ||
+    !isPlainRecord(schemaRoot) ||
+    schemaRoot.type !== "object"
+  ) {
+    return false;
+  }
+
+  let schemaNode: unknown = schemaRoot;
+  let index = 0;
+  while (index < suffix.length) {
+    if (!isPlainRecord(schemaNode)) {
+      return false;
+    }
+
+    const segment = suffix[index];
+    if (segment === "items") {
+      if (
+        schemaNode.type !== "array" ||
+        !isPlainRecord(schemaNode.items)
+      ) {
+        return false;
+      }
+      schemaNode = schemaNode.items;
+      index += 1;
+      continue;
+    }
+
+    if (
+      segment !== "properties" ||
+      schemaNode.type !== "object" ||
+      !isPlainRecord(schemaNode.properties) ||
+      index + 1 >= suffix.length
+    ) {
+      return false;
+    }
+
+    const propertyName = suffix[index + 1];
+    if (
+      typeof propertyName !== "string" ||
+      propertyName === "properties" ||
+      !hasOwn(schemaNode.properties, propertyName) ||
+      !isPlainRecord(schemaNode.properties[propertyName])
+    ) {
+      return false;
+    }
+
+    if (index + 2 === suffix.length) {
+      return X402_SOURCE_OUTPUT_CARRIER_KEYS.has(propertyName);
+    }
+
+    schemaNode = schemaNode.properties[propertyName];
+    index += 2;
+  }
+
+  return false;
+}
+
+function getJsonPathValue(root: unknown, path: readonly JsonPathSegment[]): unknown {
+  let current = root;
+  for (const segment of path) {
+    if (typeof segment === "number") {
+      if (!Array.isArray(current) || segment < 0 || segment >= current.length) {
+        return undefined;
+      }
+      current = current[segment];
+      continue;
+    }
+    if (!isPlainRecord(current) || !hasOwn(current, segment)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
 }
 
 function isApprovedRouteResource(value: string, endpointPath: string, apiBaseOrigin: string): boolean {
@@ -1757,7 +1929,7 @@ function scanBoundedJsonTree(value: unknown): JsonTreeScanResult {
       const compactKey = tokenizeIdentifier(key).join("");
       if (
         X402_PAID_OUTPUT_SHAPE_KEYS.has(compactKey) &&
-        !isApprovedFullResponseBazaarDiscoveryPath(childPath)
+        !isApprovedFullResponseBazaarOutputCarrierPath(childPath, value)
       ) {
         result.hasPaidOutput = true;
       }
@@ -1768,12 +1940,32 @@ function scanBoundedJsonTree(value: unknown): JsonTreeScanResult {
   return result;
 }
 
-function isApprovedFullResponseBazaarDiscoveryPath(path: readonly JsonPathSegment[]): boolean {
-  const bazaarIndex = path.findIndex((segment) => segment === "bazaar");
-  if (bazaarIndex < 1 || path[bazaarIndex - 1] !== "extensions") {
-    return false;
+function isApprovedFullResponseBazaarOutputCarrierPath(
+  path: readonly JsonPathSegment[],
+  responseRoot: unknown
+): boolean {
+  if (
+    path.length > 2 &&
+    path[0] === "extensions" &&
+    path[1] === "bazaar"
+  ) {
+    return classifyBazaarOutputCarrierPath(
+      path.slice(1),
+      getJsonPathValue(responseRoot, ["extensions"])
+    ) !== "not_approved";
   }
-  return isApprovedBazaarDiscoveryPath(path.slice(bazaarIndex));
+  if (
+    path.length > 3 &&
+    path[0] === "payment_required" &&
+    path[1] === "extensions" &&
+    path[2] === "bazaar"
+  ) {
+    return classifyBazaarOutputCarrierPath(
+      path.slice(2),
+      getJsonPathValue(responseRoot, ["payment_required", "extensions"])
+    ) !== "not_approved";
+  }
+  return false;
 }
 
 function hasForbiddenLiveResponseMaterial(value: unknown): boolean {

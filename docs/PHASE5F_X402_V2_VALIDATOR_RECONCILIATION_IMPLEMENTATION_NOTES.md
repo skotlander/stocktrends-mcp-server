@@ -168,18 +168,49 @@ direct helpers:
 - descriptive family identity at `bazaar.info.family`,
   `bazaar.info.endpoint_family`, and the compact declaration
   `bazaar.schema.properties.family`;
-- descriptive discovery method at `bazaar.info.input.method` and its compact
-  JSON Schema declaration
-  `bazaar.schema.properties.input.properties.method`, plus the rich
-  registry-authored interpretation prerequisite at
-  `bazaar.info.interpretation_dependencies.dependency.method`;
-- rich safe-request example `method` and `path` at
-  `bazaar.info.input.example.{method,path}` and
-  `bazaar.info.examples[*].{method,path}`;
-- response-shape carrier names such as `data`, `results`, `rows`, and `records`
-  only inside the rich `bazaar.info.output.example` role or as an actual JSON
-  Schema property declaration under `bazaar.info.output.schema` or
-  `bazaar.schema.properties.output`.
+- descriptive discovery `method` at only these five source-authored roles:
+  `bazaar.info.input.method`,
+  `bazaar.schema.properties.input.properties.method`,
+  `bazaar.info.interpretation_dependencies.dependency.method`,
+  `bazaar.info.input.example.method`, and
+  `bazaar.info.examples[<index>].method`;
+- rich safe-request example `path` at
+  `bazaar.info.input.example.path` and
+  `bazaar.info.examples[<index>].path`; and
+- response-shape carrier names `api_data`, `data`, `results`, `rows`, and
+  `records` only at the exact output roles described below.
+
+Literal `method` is prohibited everywhere outside those five roles. Method and
+HTTP-method authority aliases are normalized by splitting camel/Pascal case,
+lower-casing, removing underscores, hyphens, dots, spaces, and other
+separators, and comparing the compact concept. This rejects `methodOverride`,
+`method_override`, `httpMethodOverride`, `http_method_override`,
+`methodAuthorityOverride`, `method_authority_override`, `httpMethod`,
+`http_method`, `executionMethod`, and `execution_method`, including mixed-case
+and mixed-separator equivalents. The descriptive values at the five permitted
+roles are ignored by execution; the relay's separately bound outbound method
+remains `GET`.
+
+Output-carrier allowances use one shared classifier in extension semantic
+validation and whole-response paid-output detection. It recognizes only:
+
+1. a direct carrier property of the one source-authored object at
+   `bazaar.info.output.example`; or
+2. a carrier property immediately following a structurally valid JSON Schema
+   `properties` node inside the actual source-authored output-schema roots
+   `bazaar.info.output.schema` or
+   `bazaar.schema.properties.output`.
+
+The schema classifier starts at an object schema and follows only validated
+object `properties` edges and object-valued array `items` edges. Every
+intermediate schema node must have the corresponding `type`, container, own
+property, and plain-object property schema. It rejects numeric array
+insertions, arbitrary or interposed keys, missing `properties`, structural
+property names that masquerade as repeated `properties`, extra ancestors, and
+non-source schema roots. It does not use descendant, ancestor, or string-prefix
+exemptions. Consequently fake output placements remain visible to the earlier
+whole-response paid-output scan and fail closed as
+`x402_live_challenge_paid_output_without_proof`.
 
 The ordinary bounded schema vocabulary, input property schemas, parameter
 descriptions, examples, output metadata, response-shape metadata, and other
@@ -227,6 +258,44 @@ extension semantics; shared array/object aggregate bounds; override aliases;
 benign substring cases; and deep optional preview, unknown body, extensions,
 and extra trees through both the direct helper and public MCP handler.
 
+The method-authority regression matrix covers 13 spellings:
+`methodOverride`, `method_override`, `httpMethodOverride`,
+`http_method_override`, `methodAuthorityOverride`,
+`method_authority_override`, `httpMethod`, `http_method`, `executionMethod`,
+`execution_method`, `HTTP-METHOD.OVERRIDE`, `Method Authority-Override`, and
+`EXECUTION.METHOD`. Every spelling is rejected at seven placements: the
+extension root, Bazaar root, Bazaar schema root, a nested schema property, a
+fake example, an array, and a near-legitimate method role. A separate matrix
+places literal `method` at the same seven non-source roles. Five positive cases
+exercise the exact permitted roles individually, verify one mocked request,
+verify no retry, fallback, or second route, prove the outbound method remains
+`GET`, and prove the descriptive sentinel is omitted from all returned output.
+
+The output-role regression matrix accepts direct `data`, `results`, and
+`api_data` example carriers; direct output-schema carriers; a nested object
+schema carrier; and an array-items object-schema carrier at the two exact
+source roots. It rejects these 18 fake placements and confirms they are not
+exempted from paid-output detection:
+
+- `bazaar.info.output.example.fake[0].data`;
+- `bazaar.info.output.example.fake.data`;
+- `bazaar.info.output.example.fake.properties.data`;
+- `bazaar.info.output.fake.example.data`;
+- `bazaar.info.output.example[0].data`;
+- `bazaar.schema.properties.output.fake.properties.data`;
+- `bazaar.schema.properties.output.properties.fake.properties.data`;
+- `bazaar.schema.output.properties.data`;
+- `bazaar.schema.properties.input.properties.data`;
+- `bazaar.schema.properties.output.properties.properties.properties.data`;
+- `bazaar.info.output.schema.data`;
+- `bazaar.info.output.schema.properties.payload.fake.properties.data`;
+- `bazaar.info.output.example.data.fake.records`;
+- `bazaar.info.output.schema.properties.payload.items[0].properties.data`;
+- `bazaar.data`;
+- `bazaar.info.arbitrary_metadata.data`;
+- `bazaar.info.output.example.Data`; and
+- `bazaar.info.output.example.apiData`.
+
 Security regressions restored from `origin/main` in canonical-v2 form cover
 direct helper use with the live flag absent or disabled, independently
 allowlisted tool/route mismatch, dishonest under-limit `Content-Length` with an
@@ -257,6 +326,15 @@ routes; representative rich acceptance; exact `family`, `method`, and `path`
 roles; source-mirrored schema, parameter, example, and output metadata;
 acceptance of `proofreading_note` and `seedling_metadata`; omission of accepted
 extension values; and absence of raw rejected sentinels.
+
+These final method/output corrections are additive to the earlier PR #76
+hardening. The iterative stack-safety and aggregate-resource bounds, direct
+tool-input snapshot boundary, exact canonical URL and route binding,
+header/body identity, amount/network/address/timeout validation, extension
+omission, safe coarse errors, and paid-output omission remain unchanged and
+covered. The restored transport regressions, separate PR #64 mock behavior,
+API-key behavior, exact nine-route allowlist, one-request/no-retry boundary,
+and unsupported fail-closed proof-forwarding behavior also remain covered.
 
 ## Unchanged capability boundaries
 

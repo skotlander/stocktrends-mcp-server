@@ -67,6 +67,52 @@ const REQUEST: X402ChallengeRelayRequest = {
 
 const LIVE_VALUE_SENTINEL = "synthetic-live-challenge-value-marker";
 const DIRECT_TOOL_INPUT_SENTINEL = "synthetic-direct-tool-input-secret-path-value";
+const METHOD_AUTHORITY_ALIASES = [
+  "methodOverride",
+  "method_override",
+  "httpMethodOverride",
+  "http_method_override",
+  "methodAuthorityOverride",
+  "method_authority_override",
+  "httpMethod",
+  "http_method",
+  "executionMethod",
+  "execution_method",
+  "HTTP-METHOD.OVERRIDE",
+  "Method Authority-Override",
+  "EXECUTION.METHOD"
+] as const;
+
+const METHOD_ALIAS_PLACEMENTS = [
+  "generic-extension-root",
+  "bazaar-root",
+  "bazaar-schema",
+  "nested-schema-property",
+  "fake-example",
+  "array",
+  "near-legitimate-method-role"
+] as const;
+
+const FAKE_OUTPUT_PLACEMENTS = [
+  "info.output.example.fake[0].data",
+  "info.output.example.fake.data",
+  "info.output.example.fake.properties.data",
+  "info.output.fake.example.data",
+  "info.output.example[0].data",
+  "schema.properties.output.fake.properties.data",
+  "schema.properties.output.properties.fake.properties.data",
+  "schema.output.properties.data",
+  "schema.properties.input.properties.data",
+  "schema.properties.output.properties.properties.properties.data",
+  "info.output.schema.data",
+  "info.output.schema.properties.payload.fake.properties.data",
+  "info.output.example.data.fake.records",
+  "info.output.schema.properties.payload.items[0].properties.data",
+  "bazaar.data",
+  "info.arbitrary_metadata.data",
+  "info.output.example.Data",
+  "info.output.example.apiData"
+] as const;
 
 const EXPECTED_TEN_TOOL_NAMES = [
   COST_ESTIMATE_TOOL_NAME,
@@ -1007,6 +1053,7 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     expect(richInterpretationDependency.method).toBe("GET");
     expect(richInputExample.method).toBe("GET");
     expect(richInputExample.path).toBe(pathSentinel);
+    expect(richExamples[0].method).toBe("GET");
     expect(richExamples[0].path).toBe(pathSentinel);
     expect(richOutput).toMatchObject({
       type: "json",
@@ -1062,6 +1109,139 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       }
     }
   });
+
+  it.each([
+    ["info.input.method", setRichInfoInputMethod],
+    ["schema.properties.input.properties.method", setSchemaInputMethod],
+    ["info.interpretation_dependencies.dependency.method", setRichDependencyMethod],
+    ["info.input.example.method", setRichInputExampleMethod],
+    ["info.examples[0].method", setRichExamplesMethod]
+  ] as const)("accepts exact source-authored method role %s without changing the outbound GET", async (_role, setMethod) => {
+    const extension = _role === "schema.properties.input.properties.method"
+      ? createCompactBazaarExtension()
+      : createRepresentativeRichBazaarExtension();
+    const descriptiveMethodSentinel = "SYNTHETIC_DESCRIPTIVE_METHOD_ONLY";
+    setMethod(extension, descriptiveMethodSentinel);
+
+    const fetchFn = vi.fn<FetchLike>(async (request, init) => {
+      expect(init.method).toBe("GET");
+      expect((request as URL).pathname).toBe(REQUEST.endpointPath);
+      return canonicalLiveHttpResponse(REQUEST.endpointPath, (body) => {
+        paymentRequirements(body).extensions = extension;
+      });
+    });
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+    try {
+      const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+      const output = structured<X402LivePaymentRequiredResult>(result);
+      expect(output.status, JSON.stringify(output)).toBe("payment_required");
+      expect(output.method).toBe("GET");
+      expect(output.http_method).toBe("GET");
+      expect(output.automatic_paid_retries).toBe(false);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result)).not.toContain(descriptiveMethodSentinel);
+      expect(contentText(result)).not.toContain(descriptiveMethodSentinel);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it.each(METHOD_AUTHORITY_ALIASES)(
+    "rejects normalized method-authority alias %s at every generic, Bazaar, schema, array, and near-source role",
+    async (alias) => {
+      for (const placement of METHOD_ALIAS_PLACEMENTS) {
+        const sentinel = `synthetic-method-authority-${placement}-marker`;
+        await expectSingleGetChallengeFailure(
+          buildMethodAliasExtension(alias, placement, sentinel),
+          "x402_live_challenge_prohibited_material",
+          sentinel
+        );
+      }
+    }
+  );
+
+  it.each(METHOD_ALIAS_PLACEMENTS)(
+    "rejects literal method outside an exact source-authored role at %s",
+    async (placement) => {
+      const sentinel = `synthetic-literal-method-${placement}-marker`;
+      await expectSingleGetChallengeFailure(
+        buildMethodAliasExtension("method", placement, sentinel),
+        "x402_live_challenge_prohibited_material",
+        sentinel
+      );
+    }
+  );
+
+  it("accepts exact output-example carriers and structurally valid output-schema property roles", async () => {
+    const extension = createRepresentativeRichBazaarExtension();
+    const infoOutput = bazaarInfo(extension).output as Record<string, unknown>;
+    const outputExample = infoOutput.example as Record<string, unknown>;
+    const infoOutputSchema = infoOutput.schema as Record<string, unknown>;
+    const infoOutputProperties = infoOutputSchema.properties as Record<string, unknown>;
+    const schemaProperties = bazaarSchema(extension).properties as Record<string, unknown>;
+    const callableOutputSchema = cloneJson(schemaProperties.output as Record<string, unknown>);
+    const callableOutputProperties = callableOutputSchema.properties as Record<string, unknown>;
+    const outputRoleSentinel = "synthetic-source-output-role-marker";
+
+    schemaProperties.output = callableOutputSchema;
+    outputExample.results = [{ status: outputRoleSentinel }];
+    outputExample.api_data = { status: outputRoleSentinel };
+    infoOutputProperties.rows = { type: "array", items: { type: "object" } };
+    infoOutputProperties.records = { type: "array", items: { type: "object" } };
+    infoOutputProperties.payload = {
+      type: "object",
+      properties: {
+        data: { type: "string", const: outputRoleSentinel }
+      }
+    };
+    callableOutputProperties.data = { type: "array", items: { type: "object" } };
+    callableOutputProperties.results = { type: "array", items: { type: "object" } };
+    callableOutputProperties.envelopes = {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          records: { type: "string", const: outputRoleSentinel }
+        }
+      }
+    };
+
+    const fetchFn = vi.fn<FetchLike>(async (request, init) => {
+      expect(init.method).toBe("GET");
+      expect((request as URL).pathname).toBe(REQUEST.endpointPath);
+      return canonicalLiveHttpResponse(REQUEST.endpointPath, (body) => {
+        paymentRequirements(body).extensions = extension;
+      });
+    });
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+    try {
+      const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+      const output = structured<X402LivePaymentRequiredResult>(result);
+      expect(output.status).toBe("payment_required");
+      expect(output.method).toBe("GET");
+      expect(output.http_method).toBe("GET");
+      expect(infoOutput.response_shape).toEqual(["request_id", "data.status"]);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result)).not.toContain(outputRoleSentinel);
+      expect(contentText(result)).not.toContain(outputRoleSentinel);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it.each(FAKE_OUTPUT_PLACEMENTS)(
+    "rejects fake Bazaar output carrier placement %s without exempting paid output",
+    async (placement) => {
+      const sentinel = `synthetic-fake-output-${placement.replace(/[^a-z0-9]+/gi, "-")}-marker`;
+      await expectSingleGetChallengeFailure(
+        buildFakeOutputPlacement(placement, sentinel),
+        "x402_live_challenge_paid_output_without_proof",
+        sentinel
+      );
+    }
+  );
 
   it.each([
     ["body", (body: Record<string, unknown>) => { body.synthetic_unknown = true; }],
@@ -2140,6 +2320,200 @@ function canonicalInjectedResponse(
     apiBaseOrigin: options.apiBaseOrigin ?? "https://api.stocktrends.com",
     body
   };
+}
+
+async function expectSingleGetChallengeFailure(
+  extension: Record<string, unknown>,
+  expectedErrorCode:
+    | "x402_live_challenge_prohibited_material"
+    | "x402_live_challenge_paid_output_without_proof",
+  sentinel: string
+): Promise<void> {
+  const requestedPaths: string[] = [];
+  const fetchFn = vi.fn<FetchLike>(async (request, init) => {
+    requestedPaths.push((request as URL).pathname);
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    return canonicalLiveHttpResponse(REQUEST.endpointPath, (body) => {
+      paymentRequirements(body).extensions = extension;
+    });
+  });
+  const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+  try {
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const output = structured<X402LiveRelayErrorResult>(result);
+    const serialized = `${JSON.stringify(result)}\n${contentText(result)}`;
+
+    expect(output.status).toBe("error");
+    expect(output.error.error_code).toBe(expectedErrorCode);
+    expect(output.error.http_method).toBe("GET");
+    expect(output.api_status).toBe(402);
+    expect(output.api_request_sent).toBe(true);
+    expect(output.automatic_paid_retries).toBe(false);
+    expect(output.paid_execution_authorized).toBe(false);
+    expect(output.paid_execution_occurred).toBe(false);
+    expect(output.proof_forwarded).toBe(false);
+    expect(output.spend_occurred).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(requestedPaths).toEqual([REQUEST.endpointPath]);
+    expect(serialized).not.toContain(sentinel);
+    expect(serialized).not.toContain('"extensions"');
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
+function setRichInfoInputMethod(extension: Record<string, unknown>, value: string): void {
+  const input = bazaarInfo(extension).input as Record<string, unknown>;
+  input.method = value;
+}
+
+function setSchemaInputMethod(extension: Record<string, unknown>, value: string): void {
+  const schemaProperties = bazaarSchema(extension).properties as Record<string, unknown>;
+  const inputSchema = schemaProperties.input as Record<string, unknown>;
+  const inputProperties = inputSchema.properties as Record<string, unknown>;
+  inputProperties.method = { type: "string", enum: [value] };
+}
+
+function setRichDependencyMethod(extension: Record<string, unknown>, value: string): void {
+  const dependencies = bazaarInfo(extension).interpretation_dependencies as Record<string, unknown>;
+  const dependency = dependencies.dependency as Record<string, unknown>;
+  dependency.method = value;
+}
+
+function setRichInputExampleMethod(extension: Record<string, unknown>, value: string): void {
+  const input = bazaarInfo(extension).input as Record<string, unknown>;
+  const example = input.example as Record<string, unknown>;
+  example.method = value;
+}
+
+function setRichExamplesMethod(extension: Record<string, unknown>, value: string): void {
+  const examples = bazaarInfo(extension).examples as Record<string, unknown>[];
+  examples[0].method = value;
+}
+
+function buildMethodAliasExtension(
+  alias: string,
+  placement: (typeof METHOD_ALIAS_PLACEMENTS)[number],
+  sentinel: string
+): Record<string, unknown> {
+  if (placement === "generic-extension-root") {
+    return { [alias]: sentinel };
+  }
+
+  const extension = createRepresentativeRichBazaarExtension();
+  if (placement === "bazaar-root") {
+    bazaarRoot(extension)[alias] = sentinel;
+  } else if (placement === "bazaar-schema") {
+    bazaarSchema(extension)[alias] = sentinel;
+  } else if (placement === "nested-schema-property") {
+    const schemaProperties = bazaarSchema(extension).properties as Record<string, unknown>;
+    const inputSchema = schemaProperties.input as Record<string, unknown>;
+    const inputProperties = inputSchema.properties as Record<string, unknown>;
+    inputProperties.synthetic_method_alias_container = {
+      type: "object",
+      properties: { [alias]: { type: "string", const: sentinel } }
+    };
+  } else if (placement === "fake-example") {
+    bazaarInfo(extension).fake_example = { [alias]: sentinel };
+  } else if (placement === "array") {
+    bazaarInfo(extension).synthetic_method_aliases = [{ [alias]: sentinel }];
+  } else {
+    const input = bazaarInfo(extension).input as Record<string, unknown>;
+    const example = input.example as Record<string, unknown>;
+    example.synthetic_nested_method_role = { [alias]: sentinel };
+  }
+  return extension;
+}
+
+function buildFakeOutputPlacement(
+  placement: (typeof FAKE_OUTPUT_PLACEMENTS)[number],
+  sentinel: string
+): Record<string, unknown> {
+  const extension = createRepresentativeRichBazaarExtension();
+  const bazaar = bazaarRoot(extension);
+  const info = bazaarInfo(extension);
+  const output = info.output as Record<string, unknown>;
+  const outputExample = output.example as Record<string, unknown>;
+  const infoOutputSchema = output.schema as Record<string, unknown>;
+  const infoOutputProperties = infoOutputSchema.properties as Record<string, unknown>;
+  const schema = bazaarSchema(extension);
+  const schemaProperties = schema.properties as Record<string, unknown>;
+  const callableInputSchema = schemaProperties.input as Record<string, unknown>;
+  const callableInputProperties = callableInputSchema.properties as Record<string, unknown>;
+  const callableOutputSchema = schemaProperties.output as Record<string, unknown>;
+  const callableOutputProperties = callableOutputSchema.properties as Record<string, unknown>;
+  const carrierSchema = { type: "string", const: sentinel };
+
+  switch (placement) {
+    case "info.output.example.fake[0].data":
+      outputExample.fake = [{ data: sentinel }];
+      break;
+    case "info.output.example.fake.data":
+      outputExample.fake = { data: sentinel };
+      break;
+    case "info.output.example.fake.properties.data":
+      outputExample.fake = { properties: { data: sentinel } };
+      break;
+    case "info.output.fake.example.data":
+      output.fake = { example: { data: sentinel } };
+      break;
+    case "info.output.example[0].data":
+      output.example = [{ data: sentinel }];
+      break;
+    case "schema.properties.output.fake.properties.data":
+      callableOutputSchema.fake = { properties: { data: carrierSchema } };
+      break;
+    case "schema.properties.output.properties.fake.properties.data":
+      callableOutputProperties.fake = { properties: { data: carrierSchema } };
+      break;
+    case "schema.output.properties.data":
+      schema.output = { type: "object", properties: { data: carrierSchema } };
+      break;
+    case "schema.properties.input.properties.data":
+      callableInputProperties.data = carrierSchema;
+      break;
+    case "schema.properties.output.properties.properties.properties.data":
+      callableOutputProperties.properties = {
+        type: "object",
+        properties: { data: carrierSchema }
+      };
+      break;
+    case "info.output.schema.data":
+      infoOutputSchema.data = carrierSchema;
+      break;
+    case "info.output.schema.properties.payload.fake.properties.data":
+      infoOutputProperties.payload = {
+        type: "object",
+        fake: { properties: { data: carrierSchema } }
+      };
+      break;
+    case "info.output.example.data.fake.records":
+      outputExample.data = { fake: { records: sentinel } };
+      break;
+    case "info.output.schema.properties.payload.items[0].properties.data":
+      infoOutputProperties.payload = {
+        type: "array",
+        items: [{ type: "object", properties: { data: carrierSchema } }]
+      };
+      break;
+    case "bazaar.data":
+      bazaar.data = sentinel;
+      break;
+    case "info.arbitrary_metadata.data":
+      info.arbitrary_metadata = { data: sentinel };
+      break;
+    case "info.output.example.Data":
+      outputExample.Data = sentinel;
+      break;
+    case "info.output.example.apiData":
+      outputExample.apiData = sentinel;
+      break;
+  }
+
+  return extension;
 }
 
 async function executeInjected(response: X402LiveChallengeResponse) {
