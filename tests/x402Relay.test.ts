@@ -26,6 +26,11 @@ import {
   X402_EXTENSION_MAX_STRING_BYTES,
   X402_EXTENSION_MAX_TOTAL_BYTES,
   X402_EXTENSION_MAX_TOTAL_MEMBERS,
+  X402_TOOL_INPUT_MAX_ARRAY_LENGTH,
+  X402_TOOL_INPUT_MAX_DEPTH,
+  X402_TOOL_INPUT_MAX_OBJECT_MEMBERS,
+  X402_TOOL_INPUT_MAX_STRING_BYTES,
+  X402_TOOL_INPUT_MAX_TOTAL_MEMBERS,
   X402_LIVE_CHALLENGE_FIELD_CATEGORIES,
   X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS,
   MAX_X402_PAYMENT_REQUIRED_DECODED_BYTES,
@@ -61,6 +66,7 @@ const REQUEST: X402ChallengeRelayRequest = {
 };
 
 const LIVE_VALUE_SENTINEL = "synthetic-live-challenge-value-marker";
+const DIRECT_TOOL_INPUT_SENTINEL = "synthetic-direct-tool-input-secret-path-value";
 
 const EXPECTED_TEN_TOOL_NAMES = [
   COST_ESTIMATE_TOOL_NAME,
@@ -384,6 +390,142 @@ describe("Phase 5F x402 public mock tool invocation", () => {
 
     await client.close();
     await server.close();
+  });
+});
+
+describe("Phase 5F bounded direct-helper tool input", () => {
+  const invalidCases: ReadonlyArray<readonly [string, () => unknown]> = [
+    ["deep object far above the depth limit", () => nestedToolInput("object", 7_000)],
+    ["deep array far above the depth limit", () => nestedToolInput("array", 7_000)],
+    ["deep alternating object and array input", () => alternatingToolInput(X402_TOOL_INPUT_MAX_DEPTH + 8)],
+    ["wide input above the aggregate budget", () => aggregateToolInput(X402_TOOL_INPUT_MAX_TOTAL_MEMBERS + 100)],
+    ["cyclic object", () => cyclicToolInput("object")],
+    ["cyclic array", () => cyclicToolInput("array")],
+    ["input immediately above the depth limit", () => nestedToolInput("object", X402_TOOL_INPUT_MAX_DEPTH + 1)],
+    ["input immediately above the aggregate budget", () => aggregateToolInput(X402_TOOL_INPUT_MAX_TOTAL_MEMBERS + 1)],
+    [
+      "object above the per-object member limit",
+      () => Object.fromEntries(
+        Array.from({ length: X402_TOOL_INPUT_MAX_OBJECT_MEMBERS + 1 }, (_, index) => [
+          `synthetic_member_${index}`,
+          index === 0 ? DIRECT_TOOL_INPUT_SENTINEL : index
+        ])
+      )
+    ],
+    [
+      "array above the per-array length limit",
+      () => Array.from(
+        { length: X402_TOOL_INPUT_MAX_ARRAY_LENGTH + 1 },
+        (_, index) => index === 0 ? DIRECT_TOOL_INPUT_SENTINEL : index
+      )
+    ],
+    [
+      "string above the string limit",
+      () => `${DIRECT_TOOL_INPUT_SENTINEL}${"x".repeat(X402_TOOL_INPUT_MAX_STRING_BYTES + 1)}`
+    ]
+  ];
+
+  for (const helper of ["mock", "live"] as const) {
+    it.each(invalidCases)(`${helper} rejects %s before reservation or fetch`, async (_name, buildInput) => {
+      await expectDirectToolInputRejected(helper, buildInput());
+    });
+
+    it.each([
+      ["immediately below depth", () => nestedToolInput("object", X402_TOOL_INPUT_MAX_DEPTH - 1)],
+      ["at depth", () => nestedToolInput("object", X402_TOOL_INPUT_MAX_DEPTH)],
+      ["immediately below aggregate budget", () => aggregateToolInput(X402_TOOL_INPUT_MAX_TOTAL_MEMBERS - 1)],
+      ["at aggregate budget", () => aggregateToolInput(X402_TOOL_INPUT_MAX_TOTAL_MEMBERS)]
+    ] as const)(`${helper} accepts %s and preserves normal behavior`, async (_name, buildInput) => {
+      await expectDirectToolInputAccepted(helper, buildInput());
+    });
+
+    it(`${helper} rejects cyclic, non-plain, accessor, and non-JSON-safe shapes coarsely`, async () => {
+      const getter = vi.fn(() => DIRECT_TOOL_INPUT_SENTINEL);
+      const withGetter: Record<string, unknown> = {};
+      Object.defineProperty(withGetter, "synthetic_getter_path", {
+        get: getter,
+        enumerable: true
+      });
+      const withSymbol = { safe: true } as Record<PropertyKey, unknown>;
+      withSymbol[Symbol("synthetic_symbol_path")] = DIRECT_TOOL_INPUT_SENTINEL;
+      const sparseArray = new Array(2);
+      sparseArray[0] = DIRECT_TOOL_INPUT_SENTINEL;
+      const customPropertyArray = [DIRECT_TOOL_INPUT_SENTINEL] as unknown as
+        unknown[] & Record<string, unknown>;
+      customPropertyArray.synthetic_custom_path = DIRECT_TOOL_INPUT_SENTINEL;
+      const withNonEnumerable: Record<string, unknown> = {};
+      Object.defineProperty(withNonEnumerable, "synthetic_hidden_path", {
+        value: DIRECT_TOOL_INPUT_SENTINEL,
+        enumerable: false
+      });
+
+      for (const input of [
+        withGetter,
+        withSymbol,
+        sparseArray,
+        customPropertyArray,
+        withNonEnumerable,
+        Object.create(null),
+        new Date(0),
+        { value: undefined },
+        undefined,
+        () => DIRECT_TOOL_INPUT_SENTINEL,
+        Symbol("synthetic-symbol-value"),
+        1n,
+        Number.NaN,
+        Number.POSITIVE_INFINITY
+      ]) {
+        await expectDirectToolInputRejected(helper, input);
+      }
+      expect(getter).not.toHaveBeenCalled();
+    });
+  }
+
+  it("preserves the existing deterministic normalized signature for valid mock and live inputs", async () => {
+    const firstInput = { z: [3, { b: true, a: "x" }], a: 1 };
+    const reorderedInput = { a: 1, z: [3, { a: "x", b: true }] };
+    const expectedSignature = JSON.stringify({
+      tool_name: REQUEST.toolName,
+      endpoint_path: REQUEST.endpointPath,
+      http_method: "GET",
+      input: { a: 1, z: [3, { a: "x", b: true }] }
+    });
+
+    const mockConfig = parseConfig(X402_ENV).x402Relay;
+    const mockState = createX402ChallengeSessionState();
+    expect(buildPublicMockX402ChallengeRelayResult(mockConfig, REQUEST, firstInput, mockState).status)
+      .toBe("payment_required");
+    const mockRepeat = buildPublicMockX402ChallengeRelayResult(
+      mockConfig,
+      REQUEST,
+      reorderedInput,
+      mockState
+    );
+    expect(mockRepeat.status === "error" && mockRepeat.error.error_code)
+      .toBe("x402_repeated_challenge_call");
+    expect([...mockState.completedSignatures]).toEqual([expectedSignature]);
+
+    const liveConfig = parseConfig(X402_LIVE_ENV).x402Relay;
+    const liveState = createX402LiveChallengeSessionState();
+    const fetchChallenge = vi.fn(async () => canonicalInjectedResponse(REQUEST.endpointPath));
+    expect((await executePublicLiveX402ChallengeRelay(
+      liveConfig,
+      REQUEST,
+      firstInput,
+      liveState,
+      fetchChallenge
+    )).status).toBe("payment_required");
+    const liveRepeat = await executePublicLiveX402ChallengeRelay(
+      liveConfig,
+      REQUEST,
+      reorderedInput,
+      liveState,
+      fetchChallenge
+    );
+    expect(liveRepeat.status === "error" && liveRepeat.error.error_code)
+      .toBe("x402_live_challenge_repeated_call");
+    expect([...liveState.reservedSignatures]).toEqual([expectedSignature]);
+    expect(fetchChallenge).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -821,15 +963,67 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
   });
 
   it("accepts family, method, path, schemas, and examples only at source-authored Bazaar discovery paths", async () => {
-    const compact = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
-    paymentRequirements(compact).extensions = createCompactBazaarExtension();
-    const rich = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
-    paymentRequirements(rich).extensions = createRepresentativeRichBazaarExtension();
+    const compactExtension = createCompactBazaarExtension();
+    const compactInfo = bazaarInfo(compactExtension);
+    const compactInput = compactInfo.input as Record<string, unknown>;
+    const compactSchemaProperties = bazaarSchema(compactExtension).properties as Record<string, unknown>;
+    const compactSchemaInput = compactSchemaProperties.input as Record<string, unknown>;
+    const compactSchemaInputProperties = compactSchemaInput.properties as Record<string, unknown>;
+    expect(compactInfo.family).toBe("synthetic-discovery-family");
+    expect(compactInput.method).toBe("GET");
+    expect(compactSchemaInputProperties.method).toEqual({ type: "string", enum: ["GET"] });
 
-    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: compact }))).status)
-      .toBe("payment_required");
-    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: rich }))).status)
-      .toBe("payment_required");
+    const compact = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(compact).extensions = compactExtension;
+
+    const richExtension = createRepresentativeRichBazaarExtension();
+    const richInfo = bazaarInfo(richExtension);
+    const richInput = richInfo.input as Record<string, unknown>;
+    const richInputExample = richInput.example as Record<string, unknown>;
+    const richExamples = richInfo.examples as Record<string, unknown>[];
+    const richInterpretationDependencies = richInfo.interpretation_dependencies as Record<string, unknown>;
+    const richInterpretationDependency = richInterpretationDependencies.dependency as Record<string, unknown>;
+    const richInputParameters = richInput.parameters as Record<string, unknown>[];
+    const richSchemaProperties = bazaarSchema(richExtension).properties as Record<string, unknown>;
+    const richSchemaInput = richSchemaProperties.input as Record<string, unknown>;
+    const richSchemaInputProperties = richSchemaInput.properties as Record<string, unknown>;
+    const richOutput = richInfo.output as Record<string, unknown>;
+    const familySentinel = "synthetic-source-role-family-marker";
+    const pathSentinel = "/v1/synthetic/source-role-path-marker";
+    const proofreadingSentinel = "synthetic-source-role-proofreading-marker";
+    const seedlingSentinel = "synthetic-source-role-seedling-marker";
+
+    richInfo.endpoint_family = familySentinel;
+    richInputExample.path = pathSentinel;
+    richExamples[0].path = pathSentinel;
+    richSchemaInputProperties.proofreading_note = {
+      type: "string",
+      description: proofreadingSentinel
+    };
+    richInputParameters[0].proofreading_note = proofreadingSentinel;
+    richOutput.seedling_metadata = seedlingSentinel;
+
+    expect(richInput.method).toBe("GET");
+    expect(richInterpretationDependency.method).toBe("GET");
+    expect(richInputExample.method).toBe("GET");
+    expect(richInputExample.path).toBe(pathSentinel);
+    expect(richExamples[0].path).toBe(pathSentinel);
+    expect(richOutput).toMatchObject({
+      type: "json",
+      example: { request_id: "req_synthetic_rich", data: { status: "synthetic" } }
+    });
+
+    const rich = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    paymentRequirements(rich).extensions = richExtension;
+
+    const compactResult = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: compact }));
+    const richResult = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: rich }));
+    expect(compactResult.status).toBe("payment_required");
+    expect(richResult.status).toBe("payment_required");
+    const serializedAccepted = `${JSON.stringify(compactResult)}\n${JSON.stringify(richResult)}`;
+    for (const omitted of [familySentinel, pathSentinel, proofreadingSentinel, seedlingSentinel]) {
+      expect(serializedAccepted).not.toContain(omitted);
+    }
 
     for (const [key, value] of [
       ["family", "synthetic-family"],
@@ -842,6 +1036,29 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       expect(result.status).toBe("error");
       if (result.status === "error") {
         expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+      }
+    }
+
+    for (const [key, value] of [
+      ["family", "synthetic-family"],
+      ["method", "GET"],
+      ["path", "/v1/synthetic/unapproved"]
+    ] as const) {
+      for (const placement of ["schema-root", "output-example"] as const) {
+        const unapproved = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+        const extension = createRepresentativeRichBazaarExtension();
+        if (placement === "schema-root") {
+          bazaarSchema(extension)[key] = value;
+        } else {
+          const output = bazaarInfo(extension).output as Record<string, unknown>;
+          (output.example as Record<string, unknown>)[key] = value;
+        }
+        paymentRequirements(unapproved).extensions = extension;
+        const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: unapproved }));
+        expect(result.status).toBe("error");
+        if (result.status === "error") {
+          expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+        }
       }
     }
   });
@@ -937,6 +1154,51 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
   );
 
   it.each([
+    "payment",
+    "payment_required",
+    "payment_status",
+    "settlement",
+    "settlement_status",
+    "transaction",
+    "transaction_hash",
+    "transactionHash",
+    "facilitator",
+    "facilitator_url",
+    "proof",
+    "payment_signature",
+    "authorization",
+    "privateKey",
+    "wallet_seed"
+  ])("rejects universally prohibited Bazaar schema concept %s at root and nested roles", async (key) => {
+    for (const placement of ["schema-root", "schema-nested"] as const) {
+      const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+      const extension = createRepresentativeRichBazaarExtension();
+      const schema = bazaarSchema(extension);
+      const sentinel = "synthetic-bazaar-schema-prohibited-marker";
+
+      if (placement === "schema-root") {
+        schema[key] = sentinel;
+      } else {
+        const properties = schema.properties as Record<string, unknown>;
+        const input = properties.input as Record<string, unknown>;
+        const inputProperties = input.properties as Record<string, unknown>;
+        inputProperties.synthetic_nested_metadata = {
+          type: "object",
+          properties: { [key]: { type: "string", const: sentinel } }
+        };
+      }
+
+      paymentRequirements(body).extensions = extension;
+      const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+      expect(result.status).toBe("error");
+      if (result.status === "error") {
+        expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+      }
+      expect(JSON.stringify(result)).not.toContain(sentinel);
+    }
+  });
+
+  it.each([
     "routeOverride",
     "route_override",
     "ROUTE-OVERRIDE",
@@ -949,15 +1211,36 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     "payToOverride",
     "timeout_override",
     "maxTimeoutSecondsOverride"
-  ])("rejects tokenized payment-semantic override key %s", async (key) => {
-    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
-    paymentRequirements(body).extensions = { synthetic_vendor: { [key]: "synthetic-override-marker" } };
-    const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
-    expect(result.status).toBe("error");
-    if (result.status === "error") {
-      expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+  ])("rejects tokenized payment-semantic override key %s outside and inside Bazaar schema roles", async (key) => {
+    for (const placement of ["generic", "schema-root", "schema-nested"] as const) {
+      const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+      const sentinel = "synthetic-override-marker";
+      if (placement === "generic") {
+        paymentRequirements(body).extensions = { synthetic_vendor: { [key]: sentinel } };
+      } else {
+        const extension = createRepresentativeRichBazaarExtension();
+        const schema = bazaarSchema(extension);
+        if (placement === "schema-root") {
+          schema[key] = sentinel;
+        } else {
+          const properties = schema.properties as Record<string, unknown>;
+          const input = properties.input as Record<string, unknown>;
+          const inputProperties = input.properties as Record<string, unknown>;
+          inputProperties.synthetic_nested_override = {
+            type: "object",
+            properties: { [key]: { type: "string", const: sentinel } }
+          };
+        }
+        paymentRequirements(body).extensions = extension;
+      }
+
+      const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+      expect(result.status).toBe("error");
+      if (result.status === "error") {
+        expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+      }
+      expect(JSON.stringify(result)).not.toContain(sentinel);
     }
-    expect(JSON.stringify(result)).not.toContain("synthetic-override-marker");
   });
 
   it("accepts benign longer words instead of substring-matching proof or seed", async () => {
@@ -1671,6 +1954,154 @@ describe("Phase 5F x402 redaction safety", () => {
   });
 });
 
+type DirectHelperKind = "mock" | "live";
+
+async function expectDirectToolInputRejected(helper: DirectHelperKind, input: unknown): Promise<void> {
+  if (helper === "mock") {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const state = createX402ChallengeSessionState();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("mock direct-helper input rejection must not fetch");
+    });
+    let result!: ReturnType<typeof buildPublicMockX402ChallengeRelayResult>;
+
+    try {
+      expect(() => {
+        result = buildPublicMockX402ChallengeRelayResult(config, REQUEST, input, state);
+      }).not.toThrow();
+      expect(result.status).toBe("error");
+      if (result.status !== "error") throw new Error("expected coarse tool-input rejection");
+      assertCoarseToolInputRejection(result);
+      expect(state.inFlightSignatures.size).toBe(0);
+      expect(state.completedSignatures.size).toBe(0);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+    return;
+  }
+
+  const config = parseConfig(X402_LIVE_ENV).x402Relay;
+  const state = createX402LiveChallengeSessionState();
+  const fetchChallenge = vi.fn(async () => canonicalInjectedResponse(REQUEST.endpointPath));
+  const result = await executePublicLiveX402ChallengeRelay(
+    config,
+    REQUEST,
+    input,
+    state,
+    fetchChallenge
+  );
+
+  expect(result.status).toBe("error");
+  if (result.status !== "error") throw new Error("expected coarse tool-input rejection");
+  assertCoarseToolInputRejection(result);
+  expect(state.totalReserved).toBe(0);
+  expect(state.reservedSignatures.size).toBe(0);
+  expect(state.reservedByTool.size).toBe(0);
+  expect(fetchChallenge).not.toHaveBeenCalled();
+}
+
+function assertCoarseToolInputRejection(
+  result: X402RelayErrorResult | X402LiveRelayErrorResult
+): void {
+  expect(result.error.error_code).toBe("x402_tool_input_invalid");
+  expect(result.error.denial_reason).toBe("x402_tool_input_invalid");
+  expect(result.api_request_sent).toBe(false);
+  expect(result.paid_execution_occurred).toBe(false);
+  expect(result.auth_header_sent).toBe(false);
+  expect(result.payment_header_sent).toBe(false);
+  expect(result.proof_forwarded).toBe(false);
+  expect(result.spend_occurred).toBe(false);
+  expect(result.paid_api_data_returned).toBe(false);
+  expect(result.automatic_paid_retries).toBe(false);
+  expect(JSON.stringify(result)).not.toContain(DIRECT_TOOL_INPUT_SENTINEL);
+}
+
+async function expectDirectToolInputAccepted(helper: DirectHelperKind, input: unknown): Promise<void> {
+  if (helper === "mock") {
+    const state = createX402ChallengeSessionState();
+    const result = buildPublicMockX402ChallengeRelayResult(
+      parseConfig(X402_ENV).x402Relay,
+      REQUEST,
+      input,
+      state
+    );
+    expect(result.status).toBe("payment_required");
+    expect(state.inFlightSignatures.size).toBe(0);
+    expect(state.completedSignatures.size).toBe(1);
+    expect(JSON.stringify(result)).not.toContain(DIRECT_TOOL_INPUT_SENTINEL);
+    return;
+  }
+
+  const state = createX402LiveChallengeSessionState();
+  const fetchChallenge = vi.fn(async () => canonicalInjectedResponse(REQUEST.endpointPath));
+  const result = await executePublicLiveX402ChallengeRelay(
+    parseConfig(X402_LIVE_ENV).x402Relay,
+    REQUEST,
+    input,
+    state,
+    fetchChallenge
+  );
+  expect(result.status).toBe("payment_required");
+  expect(state.totalReserved).toBe(1);
+  expect(state.reservedSignatures.size).toBe(1);
+  expect(fetchChallenge).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(result)).not.toContain(DIRECT_TOOL_INPUT_SENTINEL);
+}
+
+function nestedToolInput(kind: "object" | "array", depth: number): unknown {
+  let value: unknown = DIRECT_TOOL_INPUT_SENTINEL;
+  for (let index = 0; index < depth; index += 1) {
+    value = kind === "object"
+      ? { [`${DIRECT_TOOL_INPUT_SENTINEL}_path`]: value }
+      : [value];
+  }
+  return value;
+}
+
+function alternatingToolInput(depth: number): unknown {
+  let value: unknown = DIRECT_TOOL_INPUT_SENTINEL;
+  for (let index = 0; index < depth; index += 1) {
+    value = index % 2 === 0
+      ? { [`${DIRECT_TOOL_INPUT_SENTINEL}_path`]: value }
+      : [value];
+  }
+  return value;
+}
+
+function aggregateToolInput(totalMembers: number): unknown[] {
+  const groupCount = Math.ceil(totalMembers / (X402_TOOL_INPUT_MAX_ARRAY_LENGTH + 1));
+  if (groupCount > X402_TOOL_INPUT_MAX_ARRAY_LENGTH) {
+    throw new Error("synthetic aggregate fixture exceeds root array limit");
+  }
+  let remainingElements = totalMembers - groupCount;
+  let sentinelAssigned = false;
+  return Array.from({ length: groupCount }, () => {
+    const groupLength = Math.min(X402_TOOL_INPUT_MAX_ARRAY_LENGTH, remainingElements);
+    remainingElements -= groupLength;
+    return Array.from({ length: groupLength }, (_, index) => {
+      if (!sentinelAssigned && index === 0) {
+        sentinelAssigned = true;
+        return DIRECT_TOOL_INPUT_SENTINEL;
+      }
+      return index;
+    });
+  });
+}
+
+function cyclicToolInput(kind: "object" | "array"): unknown {
+  if (kind === "array") {
+    const value: unknown[] = [DIRECT_TOOL_INPUT_SENTINEL];
+    value.push(value);
+    return value;
+  }
+  const value: Record<string, unknown> = {
+    [`${DIRECT_TOOL_INPUT_SENTINEL}_path`]: DIRECT_TOOL_INPUT_SENTINEL
+  };
+  value.self = value;
+  return value;
+}
+
 function canonicalLiveHttpResponse(
   endpointPath: string,
   mutateBody?: (body: Record<string, unknown>) => void,
@@ -1861,10 +2292,10 @@ function createRepresentativeRichBazaarExtension(): Record<string, unknown> {
         example: 3,
         description: "Synthetic bounded discovery input."
       },
-      payment_context: {
+      market_context: {
         type: "string",
         enum: ["synthetic-descriptive-only"],
-        description: "Describes a payment-related API concept without authorizing payment."
+        description: "Describes a market-research API concept without granting execution authority."
       }
     },
     required: [],
@@ -1898,7 +2329,11 @@ function createRepresentativeRichBazaarExtension(): Record<string, unknown> {
         endpoint_family: "synthetic-discovery-family",
         workflow_context: "Synthetic workflow context.",
         interpretation_dependencies: {
-          dependency: "synthetic-prior-context",
+          dependency: {
+            endpoint: "/v1/synthetic/interpretation-profile",
+            method: "GET",
+            reason: "Synthetic prerequisite discovery metadata."
+          },
           guidance: "Use only as fixture metadata.",
           required_steps: ["inspect synthetic context", "return no extension values"]
         },
@@ -1964,10 +2399,21 @@ function createRepresentativeRichBazaarExtension(): Record<string, unknown> {
   };
 }
 
+function bazaarRoot(extension: Record<string, unknown>): Record<string, unknown> {
+  return extension.bazaar as Record<string, unknown>;
+}
+
+function bazaarInfo(extension: Record<string, unknown>): Record<string, unknown> {
+  return bazaarRoot(extension).info as Record<string, unknown>;
+}
+
+function bazaarSchema(extension: Record<string, unknown>): Record<string, unknown> {
+  return bazaarRoot(extension).schema as Record<string, unknown>;
+}
+
 function compactBazaarInfo(body: Record<string, unknown>): Record<string, unknown> {
   const extensions = paymentRequirements(body).extensions as Record<string, unknown>;
-  const bazaar = extensions.bazaar as Record<string, unknown>;
-  return bazaar.info as Record<string, unknown>;
+  return bazaarInfo(extensions);
 }
 
 function paymentRequirements(body: Record<string, unknown>): Record<string, unknown> {

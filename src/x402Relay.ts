@@ -74,6 +74,12 @@ export const X402_EXTENSION_MAX_ARRAY_LENGTH = 64;
 export const X402_EXTENSION_MAX_STRING_BYTES = 2 * 1024;
 export const X402_EXTENSION_MAX_TOTAL_BYTES = 24 * 1024;
 
+export const X402_TOOL_INPUT_MAX_DEPTH = 32;
+export const X402_TOOL_INPUT_MAX_OBJECT_MEMBERS = 64;
+export const X402_TOOL_INPUT_MAX_TOTAL_MEMBERS = 4_096;
+export const X402_TOOL_INPUT_MAX_ARRAY_LENGTH = 256;
+export const X402_TOOL_INPUT_MAX_STRING_BYTES = 16 * 1024;
+
 const X402_LIVE_RESPONSE_MAX_DEPTH = 32;
 const X402_LIVE_RESPONSE_MAX_OBJECT_MEMBERS = 1_024;
 const X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS = 8_192;
@@ -100,6 +106,7 @@ export type X402RelayErrorCode =
   | "x402_payment_required"
   | "x402_challenge_unavailable"
   | "x402_challenge_unexpected_shape"
+  | "x402_tool_input_invalid"
   | "x402_symbol_exchange_required"
   | "x402_repeated_challenge_call"
   | "x402_proof_forwarding_not_enabled"
@@ -533,15 +540,23 @@ export function buildPublicMockX402ChallengeRelayResult(
     return failClosed(config, normalizedRequest, "x402_route_not_allowlisted", options);
   }
 
-  if (containsProofLikeToolInput(toolInput)) {
+  const boundedToolInput = snapshotBoundedToolInput(toolInput);
+  if (!boundedToolInput.ok) {
+    return failClosed(config, normalizedRequest, "x402_tool_input_invalid", options);
+  }
+
+  if (containsProofLikeToolInput(boundedToolInput.value)) {
     return failClosed(config, normalizedRequest, "x402_proof_forwarding_not_enabled", options);
   }
 
-  if (requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) && !hasCanonicalSymbolExchangeOnly(toolInput)) {
+  if (
+    requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) &&
+    !hasCanonicalSymbolExchangeOnly(boundedToolInput.value)
+  ) {
     return failClosed(config, normalizedRequest, "x402_symbol_exchange_required", options);
   }
 
-  const signature = buildChallengeSignature(normalizedRequest, toolInput);
+  const signature = buildChallengeSignature(normalizedRequest, boundedToolInput.value);
   if (state.inFlightSignatures.has(signature) || state.completedSignatures.has(signature)) {
     return failClosed(config, normalizedRequest, "x402_repeated_challenge_call", options);
   }
@@ -595,7 +610,12 @@ export async function executePublicLiveX402ChallengeRelay(
     return failClosedLive(normalizedRequest, state, "x402_route_not_allowlisted", false, null);
   }
 
-  if (hasProofLikeInput(request) || containsProofLikeToolInput(toolInput)) {
+  const boundedToolInput = snapshotBoundedToolInput(toolInput);
+  if (!boundedToolInput.ok) {
+    return failClosedLive(normalizedRequest, state, "x402_tool_input_invalid", false, null);
+  }
+
+  if (hasProofLikeInput(request) || containsProofLikeToolInput(boundedToolInput.value)) {
     return failClosedLive(
       normalizedRequest,
       state,
@@ -605,11 +625,14 @@ export async function executePublicLiveX402ChallengeRelay(
     );
   }
 
-  if (requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) && !hasCanonicalSymbolExchangeOnly(toolInput)) {
+  if (
+    requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) &&
+    !hasCanonicalSymbolExchangeOnly(boundedToolInput.value)
+  ) {
     return failClosedLive(normalizedRequest, state, "x402_symbol_exchange_required", false, null);
   }
 
-  const signature = buildChallengeSignature(normalizedRequest, toolInput);
+  const signature = buildChallengeSignature(normalizedRequest, boundedToolInput.value);
   if (state.reservedSignatures.has(signature)) {
     return failClosedLive(
       normalizedRequest,
@@ -905,6 +928,7 @@ const X402_EXTENSION_SHADOW_KEYS = new Set([
   "rows",
   "records"
 ]);
+const X402_PAID_OUTPUT_SHAPE_KEYS = new Set(["apidata", "data", "results", "rows", "records"]);
 
 type JsonPathSegment = string | number;
 type ExtensionSemanticContext = "generic" | "bazaar_extensions";
@@ -1337,13 +1361,20 @@ function isProhibitedExtensionKey(
     tokenSet.has("proof") ||
     tokenSet.has("signature") ||
     tokenSet.has("authorization") ||
+    tokenSet.has("authentication") ||
+    tokenSet.has("auth") ||
     tokenSet.has("mnemonic") ||
+    tokenSet.has("secret") ||
     (tokenSet.has("private") && tokenSet.has("key")) ||
     (tokenSet.has("wallet") && (tokenSet.has("seed") || tokenSet.has("secret"))) ||
     (tokenSet.has("seed") && tokenSet.has("phrase")) ||
-    (tokenSet.has("auth") && tokenSet.has("token")) ||
+    ((tokenSet.has("auth") || tokenSet.has("authentication")) && tokenSet.has("token")) ||
     (tokenSet.has("bearer") && tokenSet.has("token")) ||
-    (tokenSet.has("api") && tokenSet.has("key"))
+    (tokenSet.has("api") && tokenSet.has("key")) ||
+    tokenSet.has("payment") ||
+    tokenSet.has("settlement") ||
+    tokenSet.has("transaction") ||
+    tokenSet.has("facilitator")
   ) {
     return true;
   }
@@ -1358,13 +1389,7 @@ function isProhibitedExtensionKey(
     return false;
   }
 
-  return (
-    X402_EXTENSION_SHADOW_KEYS.has(compact) ||
-    tokenSet.has("payment") ||
-    tokenSet.has("settlement") ||
-    tokenSet.has("transaction") ||
-    tokenSet.has("facilitator")
-  );
+  return X402_EXTENSION_SHADOW_KEYS.has(compact);
 }
 
 function tokenizeIdentifier(value: string): string[] {
@@ -1410,32 +1435,84 @@ function isPaymentSemanticOverride(compactKey: string): boolean {
 }
 
 function isApprovedBazaarDiscoveryPath(path: readonly JsonPathSegment[]): boolean {
-  if (path[0] !== "bazaar") {
-    return false;
-  }
-  if (path[1] === "schema") {
-    return true;
-  }
-  if (path[1] !== "info") {
+  const lastSegment = path[path.length - 1];
+  if (path[0] !== "bazaar" || typeof lastSegment !== "string") {
     return false;
   }
 
-  const area = path[2];
-  if ((area === "family" || area === "endpoint_family") && path.length === 3) {
+  // build_compact_bazaar_extension() and build_bazaar_extension() author these
+  // exact descriptive identity fields. They describe discovery grouping; they
+  // do not select the relay route, method, payment terms, or execution mode.
+  if (
+    pathsEqual(path, ["bazaar", "info", "family"]) ||
+    pathsEqual(path, ["bazaar", "info", "endpoint_family"]) ||
+    pathsEqual(path, ["bazaar", "schema", "properties", "family"])
+  ) {
     return true;
   }
-  return [
-    "input",
-    "output",
-    "examples",
-    "related_endpoints",
-    "next_recommended_calls",
-    "interpretation_dependencies",
-    "inference_contract",
-    "inference_provider",
-    "provider",
-    "provenance_reference"
-  ].includes(String(area));
+
+  // Both builders place the descriptive HTTP method in info.input. The compact
+  // builder declares it in JSON Schema; the rich builder may also copy the
+  // registry-authored interpretation dependency method. These values describe
+  // discovery metadata and never override the separately bound GET request.
+  if (
+    pathsEqual(path, ["bazaar", "info", "input", "method"]) ||
+    pathsEqual(path, ["bazaar", "schema", "properties", "input", "properties", "method"]) ||
+    pathsEqual(path, ["bazaar", "info", "interpretation_dependencies", "dependency", "method"])
+  ) {
+    return true;
+  }
+
+  // build_bazaar_extension() copies safe_example_request only into these two
+  // request-example roles. method/path here are inert example metadata, not
+  // authority over the invoked route or the actual GET method.
+  if (
+    pathsEqual(path, ["bazaar", "info", "input", "example", "method"]) ||
+    pathsEqual(path, ["bazaar", "info", "input", "example", "path"]) ||
+    (
+      path.length === 5 &&
+      path[0] === "bazaar" &&
+      path[1] === "info" &&
+      path[2] === "examples" &&
+      typeof path[3] === "number" &&
+      (path[4] === "method" || path[4] === "path")
+    )
+  ) {
+    return true;
+  }
+
+  // Rich output examples and output-schema property declarations may name the
+  // response-shape carriers that the API builder is documenting. Only those
+  // carrier names are exempted, only in these output roles; other shadow names
+  // remain prohibited even below schema/example/output ancestors.
+  const compactKey = tokenizeIdentifier(lastSegment).join("");
+  if (!X402_PAID_OUTPUT_SHAPE_KEYS.has(compactKey)) {
+    return false;
+  }
+  if (hasPathPrefix(path, ["bazaar", "info", "output", "example"])) {
+    return true;
+  }
+  return (
+    path[path.length - 2] === "properties" &&
+    (
+      hasPathPrefix(path, ["bazaar", "info", "output", "schema"]) ||
+      hasPathPrefix(path, ["bazaar", "schema", "properties", "output"])
+    )
+  );
+}
+
+function pathsEqual(
+  path: readonly JsonPathSegment[],
+  expected: readonly JsonPathSegment[]
+): boolean {
+  return path.length === expected.length && path.every((segment, index) => segment === expected[index]);
+}
+
+function hasPathPrefix(
+  path: readonly JsonPathSegment[],
+  prefix: readonly JsonPathSegment[]
+): boolean {
+  return path.length > prefix.length && prefix.every((segment, index) => path[index] === segment);
 }
 
 function isApprovedRouteResource(value: string, endpointPath: string, apiBaseOrigin: string): boolean {
@@ -1679,8 +1756,7 @@ function scanBoundedJsonTree(value: unknown): JsonTreeScanResult {
       const childPath = [...current.path, key];
       const compactKey = tokenizeIdentifier(key).join("");
       if (
-        X402_EXTENSION_SHADOW_KEYS.has(compactKey) &&
-        ["apidata", "data", "results", "rows", "records"].includes(compactKey) &&
+        X402_PAID_OUTPUT_SHAPE_KEYS.has(compactKey) &&
         !isApprovedFullResponseBazaarDiscoveryPath(childPath)
       ) {
         result.hasPaidOutput = true;
@@ -1931,9 +2007,226 @@ function hasCanonicalSymbolExchangeOnly(value: unknown): boolean {
   );
 }
 
+type JsonSafeToolInput =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonSafeToolInput[]
+  | { [key: string]: JsonSafeToolInput };
+
+type BoundedToolInputSnapshot =
+  | { ok: true; value: JsonSafeToolInput }
+  | { ok: false };
+
+type ToolInputCloneContainer = JsonSafeToolInput[] | { [key: string]: JsonSafeToolInput };
+
+interface ToolInputCloneTarget {
+  parent: ToolInputCloneContainer | null;
+  key: string | number | null;
+}
+
+type ToolInputCloneFrame =
+  | {
+      kind: "visit";
+      value: unknown;
+      depth: number;
+      target: ToolInputCloneTarget;
+    }
+  | { kind: "leave"; value: object };
+
+/**
+ * Iteratively validates and snapshots direct-helper input before signature
+ * normalization. Reflection reads data-property descriptors without invoking
+ * getters; the resulting snapshot contains only bounded plain JSON values.
+ */
+function snapshotBoundedToolInput(value: unknown): BoundedToolInputSnapshot {
+  try {
+    const root: { value?: JsonSafeToolInput } = {};
+    const activeAncestors = new WeakSet<object>();
+    let totalMembers = 0;
+    const stack: ToolInputCloneFrame[] = [
+      {
+        kind: "visit",
+        value,
+        depth: 0,
+        target: { parent: null, key: null }
+      }
+    ];
+
+    while (stack.length > 0) {
+      const frame = stack.pop()!;
+      if (frame.kind === "leave") {
+        activeAncestors.delete(frame.value);
+        continue;
+      }
+
+      if (frame.depth > X402_TOOL_INPUT_MAX_DEPTH) {
+        return { ok: false };
+      }
+
+      const current = frame.value;
+      if (current === null || typeof current === "boolean") {
+        assignToolInputClone(root, frame.target, current);
+        continue;
+      }
+      if (typeof current === "number") {
+        if (!Number.isFinite(current)) return { ok: false };
+        assignToolInputClone(root, frame.target, current);
+        continue;
+      }
+      if (typeof current === "string") {
+        if (!isBoundedUtf8String(current, 0, X402_TOOL_INPUT_MAX_STRING_BYTES)) {
+          return { ok: false };
+        }
+        assignToolInputClone(root, frame.target, current);
+        continue;
+      }
+      if (typeof current !== "object") {
+        return { ok: false };
+      }
+
+      if (activeAncestors.has(current)) {
+        return { ok: false };
+      }
+
+      if (Array.isArray(current)) {
+        if (
+          Object.getPrototypeOf(current) !== Array.prototype ||
+          current.length > X402_TOOL_INPUT_MAX_ARRAY_LENGTH
+        ) {
+          return { ok: false };
+        }
+
+        const ownKeys = Reflect.ownKeys(current);
+        if (
+          ownKeys.some((key) => typeof key === "symbol") ||
+          ownKeys.length !== current.length + 1 ||
+          !ownKeys.includes("length")
+        ) {
+          return { ok: false };
+        }
+
+        const childValues: unknown[] = [];
+        for (let index = 0; index < current.length; index += 1) {
+          const descriptor = Object.getOwnPropertyDescriptor(current, String(index));
+          if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+            return { ok: false };
+          }
+          childValues.push(descriptor.value);
+        }
+        if (
+          ownKeys.some(
+            (key) =>
+              typeof key === "string" &&
+              key !== "length" &&
+              (!/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= current.length)
+          )
+        ) {
+          return { ok: false };
+        }
+
+        totalMembers += current.length;
+        if (totalMembers > X402_TOOL_INPUT_MAX_TOTAL_MEMBERS) {
+          return { ok: false };
+        }
+
+        const clone: JsonSafeToolInput[] = new Array(current.length);
+        assignToolInputClone(root, frame.target, clone);
+        activeAncestors.add(current);
+        stack.push({ kind: "leave", value: current });
+        for (let index = childValues.length - 1; index >= 0; index -= 1) {
+          stack.push({
+            kind: "visit",
+            value: childValues[index],
+            depth: frame.depth + 1,
+            target: { parent: clone, key: index }
+          });
+        }
+        continue;
+      }
+
+      if (Object.getPrototypeOf(current) !== Object.prototype) {
+        return { ok: false };
+      }
+
+      const ownKeys = Reflect.ownKeys(current);
+      if (
+        ownKeys.some((key) => typeof key === "symbol") ||
+        ownKeys.length > X402_TOOL_INPUT_MAX_OBJECT_MEMBERS
+      ) {
+        return { ok: false };
+      }
+
+      const entries: Array<[string, unknown]> = [];
+      for (const ownKey of ownKeys) {
+        if (
+          typeof ownKey !== "string" ||
+          !isBoundedUtf8String(ownKey, 0, X402_TOOL_INPUT_MAX_STRING_BYTES)
+        ) {
+          return { ok: false };
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(current, ownKey);
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+          return { ok: false };
+        }
+        entries.push([ownKey, descriptor.value]);
+      }
+
+      totalMembers += entries.length;
+      if (totalMembers > X402_TOOL_INPUT_MAX_TOTAL_MEMBERS) {
+        return { ok: false };
+      }
+
+      const clone: { [key: string]: JsonSafeToolInput } = {};
+      assignToolInputClone(root, frame.target, clone);
+      activeAncestors.add(current);
+      stack.push({ kind: "leave", value: current });
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const [key, child] = entries[index];
+        stack.push({
+          kind: "visit",
+          value: child,
+          depth: frame.depth + 1,
+          target: { parent: clone, key }
+        });
+      }
+    }
+
+    return Object.prototype.hasOwnProperty.call(root, "value")
+      ? { ok: true, value: root.value! }
+      : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function assignToolInputClone(
+  root: { value?: JsonSafeToolInput },
+  target: ToolInputCloneTarget,
+  value: JsonSafeToolInput
+): void {
+  if (target.parent === null) {
+    root.value = value;
+    return;
+  }
+  if (Array.isArray(target.parent)) {
+    if (typeof target.key !== "number") throw new Error("invalid tool-input clone target");
+    target.parent[target.key] = value;
+    return;
+  }
+  if (typeof target.key !== "string") throw new Error("invalid tool-input clone target");
+  Object.defineProperty(target.parent, target.key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
+}
+
 function buildChallengeSignature(
   request: Required<Pick<X402ChallengeRelayRequest, "toolName" | "endpointPath">> & { httpMethod: PaidHttpMethod },
-  toolInput: unknown
+  toolInput: JsonSafeToolInput
 ): string {
   return JSON.stringify({
     tool_name: request.toolName,
@@ -2023,6 +2316,8 @@ function liveSafetyMetadata(
 
 function liveErrorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_required">): string {
   switch (errorCode) {
+    case "x402_tool_input_invalid":
+      return "The x402 tool input was not bounded JSON-safe data. No reservation, request, retry, fallback, or second route occurred.";
     case "x402_symbol_exchange_required":
       return "Live no-key x402 challenge mode requires canonical symbol_exchange input for symbol-dependent tools. No resolver or request was used.";
     case "x402_proof_forwarding_not_enabled":
@@ -2124,6 +2419,8 @@ function errorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_requi
       return "x402 challenge execution is not enabled or the mock challenge is unavailable. No request was sent.";
     case "x402_challenge_unexpected_shape":
       return "The mock x402 challenge did not match the verified PR #64 shape. No proof path is enabled.";
+    case "x402_tool_input_invalid":
+      return "The x402 tool input was not bounded JSON-safe data. No reservation, request, retry, fallback, or second route occurred.";
     case "x402_symbol_exchange_required":
       return "Mock x402 challenge mode requires canonical symbol_exchange input for symbol-dependent tools. No resolver or request was used.";
     case "x402_repeated_challenge_call":

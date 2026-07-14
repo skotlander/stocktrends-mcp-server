@@ -77,6 +77,34 @@ identical JSON types, keys, array lengths/order, and values. Object key order is
 ignored. Excessive structure and divergence return stable coarse errors
 without a path, key, or value.
 
+## Direct-helper tool-input and signature boundary
+
+Both direct helpers that generate a repeated-call signature now validate and
+snapshot the complete `toolInput` before calling `buildChallengeSignature()`:
+`buildPublicMockX402ChallengeRelayResult()` and
+`executePublicLiveX402ChallengeRelay()`. Those are the only production call
+sites. The snapshot traversal is iterative and accepts only JSON-safe scalars,
+plain objects, and dense plain arrays. It reads data-property descriptors
+without invoking getters and rejects accessors, symbol or non-enumerable
+properties, sparse or custom-property arrays, non-plain prototypes, cycles,
+`undefined`, functions, symbols, bigint, and non-finite numbers.
+
+The direct-input limits are depth 32, at most 64 members in one object, 256
+elements in one array, 4,096 aggregate object entries plus array elements, and
+16 KiB of UTF-8 for each string value or key. The aggregate count includes
+every serialized occurrence, including repeated non-cyclic object references.
+Over-depth, over-budget, cyclic, reflective-error, or non-JSON-safe input
+returns the single coarse `x402_tool_input_invalid` result before reservation
+or fetch. That result includes no rejected path, key, value, or sentinel and
+causes no retry, fallback, or second route.
+
+Signature key sorting remains recursive only on the newly created bounded
+plain snapshot, never on the attacker-supplied object graph. Therefore no
+arbitrarily nested attacker-controlled structure reaches signature recursion.
+For previously valid inputs, the snapshot preserves JSON scalar and array
+semantics and the existing recursive sorter preserves the exact deterministic
+signature serialization, including recursive object-key sorting.
+
 ## Resource, value, and network binding
 
 `payment_required.resource` is validated as the exact six-key `ResourceInfo`
@@ -122,22 +150,48 @@ accepted.
 
 The prohibited-key policy tokenizes camelCase and separator/case variants
 rather than matching arbitrary substrings. Proof, signature, authorization,
-auth-token, private-key, wallet-seed, payment, settlement, transaction, and
-payment-semantic override concepts remain prohibited at unapproved paths.
-Consequently `routeOverride`, `amount_override`, `network.override`,
-`payToOverride`, and `maxTimeoutSecondsOverride` fail closed, while benign
-`proofreading_note` and `seedling_metadata` do not fail solely because they
-contain shorter character sequences.
+authentication-token, secret, private-key, wallet-seed, payment, settlement,
+transaction, transaction-hash, facilitator, payment execution/completion, and
+payment-semantic override concepts are checked before every Bazaar or generic
+path allowance. They therefore remain universally prohibited, including below
+ancestors named `schema`, `example`, `input`, `output`, or `info`. Consequently
+`routeOverride`, `amount_override`, `network.override`, `payToOverride`, and
+`maxTimeoutSecondsOverride` fail closed at generic, schema-root, and nested
+schema paths, while benign `proofreading_note` and `seedling_metadata` do not
+fail solely because they contain shorter character sequences.
 
-The policy is also path- and semantic-role-aware for the source-authored
-`extensions.bazaar` discovery hierarchy. Compact `bazaar.info.family`,
-discovery `info.input.method`, rich safe-example `method` and `path`, input and
-output schemas, parameters, and examples are treated as descriptive metadata,
-not as invoked-route, HTTP-execution, payment amount, payee, asset, network,
-timeout, proof, settlement, or authorization authority. The same shadow or
-override concepts remain rejected outside approved Bazaar discovery paths.
-All extension data continues to be ignored for payment semantics and omitted
-from MCP output and errors.
+The previous blanket allowance for every key below `bazaar.schema` was
+removed. The remaining shadow-key exceptions are exact builder roles derived
+from `build_compact_bazaar_extension()`, `build_bazaar_extension()`, and their
+direct helpers:
+
+- descriptive family identity at `bazaar.info.family`,
+  `bazaar.info.endpoint_family`, and the compact declaration
+  `bazaar.schema.properties.family`;
+- descriptive discovery method at `bazaar.info.input.method` and its compact
+  JSON Schema declaration
+  `bazaar.schema.properties.input.properties.method`, plus the rich
+  registry-authored interpretation prerequisite at
+  `bazaar.info.interpretation_dependencies.dependency.method`;
+- rich safe-request example `method` and `path` at
+  `bazaar.info.input.example.{method,path}` and
+  `bazaar.info.examples[*].{method,path}`;
+- response-shape carrier names such as `data`, `results`, `rows`, and `records`
+  only inside the rich `bazaar.info.output.example` role or as an actual JSON
+  Schema property declaration under `bazaar.info.output.schema` or
+  `bazaar.schema.properties.output`.
+
+The ordinary bounded schema vocabulary, input property schemas, parameter
+descriptions, examples, output metadata, response-shape metadata, and other
+non-shadow descriptive fields remain accepted at the source-mirrored compact
+and rich roles. No `schema`, `example`, `input`, `output`, or `info` subtree is
+itself an exemption. Route/path authority, actual HTTP execution method,
+amount, price, asset, token, payee/`payTo`, recipient/address, network/chain,
+scheme, timeout/expiry, proof, authorization, payment, settlement,
+transaction, and facilitator semantics remain rejected outside the exact
+descriptive exceptions above. All extension data continues to be ignored for
+payment semantics and omitted from MCP text, structured output, metadata,
+errors, and logs.
 
 ## Safe output and failure behavior
 
@@ -182,6 +236,27 @@ Node's `Headers`. Existing manual-redirect, one-request, no-retry,
 paid-output-without-proof, reservation/cap, symbol-policy, surface-count,
 mock-mode, API-key-mode, and public PR #64 mock-only regressions remain covered.
 All HTTP behavior is injected or mocked.
+
+Focused direct-helper regressions cover 7,000-level objects and arrays,
+alternating object/array nesting, cycles in objects and arrays, per-container
+and aggregate breadth, exact depth and aggregate boundaries, long strings,
+accessors, symbols, prototypes, sparse/unsafe structures, `undefined`,
+functions, bigint, and non-finite numbers. Rejected live inputs reserve nothing
+and invoke no fetch callback; rejected mock inputs create no in-flight or
+completed signature. Accepted boundary inputs retain normal mock/live behavior,
+and an exact expected signature plus reordered equivalent input proves the
+existing deterministic signature is unchanged.
+
+Focused Bazaar regressions reject `payment`, `payment_required`,
+`payment_status`, `settlement`, `settlement_status`, `transaction`,
+`transaction_hash`, `transactionHash`, `facilitator`, `facilitator_url`,
+`proof`, `payment_signature`, `authorization`, `privateKey`, and `wallet_seed`
+at both schema-root and representative nested schema roles. They also prove
+override rejection inside those roles; compact acceptance across all nine
+routes; representative rich acceptance; exact `family`, `method`, and `path`
+roles; source-mirrored schema, parameter, example, and output metadata;
+acceptance of `proofreading_note` and `seedling_metadata`; omission of accepted
+extension values; and absence of raw rejected sentinels.
 
 ## Unchanged capability boundaries
 
