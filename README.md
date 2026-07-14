@@ -609,3 +609,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5F x402 Live No-Key Challenge Relay Plan](docs/PHASE5F_X402_LIVE_NO_KEY_CHALLENGE_RELAY_PLAN.md)
 - [Phase 5F x402 Live No-Key Challenge Implementation Notes](docs/PHASE5F_X402_LIVE_NO_KEY_CHALLENGE_IMPLEMENTATION_NOTES.md)
 - [Phase 5F x402 Live No-Key Challenge Relay Validation Report](docs/PHASE5F_X402_LIVE_NO_KEY_CHALLENGE_RELAY_VALIDATION_REPORT.md)
+- [Phase 5F x402 Live Challenge Contract-Drift Diagnosis](docs/PHASE5F_X402_LIVE_CHALLENGE_CONTRACT_DRIFT_DIAGNOSIS.md)
