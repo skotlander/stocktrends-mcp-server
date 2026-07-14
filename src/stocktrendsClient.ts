@@ -16,6 +16,7 @@ export interface PublicEndpointResponse {
 export type JsonObject = Record<string, unknown>;
 export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
 export const MAX_X402_CHALLENGE_RESPONSE_BYTES = 64 * 1024;
+export const MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES = 64 * 1024;
 
 // Selected, non-secret ST-IM response metadata headers captured from a paid
 // response. Every field is optional (the metering middleware only emits each
@@ -73,6 +74,9 @@ export interface NoKeyX402ChallengeRequest {
 export interface NoKeyX402ChallengeResponse {
   status: number;
   approvedHeaderNamesPresent: string[];
+  paymentRequiredHeader: string | null;
+  paymentRequiredHeaderState: "missing" | "present" | "oversized";
+  apiBaseOrigin: string;
   body: JsonObject | null;
 }
 
@@ -246,8 +250,9 @@ export class StockTrendsClient {
   // Dedicated live no-key x402 challenge path. It is deliberately separate
   // from both public-resource/discovery reads and the API-key paid path: one
   // GET attempt, no credentials, no auth/payment/proof header, no body, no
-  // redirect following, and no retry. Only approved header NAMES are observed;
-  // header values (including x-request-id) are never read or returned.
+  // redirect following, and no retry. Only approved header NAMES plus the
+  // authoritative standard Payment-Required value are observed. No unrelated
+  // header value (including x-request-id or x-stocktrends-* metadata) is read.
   async fetchNoKeyX402Challenge(request: NoKeyX402ChallengeRequest): Promise<NoKeyX402ChallengeResponse> {
     const url = this.buildUrl(request.endpointPath);
 
@@ -284,6 +289,9 @@ export class StockTrendsClient {
     const approvedHeaderNamesPresent = request.approvedHeaderNames
       .map((name) => name.toLowerCase())
       .filter((name) => response.headers.has(name));
+    const rawPaymentRequiredHeader = response.headers.get("payment-required");
+    const paymentRequiredHeaderState = classifyPaymentRequiredHeader(rawPaymentRequiredHeader);
+    const paymentRequiredHeader = paymentRequiredHeaderState === "present" ? rawPaymentRequiredHeader : null;
     let body: JsonObject | null = null;
     const declaredLengthApproved = hasApprovedX402ChallengeContentLength(response);
 
@@ -305,6 +313,9 @@ export class StockTrendsClient {
     return {
       status: response.status,
       approvedHeaderNamesPresent,
+      paymentRequiredHeader,
+      paymentRequiredHeaderState,
+      apiBaseOrigin: this.apiBaseOrigin,
       body
     };
   }
@@ -444,6 +455,24 @@ function hasApprovedX402ChallengeContentLength(response: Response): boolean {
     declaredLength >= 0 &&
     declaredLength <= MAX_X402_CHALLENGE_RESPONSE_BYTES
   );
+}
+
+function classifyPaymentRequiredHeader(value: string | null): "missing" | "present" | "oversized" {
+  if (value === null) {
+    return "missing";
+  }
+
+  // A valid standard-base64 value is ASCII, so the code-unit check is an
+  // allocation-safe first bound. The UTF-8 byte check keeps the cap explicit
+  // even for malformed non-ASCII header material.
+  if (
+    value.length > MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES ||
+    new TextEncoder().encode(value).byteLength > MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES
+  ) {
+    return "oversized";
+  }
+
+  return "present";
 }
 
 async function readBoundedX402ChallengeBody(

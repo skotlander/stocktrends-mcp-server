@@ -1,6 +1,9 @@
 import { StockTrendsMcpError } from "./errors.js";
 import { AUTH_CAPABLE_PAID_ENDPOINT_POLICIES, type PaidHttpMethod } from "./paidPolicy.js";
-import type { JsonObject } from "./stocktrendsClient.js";
+import {
+  MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES,
+  type JsonObject
+} from "./stocktrendsClient.js";
 
 export const STOCKTRENDS_ENABLE_X402_RELAY = "STOCKTRENDS_ENABLE_X402_RELAY";
 export const STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION = "STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION";
@@ -44,6 +47,45 @@ export const X402_CHALLENGE_FIELD_CATEGORIES: readonly string[] = Object.freeze(
   "pricing_rule_or_family"
 ]);
 
+export const X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS: readonly string[] = Object.freeze([
+  "accepted_payment_methods",
+  "detail",
+  "error",
+  "payment_required",
+  "pricing",
+  "protocol",
+  "resource"
+]);
+
+export const X402_LIVE_CHALLENGE_FIELD_CATEGORIES: readonly string[] = Object.freeze([
+  "x402_v2_requirements",
+  "resource_info",
+  "pricing",
+  "accepted_payment_methods",
+  "single_accepted_requirement",
+  "bounded_extensions"
+]);
+
+export const MAX_X402_PAYMENT_REQUIRED_DECODED_BYTES = 32 * 1024;
+export const X402_EXTENSION_MAX_DEPTH = 12;
+export const X402_EXTENSION_MAX_OBJECT_MEMBERS = 64;
+export const X402_EXTENSION_MAX_TOTAL_MEMBERS = 512;
+export const X402_EXTENSION_MAX_ARRAY_LENGTH = 64;
+export const X402_EXTENSION_MAX_STRING_BYTES = 2 * 1024;
+export const X402_EXTENSION_MAX_TOTAL_BYTES = 24 * 1024;
+
+export const X402_TOOL_INPUT_MAX_DEPTH = 32;
+export const X402_TOOL_INPUT_MAX_OBJECT_MEMBERS = 64;
+export const X402_TOOL_INPUT_MAX_TOTAL_MEMBERS = 4_096;
+export const X402_TOOL_INPUT_MAX_ARRAY_LENGTH = 256;
+export const X402_TOOL_INPUT_MAX_STRING_BYTES = 16 * 1024;
+
+const X402_LIVE_RESPONSE_MAX_DEPTH = 32;
+const X402_LIVE_RESPONSE_MAX_OBJECT_MEMBERS = 1_024;
+const X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS = 8_192;
+const X402_LIVE_RESPONSE_MAX_ARRAY_LENGTH = 256;
+const X402_LIVE_RESPONSE_MAX_STRING_BYTES = 64 * 1024;
+
 export type X402RelayMode =
   | "disabled"
   | "relay_enabled_challenge_disabled"
@@ -64,6 +106,7 @@ export type X402RelayErrorCode =
   | "x402_payment_required"
   | "x402_challenge_unavailable"
   | "x402_challenge_unexpected_shape"
+  | "x402_tool_input_invalid"
   | "x402_symbol_exchange_required"
   | "x402_repeated_challenge_call"
   | "x402_proof_forwarding_not_enabled"
@@ -79,6 +122,12 @@ export type X402RelayErrorCode =
   | "x402_live_challenge_unexpected_status"
   | "x402_live_challenge_unexpected_shape"
   | "x402_live_challenge_value_not_approved"
+  | "x402_live_challenge_header_missing"
+  | "x402_live_challenge_header_invalid"
+  | "x402_live_challenge_header_shape_not_approved"
+  | "x402_live_challenge_header_body_mismatch"
+  | "x402_live_challenge_network_unsupported"
+  | "x402_live_challenge_prohibited_material"
   | "x402_live_challenge_paid_output_without_proof";
 
 export interface X402MockChallengeFixture {
@@ -193,6 +242,9 @@ export interface X402LiveChallengeSessionState {
 export interface X402LiveChallengeResponse {
   status: number;
   approvedHeaderNamesPresent: string[];
+  paymentRequiredHeader: string | null;
+  paymentRequiredHeaderState: "missing" | "present" | "oversized";
+  apiBaseOrigin: string;
   body: JsonObject | null;
 }
 
@@ -488,15 +540,23 @@ export function buildPublicMockX402ChallengeRelayResult(
     return failClosed(config, normalizedRequest, "x402_route_not_allowlisted", options);
   }
 
-  if (containsProofLikeToolInput(toolInput)) {
+  const boundedToolInput = snapshotBoundedToolInput(toolInput);
+  if (!boundedToolInput.ok) {
+    return failClosed(config, normalizedRequest, "x402_tool_input_invalid", options);
+  }
+
+  if (containsProofLikeToolInput(boundedToolInput.value)) {
     return failClosed(config, normalizedRequest, "x402_proof_forwarding_not_enabled", options);
   }
 
-  if (requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) && !hasCanonicalSymbolExchangeOnly(toolInput)) {
+  if (
+    requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) &&
+    !hasCanonicalSymbolExchangeOnly(boundedToolInput.value)
+  ) {
     return failClosed(config, normalizedRequest, "x402_symbol_exchange_required", options);
   }
 
-  const signature = buildChallengeSignature(normalizedRequest, toolInput);
+  const signature = buildChallengeSignature(normalizedRequest, boundedToolInput.value);
   if (state.inFlightSignatures.has(signature) || state.completedSignatures.has(signature)) {
     return failClosed(config, normalizedRequest, "x402_repeated_challenge_call", options);
   }
@@ -550,7 +610,12 @@ export async function executePublicLiveX402ChallengeRelay(
     return failClosedLive(normalizedRequest, state, "x402_route_not_allowlisted", false, null);
   }
 
-  if (hasProofLikeInput(request) || containsProofLikeToolInput(toolInput)) {
+  const boundedToolInput = snapshotBoundedToolInput(toolInput);
+  if (!boundedToolInput.ok) {
+    return failClosedLive(normalizedRequest, state, "x402_tool_input_invalid", false, null);
+  }
+
+  if (hasProofLikeInput(request) || containsProofLikeToolInput(boundedToolInput.value)) {
     return failClosedLive(
       normalizedRequest,
       state,
@@ -560,11 +625,14 @@ export async function executePublicLiveX402ChallengeRelay(
     );
   }
 
-  if (requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) && !hasCanonicalSymbolExchangeOnly(toolInput)) {
+  if (
+    requiresCanonicalSymbolExchange(normalizedRequest.endpointPath) &&
+    !hasCanonicalSymbolExchangeOnly(boundedToolInput.value)
+  ) {
     return failClosedLive(normalizedRequest, state, "x402_symbol_exchange_required", false, null);
   }
 
-  const signature = buildChallengeSignature(normalizedRequest, toolInput);
+  const signature = buildChallengeSignature(normalizedRequest, boundedToolInput.value);
   if (state.reservedSignatures.has(signature)) {
     return failClosedLive(
       normalizedRequest,
@@ -609,10 +677,30 @@ export async function executePublicLiveX402ChallengeRelay(
     );
   }
 
-  if (
-    (response.status >= 200 && response.status < 300) ||
-    (response.body !== null && hasLivePaidOutputWithoutProof(response.body))
-  ) {
+  let responseTreeScan: JsonTreeScanResult;
+  try {
+    responseTreeScan = scanBoundedJsonTree(response.body);
+  } catch {
+    return failClosedLive(
+      normalizedRequest,
+      state,
+      "x402_live_challenge_unexpected_shape",
+      true,
+      response.status
+    );
+  }
+
+  if (!responseTreeScan.valid) {
+    return failClosedLive(
+      normalizedRequest,
+      state,
+      "x402_live_challenge_unexpected_shape",
+      true,
+      response.status
+    );
+  }
+
+  if ((response.status >= 200 && response.status < 300) || responseTreeScan.hasPaidOutput) {
     return failClosedLive(
       normalizedRequest,
       state,
@@ -632,7 +720,16 @@ export async function executePublicLiveX402ChallengeRelay(
     );
   }
 
-  const shapeError = validateLiveChallengeShape(response, normalizedRequest.endpointPath);
+  let shapeError: X402LiveShapeError | null;
+  try {
+    shapeError = validateLiveChallengeShape(
+      response,
+      normalizedRequest.endpointPath,
+      responseTreeScan
+    );
+  } catch {
+    shapeError = "x402_live_challenge_unexpected_shape";
+  }
   if (shapeError) {
     return failClosedLive(normalizedRequest, state, shapeError, true, response.status);
   }
@@ -647,9 +744,9 @@ export async function executePublicLiveX402ChallengeRelay(
     http_method: "GET",
     challenge_source: "api_no_key_live",
     challenge: {
-      header_names_present: [...X402_CHALLENGE_HEADER_NAMES],
-      top_level_body_keys_present: [...X402_CHALLENGE_TOP_LEVEL_BODY_KEYS],
-      field_categories_present: [...X402_CHALLENGE_FIELD_CATEGORIES],
+      header_names_present: approvedLiveHeaderNames(response.approvedHeaderNamesPresent),
+      top_level_body_keys_present: approvedLiveTopLevelKeys(response.body),
+      field_categories_present: [...X402_LIVE_CHALLENGE_FIELD_CATEGORIES],
       conditional_values_relayed: false,
       x_request_id_value_relayed: false
     },
@@ -758,262 +855,1270 @@ function normalizeChallengeShape(fixture: X402MockChallengeFixture): { ok: true 
 
 type X402LiveShapeError =
   | "x402_live_challenge_unexpected_shape"
-  | "x402_live_challenge_value_not_approved";
+  | "x402_live_challenge_value_not_approved"
+  | "x402_live_challenge_header_missing"
+  | "x402_live_challenge_header_invalid"
+  | "x402_live_challenge_header_shape_not_approved"
+  | "x402_live_challenge_header_body_mismatch"
+  | "x402_live_challenge_network_unsupported"
+  | "x402_live_challenge_prohibited_material";
 
-type X402ConditionalFieldValidator = (value: unknown) => boolean;
-type X402ConditionalFieldValidators = Readonly<Record<string, X402ConditionalFieldValidator>>;
+const X402_REQUIREMENTS_KEYS = Object.freeze(["x402Version", "resource", "accepts", "extensions"]);
+const X402_RESOURCE_INFO_KEYS = Object.freeze([
+  "url",
+  "description",
+  "mimeType",
+  "serviceName",
+  "tags",
+  "iconUrl"
+]);
+const X402_PRICING_KEYS = Object.freeze(["amount_usd", "unit", "network", "token", "scheme"]);
+const X402_ACCEPTED_REQUIREMENT_KEYS = Object.freeze([
+  "scheme",
+  "network",
+  "amount",
+  "asset",
+  "payTo",
+  "maxTimeoutSeconds",
+  "extra"
+]);
+const X402_EXTRA_REQUIRED_KEYS = Object.freeze(["name", "version", "resource"]);
+const X402_EXTRA_KNOWN_KEYS = new Set([...X402_EXTRA_REQUIRED_KEYS, "assetTransferMethod"]);
+const X402_PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const X402_EXTENSION_SHADOW_KEYS = new Set([
+  "route",
+  "path",
+  "method",
+  "url",
+  "resource",
+  "amount",
+  "amountusd",
+  "price",
+  "pricing",
+  "payment",
+  "asset",
+  "token",
+  "decimals",
+  "payto",
+  "payee",
+  "recipient",
+  "address",
+  "network",
+  "chain",
+  "chainid",
+  "family",
+  "scheme",
+  "timeout",
+  "maxtimeoutseconds",
+  "expiry",
+  "expiresat",
+  "proof",
+  "paymentsignature",
+  "paymentproof",
+  "paymentheader",
+  "authorization",
+  "facilitator",
+  "settlement",
+  "metering",
+  "transaction",
+  "transactionhash",
+  "apidata",
+  "data",
+  "results",
+  "rows",
+  "records"
+]);
+const X402_PAID_OUTPUT_SHAPE_KEYS = new Set(["apidata", "data", "results", "rows", "records"]);
+const X402_SOURCE_OUTPUT_CARRIER_KEYS = new Set(["api_data", "data", "results", "rows", "records"]);
+const X402_METHOD_AUTHORITY_KEYS = new Set([
+  "httpmethod",
+  "executionmethod",
+  "methodauthority",
+  "methodoverride",
+  "httpmethodauthority",
+  "httpmethodoverride",
+  "executionmethodauthority",
+  "executionmethodoverride",
+  "methodauthorityoverride",
+  "httpmethodauthorityoverride",
+  "executionmethodauthorityoverride"
+]);
+const X402_PROTECTED_AUTHORITY_TOKEN_SEQUENCES = Object.freeze([
+  ["route"],
+  ["path"],
+  ["method"],
+  ["http", "method"],
+  ["execution", "method"],
+  ["amount"],
+  ["price"],
+  ["asset"],
+  ["token"],
+  ["payee"],
+  ["recipient"],
+  ["address"],
+  ["pay", "to"],
+  ["payto"],
+  ["network"],
+  ["chain"],
+  ["scheme"],
+  ["timeout"],
+  ["expiry"],
+  ["payment"],
+  ["proof"],
+  ["authorization"],
+  ["settlement"],
+  ["transaction"]
+] as const);
+const X402_PROTECTED_AUTHORITY_COMPACT_CONCEPTS = new Set(
+  X402_PROTECTED_AUTHORITY_TOKEN_SEQUENCES.map((tokens) => tokens.join(""))
+);
+const X402_PROTECTED_AUTHORITY_COMPACT_ALIASES = new Set(
+  [...X402_PROTECTED_AUTHORITY_COMPACT_CONCEPTS].flatMap((concept) => [
+    `${concept}authority`,
+    `authority${concept}`
+  ])
+);
+const X402_TRANSACTION_STATE_TOKENS = new Set([
+  "execution",
+  "executed",
+  "completion",
+  "completed",
+  "confirmation",
+  "confirmed",
+  "hash"
+]);
+const X402_TRANSACTION_STATE_COMPACT_KEYS = new Set([
+  "execution",
+  "executionstatus",
+  "executionstate",
+  "executionresult",
+  "executed",
+  "completion",
+  "completionstatus",
+  "completionstate",
+  "completionresult",
+  "completed",
+  "confirmation",
+  "confirmationstatus",
+  "confirmationstate",
+  "confirmationresult",
+  "confirmed",
+  "hash",
+  "hashvalue",
+  "paymenthash",
+  "transactionhash",
+  "txhash"
+]);
+const X402_SAFE_AUTONOMOUS_EXECUTION_KEY =
+  "safe_for_autonomous_execution_with_budget_controls";
 
-const X402_LIVE_ACCEPTED_METHOD_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
-  amount: isApprovedLiveAmount,
-  asset: isApprovedLiveIdentifier,
-  network: isApprovedLiveIdentifier,
-  recipient: isApprovedLiveRecipient,
-  address: isApprovedLiveRecipient,
-  expiry: isApprovedLiveExpiry,
-  expires_at: isApprovedLiveExpiry
-});
-const X402_LIVE_PRICING_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
-  amount: isApprovedLiveAmount,
-  asset: isApprovedLiveIdentifier,
-  network: isApprovedLiveIdentifier,
-  recipient: isApprovedLiveRecipient,
-  address: isApprovedLiveRecipient,
-  pricing_rule: isApprovedLiveIdentifier,
-  family: isApprovedLiveIdentifier
-});
-const X402_LIVE_PREVIEW_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
-  expiry: isApprovedLiveExpiry,
-  expires_at: isApprovedLiveExpiry,
-  challenge_id: isApprovedLiveChallengeIdentifier,
-  correlation_id: isApprovedLiveChallengeIdentifier,
-  nonce: isApprovedLiveChallengeIdentifier,
-  recipient: isApprovedLiveRecipient,
-  address: isApprovedLiveRecipient
-});
+type JsonPathSegment = string | number;
+type ExtensionSemanticContext = "generic" | "bazaar_extensions";
+type BazaarOutputCarrierRole =
+  | "source_output_example_carrier"
+  | "source_output_schema_property"
+  | "not_approved";
+
+interface JsonTreeScanResult {
+  valid: boolean;
+  hasForbiddenMaterial: boolean;
+  hasPaidOutput: boolean;
+}
+
+type HeaderDecodeResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; error: "invalid" | "shape" };
+
+type ExtensionValidationResult = "ok" | "invalid" | "prohibited";
 
 function validateLiveChallengeShape(
   response: X402LiveChallengeResponse,
-  endpointPath: string
+  endpointPath: string,
+  responseTreeScan: JsonTreeScanResult
 ): X402LiveShapeError | null {
-  if (response.body === null) {
+  if (response.body === null || !isPlainRecord(response.body)) {
     return "x402_live_challenge_unexpected_shape";
   }
 
-  const headerNames = new Set(response.approvedHeaderNamesPresent.map((name) => name.toLowerCase()));
-  if (!hasExactMembers(headerNames, X402_CHALLENGE_HEADER_NAMES)) {
+  if (responseTreeScan.hasForbiddenMaterial) {
+    return "x402_live_challenge_prohibited_material";
+  }
+
+  if (response.paymentRequiredHeaderState === "missing") {
+    return "x402_live_challenge_header_missing";
+  }
+
+  if (
+    response.paymentRequiredHeaderState === "oversized" ||
+    response.paymentRequiredHeaderState !== "present" ||
+    response.paymentRequiredHeader === null
+  ) {
+    return "x402_live_challenge_header_invalid";
+  }
+
+  const decodedHeader = decodeStandardBase64JsonObject(response.paymentRequiredHeader);
+  if (!decodedHeader.ok) {
+    return decodedHeader.error === "shape"
+      ? "x402_live_challenge_header_shape_not_approved"
+      : "x402_live_challenge_header_invalid";
+  }
+
+  if (!hasOwn(response.body, "payment_required")) {
     return "x402_live_challenge_unexpected_shape";
   }
 
-  const bodyKeys = new Set(Object.keys(response.body));
-  const unexpectedTopLevelKey = [...bodyKeys].some(
-    (key) => !X402_CHALLENGE_TOP_LEVEL_BODY_KEYS.includes(key)
+  // Identity is checked before any normalization, filtering, or semantic
+  // interpretation. Object key order is ignored; array order and every JSON
+  // type, key, length, and value remain exact.
+  if (!jsonStructuralEqual(decodedHeader.value, response.body.payment_required)) {
+    return "x402_live_challenge_header_body_mismatch";
+  }
+
+  return validateCanonicalLiveChallenge(
+    response.body,
+    endpointPath,
+    response.apiBaseOrigin
   );
-  if (unexpectedTopLevelKey) {
+}
+
+function decodeStandardBase64JsonObject(value: string): HeaderDecodeResult {
+  if (
+    value.length === 0 ||
+    value.length > MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES ||
+    new TextEncoder().encode(value).byteLength > MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES ||
+    value.length % 4 !== 0 ||
+    /\s/.test(value) ||
+    /[-_]/.test(value) ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return { ok: false, error: "invalid" };
+  }
+
+  let decoded: Uint8Array;
+  try {
+    decoded = Buffer.from(value, "base64");
+  } catch {
+    return { ok: false, error: "invalid" };
+  }
+
+  if (
+    decoded.byteLength > MAX_X402_PAYMENT_REQUIRED_DECODED_BYTES ||
+    Buffer.from(decoded).toString("base64") !== value
+  ) {
+    return { ok: false, error: "invalid" };
+  }
+
+  let decodedText: string;
+  try {
+    decodedText = new TextDecoder("utf-8", { fatal: true }).decode(decoded);
+  } catch {
+    return { ok: false, error: "invalid" };
+  }
+
+  let parsed: unknown;
+  try {
+    // JSON.parse rejects trailing non-whitespace and therefore accepts exactly
+    // one JSON value. It does not expose duplicate-key detection; later exact
+    // structural checks still apply to the parser's resulting object.
+    parsed = JSON.parse(decodedText);
+  } catch {
+    return { ok: false, error: "invalid" };
+  }
+
+  if (!isPlainRecord(parsed) || !scanBoundedJsonTree(parsed).valid) {
+    return { ok: false, error: "shape" };
+  }
+
+  return { ok: true, value: parsed };
+}
+
+function validateCanonicalLiveChallenge(
+  body: Record<string, unknown>,
+  endpointPath: string,
+  apiBaseOrigin: string
+): X402LiveShapeError | null {
+  const bodyKeys = Object.keys(body);
+
+  const allowedBodyKeys = new Set([...X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS, "stocktrends_preview"]);
+  if (bodyKeys.some((key) => !allowedBodyKeys.has(key))) {
     return "x402_live_challenge_value_not_approved";
   }
-  if (!hasExactMembers(bodyKeys, X402_CHALLENGE_TOP_LEVEL_BODY_KEYS)) {
+  if (!X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS.every((key) => hasOwn(body, key))) {
     return "x402_live_challenge_unexpected_shape";
   }
 
   if (
-    response.body.payment_required !== true ||
-    !isBoundedString(response.body.detail, 1_024) ||
-    !isBoundedString(response.body.error, 256) ||
-    !isBoundedString(response.body.protocol, 256) ||
-    response.body.resource !== endpointPath ||
-    !Array.isArray(response.body.accepted_payment_methods) ||
-    response.body.accepted_payment_methods.length === 0 ||
-    response.body.accepted_payment_methods.length > 16 ||
-    !isRecord(response.body.pricing) ||
-    !isRecord(response.body.stocktrends_preview)
+    body.error !== "payment_required" ||
+    body.detail !== "Payment is required to access this endpoint." ||
+    body.protocol !== "x402" ||
+    !Array.isArray(body.accepted_payment_methods) ||
+    body.accepted_payment_methods.length !== 1 ||
+    body.accepted_payment_methods[0] !== "x402"
+  ) {
+    return "x402_live_challenge_value_not_approved";
+  }
+
+  if (!isPlainRecord(body.pricing) || !hasExactObjectKeys(body.pricing, X402_PRICING_KEYS)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  const pricing = body.pricing;
+  if (
+    !isCanonicalPositiveFixedSix(pricing.amount_usd) ||
+    pricing.unit !== "request" ||
+    !isBoundedIdentifier(pricing.network, 128) ||
+    !isEvmAddress(pricing.token) ||
+    !isBoundedIdentifier(pricing.scheme, 64)
+  ) {
+    return "x402_live_challenge_value_not_approved";
+  }
+
+  if (!isPlainRecord(body.payment_required)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  const requirements = body.payment_required;
+  if (!hasExactObjectKeys(requirements, X402_REQUIREMENTS_KEYS)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (requirements.x402Version !== 2 || !Number.isInteger(requirements.x402Version)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (!isApprovedResourceInfo(requirements.resource)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (!Array.isArray(requirements.accepts) || requirements.accepts.length !== 1) {
+    return "x402_live_challenge_value_not_approved";
+  }
+
+  const accepted = requirements.accepts[0];
+  if (!isPlainRecord(accepted) || !hasExactObjectKeys(accepted, X402_ACCEPTED_REQUIREMENT_KEYS)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (!isBoundedIdentifier(accepted.scheme, 64) || !isBoundedIdentifier(accepted.network, 128)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (!isSupportedEip155Network(accepted.network)) {
+    return "x402_live_challenge_network_unsupported";
+  }
+  if (
+    !isCanonicalPositiveAtomicAmount(accepted.amount) ||
+    !isEvmAddress(accepted.asset) ||
+    !isEvmAddress(accepted.payTo) ||
+    typeof accepted.maxTimeoutSeconds !== "number" ||
+    !Number.isSafeInteger(accepted.maxTimeoutSeconds) ||
+    accepted.maxTimeoutSeconds <= 0 ||
+    !isPlainRecord(accepted.extra)
   ) {
     return "x402_live_challenge_value_not_approved";
   }
 
   if (
-    !response.body.accepted_payment_methods.every(
-      (entry) => isRecord(entry) && isApprovedLiveAcceptedPaymentMethod(entry)
-    ) ||
-    !isApprovedLivePricing(response.body.pricing) ||
-    !isApprovedLivePreview(response.body.stocktrends_preview)
+    pricing.network !== accepted.network ||
+    pricing.token !== accepted.asset ||
+    pricing.scheme !== accepted.scheme
   ) {
     return "x402_live_challenge_value_not_approved";
   }
 
-  if (hasForbiddenLiveResponseMaterial(response.body)) {
+  const resource = requirements.resource;
+  const extraValidation = validateAcceptedExtra(accepted.extra, resource);
+  if (extraValidation === "prohibited") {
+    return "x402_live_challenge_prohibited_material";
+  }
+  if (extraValidation !== "ok") {
     return "x402_live_challenge_value_not_approved";
   }
 
-  const fieldCategories = detectFieldCategories(response.body);
-  if (fieldCategories.unexpected) {
+  const extraResource = accepted.extra.resource;
+  if (
+    !isPlainRecord(extraResource) ||
+    !jsonStructuralEqual(extraResource, resource) ||
+    typeof body.resource !== "string" ||
+    body.resource !== resource.url ||
+    extraResource.url !== resource.url ||
+    !isApprovedRouteResource(body.resource, endpointPath, apiBaseOrigin)
+  ) {
     return "x402_live_challenge_value_not_approved";
   }
-  if (!hasExactMembers(fieldCategories.present, X402_CHALLENGE_FIELD_CATEGORIES)) {
-    return "x402_live_challenge_unexpected_shape";
+
+  const extensionsValidation = validateExtensionContainer(
+    requirements.extensions,
+    "bazaar_extensions"
+  );
+  if (extensionsValidation === "prohibited") {
+    return "x402_live_challenge_prohibited_material";
+  }
+  if (extensionsValidation !== "ok") {
+    return "x402_live_challenge_value_not_approved";
+  }
+
+  if (hasOwn(body, "stocktrends_preview")) {
+    const previewValidation = validateExtensionContainer(body.stocktrends_preview);
+    if (previewValidation === "prohibited") {
+      return "x402_live_challenge_prohibited_material";
+    }
+    if (previewValidation !== "ok") {
+      return "x402_live_challenge_value_not_approved";
+    }
   }
 
   return null;
 }
 
-function isApprovedLiveAcceptedPaymentMethod(value: Record<string, unknown>): boolean {
+function isApprovedResourceInfo(value: unknown): value is Record<string, unknown> {
+  if (!isPlainRecord(value) || !hasExactObjectKeys(value, X402_RESOURCE_INFO_KEYS)) {
+    return false;
+  }
+
   return (
-    hasOnlyApprovedConditionalFields(value, X402_LIVE_ACCEPTED_METHOD_VALIDATORS) &&
-    hasRequiredConditionalFields(value, ["amount", "asset", "network"]) &&
-    hasExactlyOneConditionalField(value, ["recipient", "address"]) &&
-    hasAtMostOneConditionalField(value, ["expiry", "expires_at"])
+    isBoundedUtf8String(value.url, 1, 2_048) &&
+    isBoundedUtf8String(value.description, 0, 2_048) &&
+    value.mimeType === "application/json" &&
+    isBoundedUtf8String(value.serviceName, 0, 256) &&
+    Array.isArray(value.tags) &&
+    value.tags.length <= 32 &&
+    value.tags.every((tag) => isBoundedUtf8String(tag, 0, 256)) &&
+    isBoundedUtf8String(value.iconUrl, 0, 2_048)
   );
 }
 
-function isApprovedLivePricing(value: Record<string, unknown>): boolean {
-  return (
-    hasOnlyApprovedConditionalFields(value, X402_LIVE_PRICING_VALIDATORS) &&
-    hasRequiredConditionalFields(value, ["amount", "asset", "network", "pricing_rule", "family"]) &&
-    hasExactlyOneConditionalField(value, ["recipient", "address"])
+function validateAcceptedExtra(
+  extra: Record<string, unknown>,
+  resource: Record<string, unknown>
+): ExtensionValidationResult {
+  if (Object.keys(extra).length > X402_EXTENSION_MAX_OBJECT_MEMBERS) {
+    return "invalid";
+  }
+  if (!X402_EXTRA_REQUIRED_KEYS.every((key) => hasOwn(extra, key))) {
+    return "invalid";
+  }
+  if (
+    !isBoundedUtf8String(extra.name, 0, 256) ||
+    !isBoundedUtf8String(extra.version, 0, 128) ||
+    !isPlainRecord(extra.resource) ||
+    !jsonStructuralEqual(extra.resource, resource) ||
+    (hasOwn(extra, "assetTransferMethod") && !isBoundedUtf8String(extra.assetTransferMethod, 1, 128))
+  ) {
+    return "invalid";
+  }
+  if (
+    hasForbiddenLiveResponseMaterial(extra.name) ||
+    hasForbiddenLiveResponseMaterial(extra.version) ||
+    (hasOwn(extra, "assetTransferMethod") && hasForbiddenLiveResponseMaterial(extra.assetTransferMethod))
+  ) {
+    return "prohibited";
+  }
+
+  const unknownExtra = Object.fromEntries(
+    Object.entries(extra).filter(([key]) => !X402_EXTRA_KNOWN_KEYS.has(key))
   );
+  const knownAggregateMembers =
+    Object.keys(extra).filter((key) => X402_EXTRA_KNOWN_KEYS.has(key)).length +
+    Object.keys(resource).length +
+    (Array.isArray(resource.tags) ? resource.tags.length : 0);
+  const unknownValidation = validateExtensionContainer(
+    unknownExtra,
+    "generic",
+    knownAggregateMembers
+  );
+  if (unknownValidation !== "ok") {
+    return unknownValidation;
+  }
+  return jsonUtf8ByteLength(extra) <= X402_EXTENSION_MAX_TOTAL_BYTES ? "ok" : "invalid";
 }
 
-function isApprovedLivePreview(value: Record<string, unknown>): boolean {
-  return (
-    hasOnlyApprovedConditionalFields(value, X402_LIVE_PREVIEW_VALIDATORS) &&
-    hasRequiredConditionalFields(value, ["challenge_id", "correlation_id", "nonce"]) &&
-    hasExactlyOneConditionalField(value, ["expiry", "expires_at"]) &&
-    hasExactlyOneConditionalField(value, ["recipient", "address"])
-  );
+function validateExtensionContainer(
+  value: unknown,
+  context: ExtensionSemanticContext = "generic",
+  initialTotalMembers = 0
+): ExtensionValidationResult {
+  if (!isPlainRecord(value)) {
+    return "invalid";
+  }
+
+  let totalMembers = initialTotalMembers;
+  if (totalMembers > X402_EXTENSION_MAX_TOTAL_MEMBERS) {
+    return "invalid";
+  }
+  const stack: Array<{ value: unknown; depth: number; path: JsonPathSegment[] }> = [
+    { value, depth: 0, path: [] }
+  ];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.depth > X402_EXTENSION_MAX_DEPTH) {
+      return "invalid";
+    }
+
+    if (current.value === null || typeof current.value === "boolean") {
+      continue;
+    }
+    if (typeof current.value === "number") {
+      if (!Number.isFinite(current.value)) return "invalid";
+      continue;
+    }
+    if (typeof current.value === "string") {
+      if (!isBoundedUtf8String(current.value, 0, X402_EXTENSION_MAX_STRING_BYTES)) {
+        return "invalid";
+      }
+      if (hasForbiddenLiveResponseMaterial(current.value)) {
+        return "prohibited";
+      }
+      continue;
+    }
+
+    if (Array.isArray(current.value)) {
+      if (current.value.length > X402_EXTENSION_MAX_ARRAY_LENGTH) {
+        return "invalid";
+      }
+      totalMembers += current.value.length;
+      if (totalMembers > X402_EXTENSION_MAX_TOTAL_MEMBERS) {
+        return "invalid";
+      }
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({
+          value: current.value[index],
+          depth: current.depth + 1,
+          path: [...current.path, index]
+        });
+      }
+      continue;
+    }
+
+    if (!isPlainRecord(current.value)) {
+      return "invalid";
+    }
+
+    const entries = Object.entries(current.value);
+    if (entries.length > X402_EXTENSION_MAX_OBJECT_MEMBERS) {
+      return "invalid";
+    }
+    totalMembers += entries.length;
+    if (totalMembers > X402_EXTENSION_MAX_TOTAL_MEMBERS) {
+      return "invalid";
+    }
+
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      if (!isBoundedUtf8String(key, 1, 128)) {
+        return "invalid";
+      }
+      const childPath = [...current.path, key];
+      if (isProhibitedExtensionKey(key, childPath, context, child, value)) {
+        return "prohibited";
+      }
+      stack.push({ value: child, depth: current.depth + 1, path: childPath });
+    }
+  }
+
+  return jsonUtf8ByteLength(value) <= X402_EXTENSION_MAX_TOTAL_BYTES ? "ok" : "invalid";
 }
 
-function hasOnlyApprovedConditionalFields(
-  value: Record<string, unknown>,
-  validators: X402ConditionalFieldValidators
+function isProhibitedExtensionKey(
+  key: string,
+  path: readonly JsonPathSegment[],
+  context: ExtensionSemanticContext,
+  childValue: unknown,
+  extensionRoot: unknown
 ): boolean {
-  const entries = Object.entries(value);
-  return (
-    entries.length > 0 &&
-    entries.length <= Object.keys(validators).length &&
-    entries.every(([key, child]) => {
-      const validator = validators[key];
-      return typeof validator === "function" && validator(child);
-    })
-  );
-}
-
-function hasRequiredConditionalFields(value: Record<string, unknown>, fields: readonly string[]): boolean {
-  return fields.every((field) => Object.prototype.hasOwnProperty.call(value, field));
-}
-
-function hasExactlyOneConditionalField(value: Record<string, unknown>, fields: readonly string[]): boolean {
-  return fields.filter((field) => Object.prototype.hasOwnProperty.call(value, field)).length === 1;
-}
-
-function hasAtMostOneConditionalField(value: Record<string, unknown>, fields: readonly string[]): boolean {
-  return fields.filter((field) => Object.prototype.hasOwnProperty.call(value, field)).length <= 1;
-}
-
-function isApprovedLiveAmount(value: unknown): boolean {
-  if (typeof value === "number") {
-    return Number.isFinite(value) && value > 0 && value <= Number.MAX_SAFE_INTEGER;
+  if (X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase())) {
+    return true;
   }
 
-  if (typeof value !== "string" || value.length === 0 || value.length > 64) {
+  const tokens = tokenizeIdentifier(key);
+  const compact = tokens.join("");
+  const tokenSet = new Set(tokens);
+
+  if (
+    [
+      "proof",
+      "signature",
+      "authorization",
+      "privatekey",
+      "seedphrase",
+      "mnemonic",
+      "bearertoken",
+      "apikey",
+      "credential",
+      "walletsecret",
+      "walletseed",
+      "paymentproof",
+      "paymentsignature",
+      "paymentheader",
+      "paymentenvelope"
+    ].includes(compact) ||
+    tokenSet.has("proof") ||
+    tokenSet.has("signature") ||
+    tokenSet.has("authorization") ||
+    tokenSet.has("authentication") ||
+    tokenSet.has("auth") ||
+    tokenSet.has("mnemonic") ||
+    tokenSet.has("secret") ||
+    (tokenSet.has("private") && tokenSet.has("key")) ||
+    (tokenSet.has("wallet") && (tokenSet.has("seed") || tokenSet.has("secret"))) ||
+    (tokenSet.has("seed") && tokenSet.has("phrase")) ||
+    ((tokenSet.has("auth") || tokenSet.has("authentication")) && tokenSet.has("token")) ||
+    (tokenSet.has("bearer") && tokenSet.has("token")) ||
+    (tokenSet.has("api") && tokenSet.has("key")) ||
+    tokenSet.has("payment") ||
+    tokenSet.has("settlement") ||
+    tokenSet.has("transaction") ||
+    tokenSet.has("facilitator")
+  ) {
+    return true;
+  }
+
+  if (isPaymentSemanticOverride(compact)) {
+    return true;
+  }
+
+  if (isProtectedAuthorityAlias(tokens, compact)) {
+    return true;
+  }
+
+  // build_bazaar_extension() authors this single descriptive boolean at this
+  // exact info role. It does not grant request, payment, proof, settlement, or
+  // output authority. No other execution-bearing key or path is exempted.
+  if (isApprovedBazaarSafeAutonomousExecutionFlag(path, context, childValue)) {
     return false;
   }
 
-  if (!/^(?:0|[1-9]\d{0,31})(?:\.\d{1,18})?$/.test(value)) {
+  if (isProhibitedTransactionState(tokens, compact)) {
+    return true;
+  }
+
+  // HTTP-method authority is an execution semantic. Literal descriptive
+  // `method` is allowed only at the five exact Python-builder roles below;
+  // aliases and authority/override compounds are rejected before any broader
+  // Bazaar discovery-path allowance is considered.
+  if (isProhibitedMethodAuthority(tokens, compact, path, context)) {
+    return true;
+  }
+
+  const approvedBazaarDiscoveryPath =
+    context === "bazaar_extensions" && isApprovedBazaarDiscoveryPath(path, extensionRoot);
+  if (approvedBazaarDiscoveryPath) {
     return false;
   }
 
-  return BigInt(value.replace(".", "")) > 0n;
+  return X402_EXTENSION_SHADOW_KEYS.has(compact);
 }
 
-function isApprovedLiveIdentifier(value: unknown): boolean {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 128 &&
-    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value)
-  );
+function tokenizeIdentifier(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
 }
 
-function isApprovedLiveRecipient(value: unknown): boolean {
-  return typeof value === "string" && /^0x[0-9A-Fa-f]{40}$/.test(value);
+function isPaymentSemanticOverride(compactKey: string): boolean {
+  if (!compactKey.endsWith("override")) {
+    return false;
+  }
+  const concept = compactKey.slice(0, -"override".length);
+  return [
+    "route",
+    "path",
+    "url",
+    "resource",
+    "amount",
+    "amountusd",
+    "price",
+    "pricing",
+    "payment",
+    "asset",
+    "token",
+    "payto",
+    "payee",
+    "recipient",
+    "address",
+    "network",
+    "chain",
+    "chainid",
+    "family",
+    "scheme",
+    "timeout",
+    "maxtimeoutseconds",
+    "expiry",
+    "expiresat"
+  ].includes(concept);
 }
 
-function isApprovedLiveExpiry(value: unknown): boolean {
-  if (typeof value !== "string" || value.length === 0 || value.length > 64) {
+function isProtectedAuthorityAlias(tokens: readonly string[], compactKey: string): boolean {
+  if (X402_PROTECTED_AUTHORITY_COMPACT_ALIASES.has(compactKey)) {
+    return true;
+  }
+
+  if (!tokens.includes("authority")) {
     return false;
   }
 
-  const match = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.(\d{1,3}))?Z$/.exec(value);
-  if (!match) {
+  return X402_PROTECTED_AUTHORITY_TOKEN_SEQUENCES.some((conceptTokens) =>
+    containsTokenSequence(tokens, conceptTokens)
+  );
+}
+
+function containsTokenSequence(
+  tokens: readonly string[],
+  expected: readonly string[]
+): boolean {
+  if (expected.length === 0 || expected.length > tokens.length) {
+    return false;
+  }
+  for (let start = 0; start <= tokens.length - expected.length; start += 1) {
+    if (expected.every((token, offset) => tokens[start + offset] === token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isApprovedBazaarSafeAutonomousExecutionFlag(
+  path: readonly JsonPathSegment[],
+  context: ExtensionSemanticContext,
+  value: unknown
+): boolean {
+  return (
+    context === "bazaar_extensions" &&
+    pathsEqual(path, ["bazaar", "info", X402_SAFE_AUTONOMOUS_EXECUTION_KEY]) &&
+    typeof value === "boolean"
+  );
+}
+
+function isProhibitedTransactionState(
+  tokens: readonly string[],
+  compactKey: string
+): boolean {
+  return (
+    X402_TRANSACTION_STATE_COMPACT_KEYS.has(compactKey) ||
+    tokens.some((token) => X402_TRANSACTION_STATE_TOKENS.has(token))
+  );
+}
+
+function isProhibitedMethodAuthority(
+  tokens: readonly string[],
+  compactKey: string,
+  path: readonly JsonPathSegment[],
+  context: ExtensionSemanticContext
+): boolean {
+  if (compactKey === "method") {
+    return context !== "bazaar_extensions" || !isApprovedBazaarDescriptiveMethodPath(path);
+  }
+
+  if (X402_METHOD_AUTHORITY_KEYS.has(compactKey)) {
+    return true;
+  }
+
+  const tokenSet = new Set(tokens);
+  return (
+    tokenSet.has("method") &&
+    (
+      tokenSet.has("http") ||
+      tokenSet.has("execution") ||
+      tokenSet.has("authority") ||
+      tokenSet.has("override")
+    )
+  );
+}
+
+function isApprovedBazaarDescriptiveMethodPath(path: readonly JsonPathSegment[]): boolean {
+  return (
+    pathsEqual(path, ["bazaar", "info", "input", "method"]) ||
+    pathsEqual(path, ["bazaar", "schema", "properties", "input", "properties", "method"]) ||
+    pathsEqual(path, ["bazaar", "info", "interpretation_dependencies", "dependency", "method"]) ||
+    pathsEqual(path, ["bazaar", "info", "input", "example", "method"]) ||
+    (
+      path.length === 5 &&
+      path[0] === "bazaar" &&
+      path[1] === "info" &&
+      path[2] === "examples" &&
+      typeof path[3] === "number" &&
+      path[4] === "method"
+    )
+  );
+}
+
+function isApprovedBazaarDiscoveryPath(
+  path: readonly JsonPathSegment[],
+  extensionRoot: unknown
+): boolean {
+  const lastSegment = path[path.length - 1];
+  if (path[0] !== "bazaar" || typeof lastSegment !== "string") {
     return false;
   }
 
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionText = ""] = match;
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  const second = Number(secondText);
-  const millisecond = Number(fractionText.padEnd(3, "0"));
-  const timestamp = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
-  const parsed = new Date(timestamp);
+  // build_compact_bazaar_extension() and build_bazaar_extension() author these
+  // exact descriptive identity fields. They describe discovery grouping; they
+  // do not select the relay route, method, payment terms, or execution mode.
+  if (
+    pathsEqual(path, ["bazaar", "info", "family"]) ||
+    pathsEqual(path, ["bazaar", "info", "endpoint_family"]) ||
+    pathsEqual(path, ["bazaar", "schema", "properties", "family"])
+  ) {
+    return true;
+  }
 
-  return (
-    parsed.getUTCFullYear() === year &&
-    parsed.getUTCMonth() === month - 1 &&
-    parsed.getUTCDate() === day &&
-    parsed.getUTCHours() === hour &&
-    parsed.getUTCMinutes() === minute &&
-    parsed.getUTCSeconds() === second &&
-    parsed.getUTCMilliseconds() === millisecond
-  );
+  // Both builders place the descriptive HTTP method in info.input. The compact
+  // builder declares it in JSON Schema; the rich builder may also copy the
+  // registry-authored interpretation dependency method. These values describe
+  // discovery metadata and never override the separately bound GET request.
+  if (isApprovedBazaarDescriptiveMethodPath(path)) {
+    return true;
+  }
+
+  // build_bazaar_extension() copies safe_example_request only into these two
+  // request-example roles. method/path here are inert example metadata, not
+  // authority over the invoked route or the actual GET method.
+  if (
+    pathsEqual(path, ["bazaar", "info", "input", "example", "path"]) ||
+    (
+      path.length === 5 &&
+      path[0] === "bazaar" &&
+      path[1] === "info" &&
+      path[2] === "examples" &&
+      typeof path[3] === "number" &&
+      path[4] === "path"
+    )
+  ) {
+    return true;
+  }
+
+  return classifyBazaarOutputCarrierPath(path, extensionRoot) !== "not_approved";
 }
 
-function isApprovedLiveChallengeIdentifier(value: unknown): boolean {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 256 &&
-    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(value)
-  );
+function pathsEqual(
+  path: readonly JsonPathSegment[],
+  expected: readonly JsonPathSegment[]
+): boolean {
+  return path.length === expected.length && path.every((segment, index) => segment === expected[index]);
 }
 
-function isBoundedString(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+function classifyBazaarOutputCarrierPath(
+  path: readonly JsonPathSegment[],
+  extensionRoot: unknown
+): BazaarOutputCarrierRole {
+  const carrier = path[path.length - 1];
+  if (typeof carrier !== "string" || !X402_SOURCE_OUTPUT_CARRIER_KEYS.has(carrier)) {
+    return "not_approved";
+  }
+
+  // The rich builder's output example is one object. Only its immediate
+  // carrier properties are descriptive; arrays, ancestors, and descendants do
+  // not inherit this role.
+  if (
+    path.length === 5 &&
+    pathsEqual(path.slice(0, 4), ["bazaar", "info", "output", "example"])
+  ) {
+    return "source_output_example_carrier";
+  }
+
+  const schemaRoots: readonly (readonly JsonPathSegment[])[] = [
+    ["bazaar", "info", "output", "schema"],
+    ["bazaar", "schema", "properties", "output"]
+  ];
+  for (const schemaRootPath of schemaRoots) {
+    if (
+      path.length > schemaRootPath.length &&
+      pathsEqual(path.slice(0, schemaRootPath.length), schemaRootPath) &&
+      isSourceOutputSchemaCarrierDeclaration(
+        path.slice(schemaRootPath.length),
+        getJsonPathValue(extensionRoot, schemaRootPath)
+      )
+    ) {
+      return "source_output_schema_property";
+    }
+  }
+
+  return "not_approved";
 }
 
-function hasLivePaidOutputWithoutProof(body: JsonObject): boolean {
-  return collectKeys(body).some((key) =>
-    ["api_data", "data", "results", "rows", "records"].includes(key.toLowerCase().replace(/[-\s]/g, "_"))
-  );
-}
+// The current compact/rich helpers attach an object schema at exactly these
+// roots. From there, a carrier must be a property name immediately after a
+// structurally valid JSON Schema `properties` node. Nested object properties
+// and object-valued array `items` are supported; arbitrary keys, arrays,
+// interposed nodes, and property names that masquerade as schema structure are
+// not source-authored roles.
+function isSourceOutputSchemaCarrierDeclaration(
+  suffix: readonly JsonPathSegment[],
+  schemaRoot: unknown
+): boolean {
+  if (
+    suffix.length < 2 ||
+    suffix[suffix.length - 2] !== "properties" ||
+    typeof suffix[suffix.length - 1] !== "string" ||
+    !X402_SOURCE_OUTPUT_CARRIER_KEYS.has(suffix[suffix.length - 1] as string) ||
+    !isPlainRecord(schemaRoot) ||
+    schemaRoot.type !== "object"
+  ) {
+    return false;
+  }
 
-function hasForbiddenLiveResponseMaterial(value: unknown): boolean {
-  if (typeof value === "string") {
-    if (isRedactedPlaceholder(value.trim())) {
+  let schemaNode: unknown = schemaRoot;
+  let index = 0;
+  while (index < suffix.length) {
+    if (!isPlainRecord(schemaNode)) {
       return false;
     }
 
-    return [
-      /\bAuthorization\s*:\s*(Bearer|Basic)\s+[^\s,;]+/i,
-      /\b(Bearer|Basic)\s+[^\s,;]+/i,
-      /\b(X-API-Key|X_API_KEY|API_KEY|STOCKTRENDS_API_KEY)\s*[:=]\s*[^<\s,;]+/i,
-      /\b(PAYMENT-SIGNATURE|PAYMENT_SIGNATURE|PAYMENT-PROOF|PAYMENT_PROOF|PAYMENT-ENVELOPE|PAYMENT_ENVELOPE|X402-PROOF|X402_PROOF|X-PAYMENT|PAYMENT_HEADER)\s*[:=]\s*[^<\s,;]+/i,
-      /\b(WALLET_PRIVATE_KEY|WALLET-PRIVATE-KEY|PRIVATE_KEY|PRIVATE-KEY|SEED_PHRASE|SEED-PHRASE)\s*[:=]\s*[^<\s,;]+/i
-    ].some((pattern) => pattern.test(value));
-  }
+    const segment = suffix[index];
+    if (segment === "items") {
+      if (
+        schemaNode.type !== "array" ||
+        !isPlainRecord(schemaNode.items)
+      ) {
+        return false;
+      }
+      schemaNode = schemaNode.items;
+      index += 1;
+      continue;
+    }
 
-  if (Array.isArray(value)) {
-    return value.some((item) => hasForbiddenLiveResponseMaterial(item));
-  }
+    if (
+      segment !== "properties" ||
+      schemaNode.type !== "object" ||
+      !isPlainRecord(schemaNode.properties) ||
+      index + 1 >= suffix.length
+    ) {
+      return false;
+    }
 
-  if (isRecord(value)) {
-    return Object.entries(value).some(
-      ([key, child]) => hasForbiddenProofMaterialKey(key) || hasForbiddenLiveResponseMaterial(child)
-    );
+    const propertyName = suffix[index + 1];
+    if (
+      typeof propertyName !== "string" ||
+      propertyName === "properties" ||
+      !hasOwn(schemaNode.properties, propertyName) ||
+      !isPlainRecord(schemaNode.properties[propertyName])
+    ) {
+      return false;
+    }
+
+    if (index + 2 === suffix.length) {
+      return X402_SOURCE_OUTPUT_CARRIER_KEYS.has(propertyName);
+    }
+
+    schemaNode = schemaNode.properties[propertyName];
+    index += 2;
   }
 
   return false;
+}
+
+function getJsonPathValue(root: unknown, path: readonly JsonPathSegment[]): unknown {
+  let current = root;
+  for (const segment of path) {
+    if (typeof segment === "number") {
+      if (!Array.isArray(current) || segment < 0 || segment >= current.length) {
+        return undefined;
+      }
+      current = current[segment];
+      continue;
+    }
+    if (!isPlainRecord(current) || !hasOwn(current, segment)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function isApprovedRouteResource(value: string, endpointPath: string, apiBaseOrigin: string): boolean {
+  if (value === endpointPath) {
+    return true;
+  }
+  if (!isBoundedUtf8String(value, 1, 2_048)) {
+    return false;
+  }
+
+  const canonicalAbsoluteResource = `${apiBaseOrigin}${endpointPath}`;
+  if (value !== canonicalAbsoluteResource) {
+    return false;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+
+  if (
+    parsed.origin !== apiBaseOrigin ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    parsed.pathname !== endpointPath
+  ) {
+    return false;
+  }
+
+  return parsed.href === canonicalAbsoluteResource;
+}
+
+function isCanonicalPositiveAtomicAmount(value: unknown): value is string {
+  return typeof value === "string" && /^[1-9]\d{0,77}$/.test(value);
+}
+
+function isCanonicalPositiveFixedSix(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^(?:0|[1-9]\d{0,31})\.\d{6}$/.test(value) &&
+    /[1-9]/.test(value.replace(".", ""))
+  );
+}
+
+function isBoundedIdentifier(value: unknown, maxBytes: number): value is string {
+  return (
+    typeof value === "string" &&
+    isBoundedUtf8String(value, 1, maxBytes) &&
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)
+  );
+}
+
+function isEvmAddress(value: unknown): value is string {
+  return typeof value === "string" && /^0x[0-9A-Fa-f]{40}$/.test(value);
+}
+
+function isSupportedEip155Network(value: string): boolean {
+  return /^eip155:[1-9]\d{0,31}$/.test(value);
+}
+
+function isBoundedUtf8String(value: unknown, minBytes: number, maxBytes: number): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const byteLength = new TextEncoder().encode(value).byteLength;
+  return byteLength >= minBytes && byteLength <= maxBytes;
+}
+
+function hasExactObjectKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => hasOwn(value, key));
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function jsonStructuralEqual(left: unknown, right: unknown): boolean {
+  const stack: Array<[unknown, unknown]> = [[left, right]];
+  let comparedMembers = 0;
+
+  while (stack.length > 0) {
+    const [leftValue, rightValue] = stack.pop()!;
+    if (Object.is(leftValue, rightValue)) {
+      continue;
+    }
+
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      if (!Array.isArray(leftValue) || !Array.isArray(rightValue) || leftValue.length !== rightValue.length) {
+        return false;
+      }
+      comparedMembers += leftValue.length;
+      if (comparedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) {
+        return false;
+      }
+      for (let index = leftValue.length - 1; index >= 0; index -= 1) {
+        stack.push([leftValue[index], rightValue[index]]);
+      }
+      continue;
+    }
+
+    if (!isPlainRecord(leftValue) || !isPlainRecord(rightValue)) {
+      return false;
+    }
+    const leftKeys = Object.keys(leftValue);
+    const rightKeys = Object.keys(rightValue);
+    if (leftKeys.length !== rightKeys.length || leftKeys.some((key) => !hasOwn(rightValue, key))) {
+      return false;
+    }
+    comparedMembers += leftKeys.length;
+    if (comparedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) {
+      return false;
+    }
+    for (let index = leftKeys.length - 1; index >= 0; index -= 1) {
+      const key = leftKeys[index];
+      stack.push([leftValue[key], rightValue[key]]);
+    }
+  }
+
+  return true;
+}
+
+function jsonUtf8ByteLength(value: unknown): number {
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === "string"
+      ? new TextEncoder().encode(serialized).byteLength
+      : Number.POSITIVE_INFINITY;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function approvedLiveHeaderNames(names: readonly string[]): string[] {
+  const present = new Set(names.map((name) => name.toLowerCase()));
+  return X402_CHALLENGE_HEADER_NAMES.filter((name) => present.has(name));
+}
+
+function approvedLiveTopLevelKeys(body: JsonObject | null): string[] {
+  if (body === null) return [];
+  return [
+    ...X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS,
+    ...(hasOwn(body, "stocktrends_preview") ? ["stocktrends_preview"] : [])
+  ];
+}
+
+function scanBoundedJsonTree(value: unknown): JsonTreeScanResult {
+  const result: JsonTreeScanResult = {
+    valid: true,
+    hasForbiddenMaterial: false,
+    hasPaidOutput: false
+  };
+  let totalMembers = 0;
+  const stack: Array<{ value: unknown; depth: number; path: JsonPathSegment[] }> = [
+    { value, depth: 0, path: [] }
+  ];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.depth > X402_LIVE_RESPONSE_MAX_DEPTH) {
+      result.valid = false;
+      return result;
+    }
+
+    if (current.value === null || typeof current.value === "boolean") {
+      continue;
+    }
+    if (typeof current.value === "number") {
+      if (!Number.isFinite(current.value)) {
+        result.valid = false;
+        return result;
+      }
+      continue;
+    }
+    if (typeof current.value === "string") {
+      if (!isBoundedUtf8String(current.value, 0, X402_LIVE_RESPONSE_MAX_STRING_BYTES)) {
+        result.valid = false;
+        return result;
+      }
+      if (hasForbiddenLiveString(current.value)) {
+        result.hasForbiddenMaterial = true;
+      }
+      continue;
+    }
+
+    if (Array.isArray(current.value)) {
+      if (current.value.length > X402_LIVE_RESPONSE_MAX_ARRAY_LENGTH) {
+        result.valid = false;
+        return result;
+      }
+      totalMembers += current.value.length;
+      if (totalMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) {
+        result.valid = false;
+        return result;
+      }
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({
+          value: current.value[index],
+          depth: current.depth + 1,
+          path: [...current.path, index]
+        });
+      }
+      continue;
+    }
+
+    if (!isPlainRecord(current.value)) {
+      result.valid = false;
+      return result;
+    }
+    const entries = Object.entries(current.value);
+    if (entries.length > X402_LIVE_RESPONSE_MAX_OBJECT_MEMBERS) {
+      result.valid = false;
+      return result;
+    }
+    totalMembers += entries.length;
+    if (totalMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) {
+      result.valid = false;
+      return result;
+    }
+
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      if (
+        !isBoundedUtf8String(key, 1, 256) ||
+        X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase())
+      ) {
+        result.valid = false;
+        return result;
+      }
+      const childPath = [...current.path, key];
+      const compactKey = tokenizeIdentifier(key).join("");
+      if (
+        X402_PAID_OUTPUT_SHAPE_KEYS.has(compactKey) &&
+        !isApprovedFullResponseBazaarOutputCarrierPath(childPath, value)
+      ) {
+        result.hasPaidOutput = true;
+      }
+      stack.push({ value: child, depth: current.depth + 1, path: childPath });
+    }
+  }
+
+  return result;
+}
+
+function isApprovedFullResponseBazaarOutputCarrierPath(
+  path: readonly JsonPathSegment[],
+  responseRoot: unknown
+): boolean {
+  if (
+    path.length > 2 &&
+    path[0] === "extensions" &&
+    path[1] === "bazaar"
+  ) {
+    return classifyBazaarOutputCarrierPath(
+      path.slice(1),
+      getJsonPathValue(responseRoot, ["extensions"])
+    ) !== "not_approved";
+  }
+  if (
+    path.length > 3 &&
+    path[0] === "payment_required" &&
+    path[1] === "extensions" &&
+    path[2] === "bazaar"
+  ) {
+    return classifyBazaarOutputCarrierPath(
+      path.slice(2),
+      getJsonPathValue(responseRoot, ["payment_required", "extensions"])
+    ) !== "not_approved";
+  }
+  return false;
+}
+
+function hasForbiddenLiveResponseMaterial(value: unknown): boolean {
+  return scanBoundedJsonTree(value).hasForbiddenMaterial;
+}
+
+function hasForbiddenLiveString(value: string): boolean {
+  if (isRedactedPlaceholder(value.trim())) {
+    return false;
+  }
+
+  return [
+    /\bAuthorization\s*:\s*(Bearer|Basic)\s+[^\s,;]+/i,
+    /\b(Bearer|Basic)\s+[^\s,;]+/i,
+    /\b(X-API-Key|X_API_KEY|API_KEY|STOCKTRENDS_API_KEY)\s*[:=]\s*[^<\s,;]+/i,
+    /\b(PAYMENT-SIGNATURE|PAYMENT_SIGNATURE|PAYMENT-PROOF|PAYMENT_PROOF|PAYMENT-ENVELOPE|PAYMENT_ENVELOPE|X402-PROOF|X402_PROOF|X-PAYMENT|PAYMENT_HEADER)\s*[:=]\s*[^<\s,;]+/i,
+    /\b(WALLET_PRIVATE_KEY|WALLET-PRIVATE-KEY|PRIVATE_KEY|PRIVATE-KEY|SEED_PHRASE|SEED-PHRASE)\s*[:=]\s*[^<\s,;]+/i
+  ].some((pattern) => pattern.test(value));
 }
 
 function hasExactMembers(actual: ReadonlySet<string>, expected: readonly string[]): boolean {
@@ -1069,15 +2174,29 @@ function detectFieldCategories(value: unknown): { present: Set<string>; unexpect
 }
 
 function collectKeys(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => collectKeys(item));
+  const keys: string[] = [];
+  const stack: unknown[] = [value];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (Array.isArray(current)) {
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        stack.push(current[index]);
+      }
+      continue;
+    }
+    if (!isRecord(current)) {
+      continue;
+    }
+    const entries = Object.entries(current);
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      keys.push(key);
+      stack.push(child);
+    }
   }
 
-  if (isRecord(value)) {
-    return Object.entries(value).flatMap(([key, child]) => [key, ...collectKeys(child)]);
-  }
-
-  return [];
+  return keys;
 }
 
 function hasProofLikeInput(request: X402ChallengeRelayRequest): boolean {
@@ -1090,20 +2209,31 @@ function hasProofLikeInput(request: X402ChallengeRelayRequest): boolean {
 }
 
 function hasForbiddenProofMaterial(value: unknown): boolean {
-  if (typeof value === "string") {
-    return hasForbiddenProofMaterialValue(value);
+  const stack: unknown[] = [value];
+  let visitedMembers = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === "string" && hasForbiddenProofMaterialValue(current)) {
+      return true;
+    }
+    if (Array.isArray(current)) {
+      visitedMembers += current.length;
+      if (visitedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) return true;
+      stack.push(...current);
+      continue;
+    }
+    if (isRecord(current)) {
+      const entries = Object.entries(current);
+      visitedMembers += entries.length;
+      if (visitedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) return true;
+      for (const [key, child] of entries) {
+        if (hasForbiddenProofMaterialKey(key)) {
+          return true;
+        }
+        stack.push(child);
+      }
+    }
   }
-
-  if (Array.isArray(value)) {
-    return value.some((item) => hasForbiddenProofMaterial(item));
-  }
-
-  if (isRecord(value)) {
-    return Object.entries(value).some(
-      ([key, child]) => hasForbiddenProofMaterialKey(key) || hasForbiddenProofMaterial(child)
-    );
-  }
-
   return false;
 }
 
@@ -1156,17 +2286,30 @@ function hasPaidOutputWithoutProof(body: JsonObject): boolean {
 }
 
 function containsProofLikeToolInput(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some((item) => containsProofLikeToolInput(item));
+  const stack: unknown[] = [value];
+  let visitedMembers = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (Array.isArray(current)) {
+      visitedMembers += current.length;
+      if (visitedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) return true;
+      stack.push(...current);
+      continue;
+    }
+    if (!isRecord(current)) {
+      continue;
+    }
+    const entries = Object.entries(current);
+    visitedMembers += entries.length;
+    if (visitedMembers > X402_LIVE_RESPONSE_MAX_TOTAL_MEMBERS) return true;
+    for (const [key, child] of entries) {
+      if (hasForbiddenProofMaterialKey(key)) {
+        return true;
+      }
+      stack.push(child);
+    }
   }
-
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return Object.entries(value).some(
-    ([key, child]) => hasForbiddenProofMaterialKey(key) || containsProofLikeToolInput(child)
-  );
+  return false;
 }
 
 function requiresCanonicalSymbolExchange(endpointPath: string): boolean {
@@ -1191,9 +2334,226 @@ function hasCanonicalSymbolExchangeOnly(value: unknown): boolean {
   );
 }
 
+type JsonSafeToolInput =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonSafeToolInput[]
+  | { [key: string]: JsonSafeToolInput };
+
+type BoundedToolInputSnapshot =
+  | { ok: true; value: JsonSafeToolInput }
+  | { ok: false };
+
+type ToolInputCloneContainer = JsonSafeToolInput[] | { [key: string]: JsonSafeToolInput };
+
+interface ToolInputCloneTarget {
+  parent: ToolInputCloneContainer | null;
+  key: string | number | null;
+}
+
+type ToolInputCloneFrame =
+  | {
+      kind: "visit";
+      value: unknown;
+      depth: number;
+      target: ToolInputCloneTarget;
+    }
+  | { kind: "leave"; value: object };
+
+/**
+ * Iteratively validates and snapshots direct-helper input before signature
+ * normalization. Reflection reads data-property descriptors without invoking
+ * getters; the resulting snapshot contains only bounded plain JSON values.
+ */
+function snapshotBoundedToolInput(value: unknown): BoundedToolInputSnapshot {
+  try {
+    const root: { value?: JsonSafeToolInput } = {};
+    const activeAncestors = new WeakSet<object>();
+    let totalMembers = 0;
+    const stack: ToolInputCloneFrame[] = [
+      {
+        kind: "visit",
+        value,
+        depth: 0,
+        target: { parent: null, key: null }
+      }
+    ];
+
+    while (stack.length > 0) {
+      const frame = stack.pop()!;
+      if (frame.kind === "leave") {
+        activeAncestors.delete(frame.value);
+        continue;
+      }
+
+      if (frame.depth > X402_TOOL_INPUT_MAX_DEPTH) {
+        return { ok: false };
+      }
+
+      const current = frame.value;
+      if (current === null || typeof current === "boolean") {
+        assignToolInputClone(root, frame.target, current);
+        continue;
+      }
+      if (typeof current === "number") {
+        if (!Number.isFinite(current)) return { ok: false };
+        assignToolInputClone(root, frame.target, current);
+        continue;
+      }
+      if (typeof current === "string") {
+        if (!isBoundedUtf8String(current, 0, X402_TOOL_INPUT_MAX_STRING_BYTES)) {
+          return { ok: false };
+        }
+        assignToolInputClone(root, frame.target, current);
+        continue;
+      }
+      if (typeof current !== "object") {
+        return { ok: false };
+      }
+
+      if (activeAncestors.has(current)) {
+        return { ok: false };
+      }
+
+      if (Array.isArray(current)) {
+        if (
+          Object.getPrototypeOf(current) !== Array.prototype ||
+          current.length > X402_TOOL_INPUT_MAX_ARRAY_LENGTH
+        ) {
+          return { ok: false };
+        }
+
+        const ownKeys = Reflect.ownKeys(current);
+        if (
+          ownKeys.some((key) => typeof key === "symbol") ||
+          ownKeys.length !== current.length + 1 ||
+          !ownKeys.includes("length")
+        ) {
+          return { ok: false };
+        }
+
+        const childValues: unknown[] = [];
+        for (let index = 0; index < current.length; index += 1) {
+          const descriptor = Object.getOwnPropertyDescriptor(current, String(index));
+          if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+            return { ok: false };
+          }
+          childValues.push(descriptor.value);
+        }
+        if (
+          ownKeys.some(
+            (key) =>
+              typeof key === "string" &&
+              key !== "length" &&
+              (!/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= current.length)
+          )
+        ) {
+          return { ok: false };
+        }
+
+        totalMembers += current.length;
+        if (totalMembers > X402_TOOL_INPUT_MAX_TOTAL_MEMBERS) {
+          return { ok: false };
+        }
+
+        const clone: JsonSafeToolInput[] = new Array(current.length);
+        assignToolInputClone(root, frame.target, clone);
+        activeAncestors.add(current);
+        stack.push({ kind: "leave", value: current });
+        for (let index = childValues.length - 1; index >= 0; index -= 1) {
+          stack.push({
+            kind: "visit",
+            value: childValues[index],
+            depth: frame.depth + 1,
+            target: { parent: clone, key: index }
+          });
+        }
+        continue;
+      }
+
+      if (Object.getPrototypeOf(current) !== Object.prototype) {
+        return { ok: false };
+      }
+
+      const ownKeys = Reflect.ownKeys(current);
+      if (
+        ownKeys.some((key) => typeof key === "symbol") ||
+        ownKeys.length > X402_TOOL_INPUT_MAX_OBJECT_MEMBERS
+      ) {
+        return { ok: false };
+      }
+
+      const entries: Array<[string, unknown]> = [];
+      for (const ownKey of ownKeys) {
+        if (
+          typeof ownKey !== "string" ||
+          !isBoundedUtf8String(ownKey, 0, X402_TOOL_INPUT_MAX_STRING_BYTES)
+        ) {
+          return { ok: false };
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(current, ownKey);
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+          return { ok: false };
+        }
+        entries.push([ownKey, descriptor.value]);
+      }
+
+      totalMembers += entries.length;
+      if (totalMembers > X402_TOOL_INPUT_MAX_TOTAL_MEMBERS) {
+        return { ok: false };
+      }
+
+      const clone: { [key: string]: JsonSafeToolInput } = {};
+      assignToolInputClone(root, frame.target, clone);
+      activeAncestors.add(current);
+      stack.push({ kind: "leave", value: current });
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const [key, child] = entries[index];
+        stack.push({
+          kind: "visit",
+          value: child,
+          depth: frame.depth + 1,
+          target: { parent: clone, key }
+        });
+      }
+    }
+
+    return Object.prototype.hasOwnProperty.call(root, "value")
+      ? { ok: true, value: root.value! }
+      : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function assignToolInputClone(
+  root: { value?: JsonSafeToolInput },
+  target: ToolInputCloneTarget,
+  value: JsonSafeToolInput
+): void {
+  if (target.parent === null) {
+    root.value = value;
+    return;
+  }
+  if (Array.isArray(target.parent)) {
+    if (typeof target.key !== "number") throw new Error("invalid tool-input clone target");
+    target.parent[target.key] = value;
+    return;
+  }
+  if (typeof target.key !== "string") throw new Error("invalid tool-input clone target");
+  Object.defineProperty(target.parent, target.key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
+}
+
 function buildChallengeSignature(
   request: Required<Pick<X402ChallengeRelayRequest, "toolName" | "endpointPath">> & { httpMethod: PaidHttpMethod },
-  toolInput: unknown
+  toolInput: JsonSafeToolInput
 ): string {
   return JSON.stringify({
     tool_name: request.toolName,
@@ -1283,6 +2643,8 @@ function liveSafetyMetadata(
 
 function liveErrorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_required">): string {
   switch (errorCode) {
+    case "x402_tool_input_invalid":
+      return "The x402 tool input was not bounded JSON-safe data. No reservation, request, retry, fallback, or second route occurred.";
     case "x402_symbol_exchange_required":
       return "Live no-key x402 challenge mode requires canonical symbol_exchange input for symbol-dependent tools. No resolver or request was used.";
     case "x402_proof_forwarding_not_enabled":
@@ -1303,6 +2665,18 @@ function liveErrorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_r
       return "The API-authored 402 response did not match the approved challenge shape. No challenge values were returned.";
     case "x402_live_challenge_value_not_approved":
       return "The API-authored 402 response contained an unapproved value type, category, or field path. No challenge values were returned.";
+    case "x402_live_challenge_header_missing":
+      return "The API-authored 402 response omitted the authoritative Payment-Required header. No challenge values were returned.";
+    case "x402_live_challenge_header_invalid":
+      return "The API-authored Payment-Required header was malformed or oversized. No header or challenge values were returned.";
+    case "x402_live_challenge_header_shape_not_approved":
+      return "The decoded Payment-Required header was not an approved bounded JSON object. No decoded or challenge values were returned.";
+    case "x402_live_challenge_header_body_mismatch":
+      return "The Payment-Required header and response-body requirements were structurally inconsistent. No divergent path or value was returned.";
+    case "x402_live_challenge_network_unsupported":
+      return "The API-authored 402 response used an unsupported payment network family. No challenge values were returned.";
+    case "x402_live_challenge_prohibited_material":
+      return "The API-authored 402 response contained prohibited proof, authorization, secret, or payment-override material. No challenge values were returned.";
     case "x402_live_challenge_paid_output_without_proof":
       return "The no-proof request returned success or paid-data-shaped output. The output was discarded and no retry occurred.";
     default:
@@ -1372,6 +2746,8 @@ function errorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_requi
       return "x402 challenge execution is not enabled or the mock challenge is unavailable. No request was sent.";
     case "x402_challenge_unexpected_shape":
       return "The mock x402 challenge did not match the verified PR #64 shape. No proof path is enabled.";
+    case "x402_tool_input_invalid":
+      return "The x402 tool input was not bounded JSON-safe data. No reservation, request, retry, fallback, or second route occurred.";
     case "x402_symbol_exchange_required":
       return "Mock x402 challenge mode requires canonical symbol_exchange input for symbol-dependent tools. No resolver or request was used.";
     case "x402_repeated_challenge_call":
@@ -1402,6 +2778,18 @@ function errorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_requi
       return "The live no-key x402 challenge response had an unexpected shape.";
     case "x402_live_challenge_value_not_approved":
       return "The live no-key x402 challenge response contained an unapproved value category, type, or path.";
+    case "x402_live_challenge_header_missing":
+      return "The live no-key x402 challenge response omitted the authoritative Payment-Required header.";
+    case "x402_live_challenge_header_invalid":
+      return "The live no-key x402 Payment-Required header was malformed or oversized.";
+    case "x402_live_challenge_header_shape_not_approved":
+      return "The decoded live no-key x402 Payment-Required header was not an approved bounded JSON object.";
+    case "x402_live_challenge_header_body_mismatch":
+      return "The live no-key x402 Payment-Required header and body requirements did not match.";
+    case "x402_live_challenge_network_unsupported":
+      return "The live no-key x402 challenge used an unsupported payment network family.";
+    case "x402_live_challenge_prohibited_material":
+      return "The live no-key x402 challenge contained prohibited material.";
     case "x402_live_challenge_paid_output_without_proof":
       return "The no-proof request returned success or paid-data-shaped output, which was discarded.";
   }
