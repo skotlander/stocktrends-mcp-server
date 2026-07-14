@@ -1,6 +1,9 @@
 import { StockTrendsMcpError } from "./errors.js";
 import { AUTH_CAPABLE_PAID_ENDPOINT_POLICIES, type PaidHttpMethod } from "./paidPolicy.js";
-import type { JsonObject } from "./stocktrendsClient.js";
+import {
+  MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES,
+  type JsonObject
+} from "./stocktrendsClient.js";
 
 export const STOCKTRENDS_ENABLE_X402_RELAY = "STOCKTRENDS_ENABLE_X402_RELAY";
 export const STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION = "STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION";
@@ -44,6 +47,33 @@ export const X402_CHALLENGE_FIELD_CATEGORIES: readonly string[] = Object.freeze(
   "pricing_rule_or_family"
 ]);
 
+export const X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS: readonly string[] = Object.freeze([
+  "accepted_payment_methods",
+  "detail",
+  "error",
+  "payment_required",
+  "pricing",
+  "protocol",
+  "resource"
+]);
+
+export const X402_LIVE_CHALLENGE_FIELD_CATEGORIES: readonly string[] = Object.freeze([
+  "x402_v2_requirements",
+  "resource_info",
+  "pricing",
+  "accepted_payment_methods",
+  "single_accepted_requirement",
+  "bounded_extensions"
+]);
+
+export const MAX_X402_PAYMENT_REQUIRED_DECODED_BYTES = 32 * 1024;
+export const X402_EXTENSION_MAX_DEPTH = 6;
+export const X402_EXTENSION_MAX_OBJECT_MEMBERS = 32;
+export const X402_EXTENSION_MAX_TOTAL_MEMBERS = 128;
+export const X402_EXTENSION_MAX_ARRAY_LENGTH = 32;
+export const X402_EXTENSION_MAX_STRING_BYTES = 2 * 1024;
+export const X402_EXTENSION_MAX_TOTAL_BYTES = 16 * 1024;
+
 export type X402RelayMode =
   | "disabled"
   | "relay_enabled_challenge_disabled"
@@ -79,6 +109,12 @@ export type X402RelayErrorCode =
   | "x402_live_challenge_unexpected_status"
   | "x402_live_challenge_unexpected_shape"
   | "x402_live_challenge_value_not_approved"
+  | "x402_live_challenge_header_missing"
+  | "x402_live_challenge_header_invalid"
+  | "x402_live_challenge_header_shape_not_approved"
+  | "x402_live_challenge_header_body_mismatch"
+  | "x402_live_challenge_network_unsupported"
+  | "x402_live_challenge_prohibited_material"
   | "x402_live_challenge_paid_output_without_proof";
 
 export interface X402MockChallengeFixture {
@@ -193,6 +229,9 @@ export interface X402LiveChallengeSessionState {
 export interface X402LiveChallengeResponse {
   status: number;
   approvedHeaderNamesPresent: string[];
+  paymentRequiredHeader: string | null;
+  paymentRequiredHeaderState: "missing" | "present" | "oversized";
+  apiBaseOrigin: string;
   body: JsonObject | null;
 }
 
@@ -647,9 +686,9 @@ export async function executePublicLiveX402ChallengeRelay(
     http_method: "GET",
     challenge_source: "api_no_key_live",
     challenge: {
-      header_names_present: [...X402_CHALLENGE_HEADER_NAMES],
-      top_level_body_keys_present: [...X402_CHALLENGE_TOP_LEVEL_BODY_KEYS],
-      field_categories_present: [...X402_CHALLENGE_FIELD_CATEGORIES],
+      header_names_present: approvedLiveHeaderNames(response.approvedHeaderNamesPresent),
+      top_level_body_keys_present: approvedLiveTopLevelKeys(response.body),
+      field_categories_present: [...X402_LIVE_CHALLENGE_FIELD_CATEGORIES],
       conditional_values_relayed: false,
       x_request_id_value_relayed: false
     },
@@ -758,228 +797,595 @@ function normalizeChallengeShape(fixture: X402MockChallengeFixture): { ok: true 
 
 type X402LiveShapeError =
   | "x402_live_challenge_unexpected_shape"
-  | "x402_live_challenge_value_not_approved";
+  | "x402_live_challenge_value_not_approved"
+  | "x402_live_challenge_header_missing"
+  | "x402_live_challenge_header_invalid"
+  | "x402_live_challenge_header_shape_not_approved"
+  | "x402_live_challenge_header_body_mismatch"
+  | "x402_live_challenge_network_unsupported"
+  | "x402_live_challenge_prohibited_material";
 
-type X402ConditionalFieldValidator = (value: unknown) => boolean;
-type X402ConditionalFieldValidators = Readonly<Record<string, X402ConditionalFieldValidator>>;
+const X402_REQUIREMENTS_KEYS = Object.freeze(["x402Version", "resource", "accepts", "extensions"]);
+const X402_RESOURCE_INFO_KEYS = Object.freeze([
+  "url",
+  "description",
+  "mimeType",
+  "serviceName",
+  "tags",
+  "iconUrl"
+]);
+const X402_PRICING_KEYS = Object.freeze(["amount_usd", "unit", "network", "token", "scheme"]);
+const X402_ACCEPTED_REQUIREMENT_KEYS = Object.freeze([
+  "scheme",
+  "network",
+  "amount",
+  "asset",
+  "payTo",
+  "maxTimeoutSeconds",
+  "extra"
+]);
+const X402_EXTRA_REQUIRED_KEYS = Object.freeze(["name", "version", "resource"]);
+const X402_EXTRA_KNOWN_KEYS = new Set([...X402_EXTRA_REQUIRED_KEYS, "assetTransferMethod"]);
+const X402_PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const X402_EXTENSION_SHADOW_KEYS = new Set([
+  "route",
+  "path",
+  "url",
+  "resource",
+  "amount",
+  "amountusd",
+  "price",
+  "pricing",
+  "payment",
+  "asset",
+  "token",
+  "decimals",
+  "payto",
+  "payee",
+  "recipient",
+  "address",
+  "network",
+  "chain",
+  "chainid",
+  "family",
+  "scheme",
+  "timeout",
+  "maxtimeoutseconds",
+  "expiry",
+  "expiresat",
+  "proof",
+  "paymentsignature",
+  "paymentproof",
+  "paymentheader",
+  "authorization",
+  "facilitator",
+  "settlement",
+  "metering",
+  "transaction",
+  "transactionhash"
+]);
 
-const X402_LIVE_ACCEPTED_METHOD_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
-  amount: isApprovedLiveAmount,
-  asset: isApprovedLiveIdentifier,
-  network: isApprovedLiveIdentifier,
-  recipient: isApprovedLiveRecipient,
-  address: isApprovedLiveRecipient,
-  expiry: isApprovedLiveExpiry,
-  expires_at: isApprovedLiveExpiry
-});
-const X402_LIVE_PRICING_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
-  amount: isApprovedLiveAmount,
-  asset: isApprovedLiveIdentifier,
-  network: isApprovedLiveIdentifier,
-  recipient: isApprovedLiveRecipient,
-  address: isApprovedLiveRecipient,
-  pricing_rule: isApprovedLiveIdentifier,
-  family: isApprovedLiveIdentifier
-});
-const X402_LIVE_PREVIEW_VALIDATORS: X402ConditionalFieldValidators = Object.freeze({
-  expiry: isApprovedLiveExpiry,
-  expires_at: isApprovedLiveExpiry,
-  challenge_id: isApprovedLiveChallengeIdentifier,
-  correlation_id: isApprovedLiveChallengeIdentifier,
-  nonce: isApprovedLiveChallengeIdentifier,
-  recipient: isApprovedLiveRecipient,
-  address: isApprovedLiveRecipient
-});
+type HeaderDecodeResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; error: "invalid" | "shape" };
+
+type ExtensionValidationResult = "ok" | "invalid" | "prohibited";
 
 function validateLiveChallengeShape(
   response: X402LiveChallengeResponse,
   endpointPath: string
 ): X402LiveShapeError | null {
-  if (response.body === null) {
+  if (response.body === null || !isPlainRecord(response.body)) {
     return "x402_live_challenge_unexpected_shape";
   }
 
-  const headerNames = new Set(response.approvedHeaderNamesPresent.map((name) => name.toLowerCase()));
-  if (!hasExactMembers(headerNames, X402_CHALLENGE_HEADER_NAMES)) {
+  if (response.paymentRequiredHeaderState === "missing") {
+    return "x402_live_challenge_header_missing";
+  }
+
+  if (
+    response.paymentRequiredHeaderState === "oversized" ||
+    response.paymentRequiredHeaderState !== "present" ||
+    response.paymentRequiredHeader === null
+  ) {
+    return "x402_live_challenge_header_invalid";
+  }
+
+  const decodedHeader = decodeStandardBase64JsonObject(response.paymentRequiredHeader);
+  if (!decodedHeader.ok) {
+    return decodedHeader.error === "shape"
+      ? "x402_live_challenge_header_shape_not_approved"
+      : "x402_live_challenge_header_invalid";
+  }
+
+  if (!hasOwn(response.body, "payment_required")) {
     return "x402_live_challenge_unexpected_shape";
   }
 
-  const bodyKeys = new Set(Object.keys(response.body));
-  const unexpectedTopLevelKey = [...bodyKeys].some(
-    (key) => !X402_CHALLENGE_TOP_LEVEL_BODY_KEYS.includes(key)
+  // Identity is checked before any normalization, filtering, or semantic
+  // interpretation. Object key order is ignored; array order and every JSON
+  // type, key, length, and value remain exact.
+  if (!jsonStructuralEqual(decodedHeader.value, response.body.payment_required)) {
+    return "x402_live_challenge_header_body_mismatch";
+  }
+
+  return validateCanonicalLiveChallenge(
+    response.body,
+    endpointPath,
+    response.apiBaseOrigin
   );
-  if (unexpectedTopLevelKey) {
+}
+
+function decodeStandardBase64JsonObject(value: string): HeaderDecodeResult {
+  if (
+    value.length === 0 ||
+    value.length > MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES ||
+    new TextEncoder().encode(value).byteLength > MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES ||
+    value.length % 4 !== 0 ||
+    /\s/.test(value) ||
+    /[-_]/.test(value) ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return { ok: false, error: "invalid" };
+  }
+
+  let decoded: Uint8Array;
+  try {
+    decoded = Buffer.from(value, "base64");
+  } catch {
+    return { ok: false, error: "invalid" };
+  }
+
+  if (
+    decoded.byteLength > MAX_X402_PAYMENT_REQUIRED_DECODED_BYTES ||
+    Buffer.from(decoded).toString("base64") !== value
+  ) {
+    return { ok: false, error: "invalid" };
+  }
+
+  let decodedText: string;
+  try {
+    decodedText = new TextDecoder("utf-8", { fatal: true }).decode(decoded);
+  } catch {
+    return { ok: false, error: "invalid" };
+  }
+
+  let parsed: unknown;
+  try {
+    // JSON.parse rejects trailing non-whitespace and therefore accepts exactly
+    // one JSON value. It does not expose duplicate-key detection; later exact
+    // structural checks still apply to the parser's resulting object.
+    parsed = JSON.parse(decodedText);
+  } catch {
+    return { ok: false, error: "invalid" };
+  }
+
+  if (!isPlainRecord(parsed) || !isSafeDecodedJsonTree(parsed)) {
+    return { ok: false, error: "shape" };
+  }
+
+  return { ok: true, value: parsed };
+}
+
+function validateCanonicalLiveChallenge(
+  body: Record<string, unknown>,
+  endpointPath: string,
+  apiBaseOrigin: string
+): X402LiveShapeError | null {
+  const bodyKeys = Object.keys(body);
+  if (hasForbiddenLiveResponseMaterial(body)) {
+    return "x402_live_challenge_prohibited_material";
+  }
+
+  const allowedBodyKeys = new Set([...X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS, "stocktrends_preview"]);
+  if (bodyKeys.some((key) => !allowedBodyKeys.has(key))) {
     return "x402_live_challenge_value_not_approved";
   }
-  if (!hasExactMembers(bodyKeys, X402_CHALLENGE_TOP_LEVEL_BODY_KEYS)) {
+  if (!X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS.every((key) => hasOwn(body, key))) {
     return "x402_live_challenge_unexpected_shape";
   }
 
   if (
-    response.body.payment_required !== true ||
-    !isBoundedString(response.body.detail, 1_024) ||
-    !isBoundedString(response.body.error, 256) ||
-    !isBoundedString(response.body.protocol, 256) ||
-    response.body.resource !== endpointPath ||
-    !Array.isArray(response.body.accepted_payment_methods) ||
-    response.body.accepted_payment_methods.length === 0 ||
-    response.body.accepted_payment_methods.length > 16 ||
-    !isRecord(response.body.pricing) ||
-    !isRecord(response.body.stocktrends_preview)
+    body.error !== "payment_required" ||
+    body.detail !== "Payment is required to access this endpoint." ||
+    body.protocol !== "x402" ||
+    !Array.isArray(body.accepted_payment_methods) ||
+    body.accepted_payment_methods.length !== 1 ||
+    body.accepted_payment_methods[0] !== "x402"
+  ) {
+    return "x402_live_challenge_value_not_approved";
+  }
+
+  if (!isPlainRecord(body.pricing) || !hasExactObjectKeys(body.pricing, X402_PRICING_KEYS)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  const pricing = body.pricing;
+  if (
+    !isCanonicalPositiveFixedSix(pricing.amount_usd) ||
+    pricing.unit !== "request" ||
+    !isBoundedIdentifier(pricing.network, 128) ||
+    !isEvmAddress(pricing.token) ||
+    !isBoundedIdentifier(pricing.scheme, 64)
+  ) {
+    return "x402_live_challenge_value_not_approved";
+  }
+
+  if (!isPlainRecord(body.payment_required)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  const requirements = body.payment_required;
+  if (!hasExactObjectKeys(requirements, X402_REQUIREMENTS_KEYS)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (requirements.x402Version !== 2 || !Number.isInteger(requirements.x402Version)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (!isApprovedResourceInfo(requirements.resource)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (!Array.isArray(requirements.accepts) || requirements.accepts.length !== 1) {
+    return "x402_live_challenge_value_not_approved";
+  }
+
+  const accepted = requirements.accepts[0];
+  if (!isPlainRecord(accepted) || !hasExactObjectKeys(accepted, X402_ACCEPTED_REQUIREMENT_KEYS)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (!isBoundedIdentifier(accepted.scheme, 64) || !isBoundedIdentifier(accepted.network, 128)) {
+    return "x402_live_challenge_value_not_approved";
+  }
+  if (!isSupportedEip155Network(accepted.network)) {
+    return "x402_live_challenge_network_unsupported";
+  }
+  if (
+    !isCanonicalPositiveAtomicAmount(accepted.amount) ||
+    !isEvmAddress(accepted.asset) ||
+    !isEvmAddress(accepted.payTo) ||
+    typeof accepted.maxTimeoutSeconds !== "number" ||
+    !Number.isSafeInteger(accepted.maxTimeoutSeconds) ||
+    accepted.maxTimeoutSeconds <= 0 ||
+    !isPlainRecord(accepted.extra)
   ) {
     return "x402_live_challenge_value_not_approved";
   }
 
   if (
-    !response.body.accepted_payment_methods.every(
-      (entry) => isRecord(entry) && isApprovedLiveAcceptedPaymentMethod(entry)
-    ) ||
-    !isApprovedLivePricing(response.body.pricing) ||
-    !isApprovedLivePreview(response.body.stocktrends_preview)
+    pricing.network !== accepted.network ||
+    pricing.token !== accepted.asset ||
+    pricing.scheme !== accepted.scheme
   ) {
     return "x402_live_challenge_value_not_approved";
   }
 
-  if (hasForbiddenLiveResponseMaterial(response.body)) {
+  const resource = requirements.resource;
+  const extraValidation = validateAcceptedExtra(accepted.extra, resource);
+  if (extraValidation === "prohibited") {
+    return "x402_live_challenge_prohibited_material";
+  }
+  if (extraValidation !== "ok") {
     return "x402_live_challenge_value_not_approved";
   }
 
-  const fieldCategories = detectFieldCategories(response.body);
-  if (fieldCategories.unexpected) {
+  const extraResource = accepted.extra.resource;
+  if (
+    !isPlainRecord(extraResource) ||
+    !jsonStructuralEqual(extraResource, resource) ||
+    typeof body.resource !== "string" ||
+    body.resource !== resource.url ||
+    extraResource.url !== resource.url ||
+    !isApprovedRouteResource(body.resource, endpointPath, apiBaseOrigin)
+  ) {
     return "x402_live_challenge_value_not_approved";
   }
-  if (!hasExactMembers(fieldCategories.present, X402_CHALLENGE_FIELD_CATEGORIES)) {
-    return "x402_live_challenge_unexpected_shape";
+
+  const extensionsValidation = validateExtensionContainer(requirements.extensions);
+  if (extensionsValidation === "prohibited") {
+    return "x402_live_challenge_prohibited_material";
+  }
+  if (extensionsValidation !== "ok") {
+    return "x402_live_challenge_value_not_approved";
+  }
+
+  if (hasOwn(body, "stocktrends_preview")) {
+    const previewValidation = validateExtensionContainer(body.stocktrends_preview);
+    if (previewValidation === "prohibited") {
+      return "x402_live_challenge_prohibited_material";
+    }
+    if (previewValidation !== "ok") {
+      return "x402_live_challenge_value_not_approved";
+    }
   }
 
   return null;
 }
 
-function isApprovedLiveAcceptedPaymentMethod(value: Record<string, unknown>): boolean {
+function isApprovedResourceInfo(value: unknown): value is Record<string, unknown> {
+  if (!isPlainRecord(value) || !hasExactObjectKeys(value, X402_RESOURCE_INFO_KEYS)) {
+    return false;
+  }
+
   return (
-    hasOnlyApprovedConditionalFields(value, X402_LIVE_ACCEPTED_METHOD_VALIDATORS) &&
-    hasRequiredConditionalFields(value, ["amount", "asset", "network"]) &&
-    hasExactlyOneConditionalField(value, ["recipient", "address"]) &&
-    hasAtMostOneConditionalField(value, ["expiry", "expires_at"])
+    isBoundedUtf8String(value.url, 1, 2_048) &&
+    isBoundedUtf8String(value.description, 0, 2_048) &&
+    value.mimeType === "application/json" &&
+    isBoundedUtf8String(value.serviceName, 0, 256) &&
+    Array.isArray(value.tags) &&
+    value.tags.length <= 32 &&
+    value.tags.every((tag) => isBoundedUtf8String(tag, 0, 256)) &&
+    isBoundedUtf8String(value.iconUrl, 0, 2_048)
   );
 }
 
-function isApprovedLivePricing(value: Record<string, unknown>): boolean {
-  return (
-    hasOnlyApprovedConditionalFields(value, X402_LIVE_PRICING_VALIDATORS) &&
-    hasRequiredConditionalFields(value, ["amount", "asset", "network", "pricing_rule", "family"]) &&
-    hasExactlyOneConditionalField(value, ["recipient", "address"])
+function validateAcceptedExtra(
+  extra: Record<string, unknown>,
+  resource: Record<string, unknown>
+): ExtensionValidationResult {
+  if (!X402_EXTRA_REQUIRED_KEYS.every((key) => hasOwn(extra, key))) {
+    return "invalid";
+  }
+  if (
+    !isBoundedUtf8String(extra.name, 0, 256) ||
+    !isBoundedUtf8String(extra.version, 0, 128) ||
+    !isPlainRecord(extra.resource) ||
+    !jsonStructuralEqual(extra.resource, resource) ||
+    (hasOwn(extra, "assetTransferMethod") && !isBoundedUtf8String(extra.assetTransferMethod, 1, 128))
+  ) {
+    return "invalid";
+  }
+  if (
+    hasForbiddenLiveResponseMaterial(extra.name) ||
+    hasForbiddenLiveResponseMaterial(extra.version) ||
+    (hasOwn(extra, "assetTransferMethod") && hasForbiddenLiveResponseMaterial(extra.assetTransferMethod))
+  ) {
+    return "prohibited";
+  }
+  if (jsonUtf8ByteLength(extra) > X402_EXTENSION_MAX_TOTAL_BYTES) {
+    return "invalid";
+  }
+
+  const unknownExtra = Object.fromEntries(
+    Object.entries(extra).filter(([key]) => !X402_EXTRA_KNOWN_KEYS.has(key))
   );
+  return validateExtensionContainer(unknownExtra);
 }
 
-function isApprovedLivePreview(value: Record<string, unknown>): boolean {
-  return (
-    hasOnlyApprovedConditionalFields(value, X402_LIVE_PREVIEW_VALIDATORS) &&
-    hasRequiredConditionalFields(value, ["challenge_id", "correlation_id", "nonce"]) &&
-    hasExactlyOneConditionalField(value, ["expiry", "expires_at"]) &&
-    hasExactlyOneConditionalField(value, ["recipient", "address"])
-  );
+function validateExtensionContainer(value: unknown): ExtensionValidationResult {
+  if (!isPlainRecord(value)) {
+    return "invalid";
+  }
+  if (jsonUtf8ByteLength(value) > X402_EXTENSION_MAX_TOTAL_BYTES) {
+    return "invalid";
+  }
+
+  const state = { totalMembers: 0 };
+  return validateExtensionValue(value, 0, state);
 }
 
-function hasOnlyApprovedConditionalFields(
-  value: Record<string, unknown>,
-  validators: X402ConditionalFieldValidators
-): boolean {
-  const entries = Object.entries(value);
-  return (
-    entries.length > 0 &&
-    entries.length <= Object.keys(validators).length &&
-    entries.every(([key, child]) => {
-      const validator = validators[key];
-      return typeof validator === "function" && validator(child);
-    })
-  );
-}
+function validateExtensionValue(
+  value: unknown,
+  depth: number,
+  state: { totalMembers: number }
+): ExtensionValidationResult {
+  if (depth > X402_EXTENSION_MAX_DEPTH) {
+    return "invalid";
+  }
 
-function hasRequiredConditionalFields(value: Record<string, unknown>, fields: readonly string[]): boolean {
-  return fields.every((field) => Object.prototype.hasOwnProperty.call(value, field));
-}
-
-function hasExactlyOneConditionalField(value: Record<string, unknown>, fields: readonly string[]): boolean {
-  return fields.filter((field) => Object.prototype.hasOwnProperty.call(value, field)).length === 1;
-}
-
-function hasAtMostOneConditionalField(value: Record<string, unknown>, fields: readonly string[]): boolean {
-  return fields.filter((field) => Object.prototype.hasOwnProperty.call(value, field)).length <= 1;
-}
-
-function isApprovedLiveAmount(value: unknown): boolean {
+  if (value === null || typeof value === "boolean") {
+    return "ok";
+  }
   if (typeof value === "number") {
-    return Number.isFinite(value) && value > 0 && value <= Number.MAX_SAFE_INTEGER;
+    return Number.isFinite(value) ? "ok" : "invalid";
+  }
+  if (typeof value === "string") {
+    if (!isBoundedUtf8String(value, 0, X402_EXTENSION_MAX_STRING_BYTES)) {
+      return "invalid";
+    }
+    return hasForbiddenLiveResponseMaterial(value) ? "prohibited" : "ok";
+  }
+  if (Array.isArray(value)) {
+    if (value.length > X402_EXTENSION_MAX_ARRAY_LENGTH) {
+      return "invalid";
+    }
+    for (const child of value) {
+      const result = validateExtensionValue(child, depth + 1, state);
+      if (result !== "ok") return result;
+    }
+    return "ok";
+  }
+  if (!isPlainRecord(value)) {
+    return "invalid";
   }
 
-  if (typeof value !== "string" || value.length === 0 || value.length > 64) {
-    return false;
+  const entries = Object.entries(value);
+  if (entries.length > X402_EXTENSION_MAX_OBJECT_MEMBERS) {
+    return "invalid";
+  }
+  state.totalMembers += entries.length;
+  if (state.totalMembers > X402_EXTENSION_MAX_TOTAL_MEMBERS) {
+    return "invalid";
   }
 
-  if (!/^(?:0|[1-9]\d{0,31})(?:\.\d{1,18})?$/.test(value)) {
-    return false;
+  for (const [key, child] of entries) {
+    if (!isBoundedUtf8String(key, 1, 128)) {
+      return "invalid";
+    }
+    if (isProhibitedExtensionKey(key)) {
+      return "prohibited";
+    }
+    const result = validateExtensionValue(child, depth + 1, state);
+    if (result !== "ok") return result;
   }
-
-  return BigInt(value.replace(".", "")) > 0n;
+  return "ok";
 }
 
-function isApprovedLiveIdentifier(value: unknown): boolean {
+function isProhibitedExtensionKey(key: string): boolean {
+  if (X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase())) {
+    return true;
+  }
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (
+    X402_EXTENSION_SHADOW_KEYS.has(normalized) ||
+    [
+      "proof",
+      "signature",
+      "authorization",
+      "privatekey",
+      "seed",
+      "mnemonic",
+      "bearer",
+      "apikey",
+      "credential",
+      "walletsecret",
+      "walletseed"
+    ]
+      .some((token) => normalized.includes(token))
+  );
+}
+
+function isApprovedRouteResource(value: string, endpointPath: string, apiBaseOrigin: string): boolean {
+  if (value === endpointPath) {
+    return true;
+  }
+  if (!isBoundedUtf8String(value, 1, 2_048)) {
+    return false;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+
+  if (
+    parsed.origin !== apiBaseOrigin ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    parsed.pathname !== endpointPath
+  ) {
+    return false;
+  }
+
+  // Compare the raw, pre-normalization path to reject dot segments, encoded
+  // route tricks, trailing variants, and other URL-parser normalization.
+  const rawAbsolute = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]+(\/[^?#]*)?$/.exec(value);
+  return rawAbsolute !== null && (rawAbsolute[1] ?? "/") === endpointPath;
+}
+
+function isCanonicalPositiveAtomicAmount(value: unknown): value is string {
+  return typeof value === "string" && /^[1-9]\d{0,77}$/.test(value);
+}
+
+function isCanonicalPositiveFixedSix(value: unknown): value is string {
   return (
     typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 128 &&
-    /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value)
+    /^(?:0|[1-9]\d{0,31})\.\d{6}$/.test(value) &&
+    /[1-9]/.test(value.replace(".", ""))
   );
 }
 
-function isApprovedLiveRecipient(value: unknown): boolean {
+function isBoundedIdentifier(value: unknown, maxBytes: number): value is string {
+  return (
+    typeof value === "string" &&
+    isBoundedUtf8String(value, 1, maxBytes) &&
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)
+  );
+}
+
+function isEvmAddress(value: unknown): value is string {
   return typeof value === "string" && /^0x[0-9A-Fa-f]{40}$/.test(value);
 }
 
-function isApprovedLiveExpiry(value: unknown): boolean {
-  if (typeof value !== "string" || value.length === 0 || value.length > 64) {
+function isSupportedEip155Network(value: string): boolean {
+  return /^eip155:[1-9]\d{0,31}$/.test(value);
+}
+
+function isBoundedUtf8String(value: unknown, minBytes: number, maxBytes: number): value is string {
+  if (typeof value !== "string") {
     return false;
   }
+  const byteLength = new TextEncoder().encode(value).byteLength;
+  return byteLength >= minBytes && byteLength <= maxBytes;
+}
 
-  const match = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.(\d{1,3}))?Z$/.exec(value);
-  if (!match) {
+function hasExactObjectKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => hasOwn(value, key));
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
+  return Object.getPrototypeOf(value) === Object.prototype;
+}
 
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, fractionText = ""] = match;
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  const second = Number(secondText);
-  const millisecond = Number(fractionText.padEnd(3, "0"));
-  const timestamp = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
-  const parsed = new Date(timestamp);
-
+function isSafeDecodedJsonTree(value: unknown, depth = 0): boolean {
+  if (depth > 32) return false;
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) {
+    return value.length <= 256 && value.every((child) => isSafeDecodedJsonTree(child, depth + 1));
+  }
+  if (!isPlainRecord(value)) return false;
+  const entries = Object.entries(value);
   return (
-    parsed.getUTCFullYear() === year &&
-    parsed.getUTCMonth() === month - 1 &&
-    parsed.getUTCDate() === day &&
-    parsed.getUTCHours() === hour &&
-    parsed.getUTCMinutes() === minute &&
-    parsed.getUTCSeconds() === second &&
-    parsed.getUTCMilliseconds() === millisecond
+    entries.length <= 1_024 &&
+    entries.every(
+      ([key, child]) =>
+        !X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase()) &&
+        isSafeDecodedJsonTree(child, depth + 1)
+    )
   );
 }
 
-function isApprovedLiveChallengeIdentifier(value: unknown): boolean {
+function jsonStructuralEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((child, index) => jsonStructuralEqual(child, right[index]))
+    );
+  }
+  if (!isPlainRecord(left) || !isPlainRecord(right)) return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
   return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 256 &&
-    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(value)
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) => hasOwn(right, key) && jsonStructuralEqual(left[key], right[key]))
   );
 }
 
-function isBoundedString(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+function jsonUtf8ByteLength(value: unknown): number {
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === "string"
+      ? new TextEncoder().encode(serialized).byteLength
+      : Number.POSITIVE_INFINITY;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function approvedLiveHeaderNames(names: readonly string[]): string[] {
+  const present = new Set(names.map((name) => name.toLowerCase()));
+  return X402_CHALLENGE_HEADER_NAMES.filter((name) => present.has(name));
+}
+
+function approvedLiveTopLevelKeys(body: JsonObject | null): string[] {
+  if (body === null) return [];
+  return [
+    ...X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS,
+    ...(hasOwn(body, "stocktrends_preview") ? ["stocktrends_preview"] : [])
+  ];
 }
 
 function hasLivePaidOutputWithoutProof(body: JsonObject): boolean {
@@ -1303,6 +1709,18 @@ function liveErrorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_r
       return "The API-authored 402 response did not match the approved challenge shape. No challenge values were returned.";
     case "x402_live_challenge_value_not_approved":
       return "The API-authored 402 response contained an unapproved value type, category, or field path. No challenge values were returned.";
+    case "x402_live_challenge_header_missing":
+      return "The API-authored 402 response omitted the authoritative Payment-Required header. No challenge values were returned.";
+    case "x402_live_challenge_header_invalid":
+      return "The API-authored Payment-Required header was malformed or oversized. No header or challenge values were returned.";
+    case "x402_live_challenge_header_shape_not_approved":
+      return "The decoded Payment-Required header was not an approved bounded JSON object. No decoded or challenge values were returned.";
+    case "x402_live_challenge_header_body_mismatch":
+      return "The Payment-Required header and response-body requirements were structurally inconsistent. No divergent path or value was returned.";
+    case "x402_live_challenge_network_unsupported":
+      return "The API-authored 402 response used an unsupported payment network family. No challenge values were returned.";
+    case "x402_live_challenge_prohibited_material":
+      return "The API-authored 402 response contained prohibited proof, authorization, secret, or payment-override material. No challenge values were returned.";
     case "x402_live_challenge_paid_output_without_proof":
       return "The no-proof request returned success or paid-data-shaped output. The output was discarded and no retry occurred.";
     default:
@@ -1402,6 +1820,18 @@ function errorMessage(errorCode: Exclude<X402RelayErrorCode, "x402_payment_requi
       return "The live no-key x402 challenge response had an unexpected shape.";
     case "x402_live_challenge_value_not_approved":
       return "The live no-key x402 challenge response contained an unapproved value category, type, or path.";
+    case "x402_live_challenge_header_missing":
+      return "The live no-key x402 challenge response omitted the authoritative Payment-Required header.";
+    case "x402_live_challenge_header_invalid":
+      return "The live no-key x402 Payment-Required header was malformed or oversized.";
+    case "x402_live_challenge_header_shape_not_approved":
+      return "The decoded live no-key x402 Payment-Required header was not an approved bounded JSON object.";
+    case "x402_live_challenge_header_body_mismatch":
+      return "The live no-key x402 Payment-Required header and body requirements did not match.";
+    case "x402_live_challenge_network_unsupported":
+      return "The live no-key x402 challenge used an unsupported payment network family.";
+    case "x402_live_challenge_prohibited_material":
+      return "The live no-key x402 challenge contained prohibited material.";
     case "x402_live_challenge_paid_output_without_proof":
       return "The no-proof request returned success or paid-data-shaped output, which was discarded.";
   }
