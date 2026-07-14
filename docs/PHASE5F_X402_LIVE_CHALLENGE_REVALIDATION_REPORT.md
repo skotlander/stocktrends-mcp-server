@@ -200,15 +200,27 @@ public resource, or second route occurred before the child process was closed.
 
 ## 13. No-value-retention evidence
 
-The MCP returned only its stable error classification and approved safe
-booleans. The harness explicitly selected coarse fields and never serialized
-the full MCP result. It observed the standard header by name and presence only;
-it never read or emitted the header value. It did not read, clone, log, or save
-the response body. Server stderr was silenced and discarded.
+The MCP returned its stable coarse error classification and error code,
+approved safe route/status metadata, denial reason, and approved safe booleans.
+The harness explicitly selected and retained only the permitted coarse
+observations: attempt time; tool; method; route; attempt count;
+response-received status; HTTP status; standard header-name presence;
+body-presence/cap booleans; stable coarse MCP classification and error code;
+approved safe route/status metadata; denial reason; and approved safe booleans.
+It never serialized the full MCP result. It observed the standard header by
+name and presence only; it never read or emitted the header value. It did not
+read, clone, log, or save the response body. Server stderr was silenced and
+discarded.
 
-No live value was copied to a test, fixture, snapshot, report, terminal log,
-documentation, or Git history. The temporary files were deleted after their
-single use. This report contains only approved coarse facts.
+No raw or conditionally sensitive live challenge value was copied to a test,
+fixture, snapshot, report, terminal log, documentation, or Git history. This
+prohibition includes the raw response body; raw or decoded `Payment-Required`
+value; requirements object; pricing or amount material; atomic amount; asset or
+token address; `payTo` or recipient address; network; scheme; timeout; resource
+URL or production origin; challenge, nonce, correlation, or request
+identifiers; Bazaar, extension, or preview values; proof; payment;
+authorization; credentials; or secrets. The temporary files were deleted after
+their single use. This report contains only approved coarse facts.
 
 ## 14. Capability-boundary confirmation
 
