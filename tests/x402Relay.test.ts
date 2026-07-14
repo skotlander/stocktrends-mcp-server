@@ -3,8 +3,14 @@ import { parseConfig } from "../src/config.js";
 import { AUTH_CAPABLE_PAID_ENDPOINT_POLICIES } from "../src/paidPolicy.js";
 import { redactSensitiveText } from "../src/redaction.js";
 import { COST_ESTIMATE_TOOL_NAME } from "../src/tools/index.js";
-import { X402_PUBLIC_MOCK_TOOL_DEFINITIONS } from "../src/tools/x402Tools.js";
 import {
+  buildLiveChallengeSearchParams,
+  X402_PUBLIC_LIVE_TOOL_DEFINITIONS,
+  X402_PUBLIC_MOCK_TOOL_DEFINITIONS
+} from "../src/tools/x402Tools.js";
+import {
+  createX402LiveChallengeSessionState,
+  executePublicLiveX402ChallengeRelay,
   buildPublicMockX402ChallengeRelayResult,
   buildMockX402ChallengeRelayResult,
   createMockX402ChallengeFixture,
@@ -15,6 +21,8 @@ import {
   X402_CHALLENGE_RELAY_ROUTE_ALLOWLIST,
   X402_CHALLENGE_TOP_LEVEL_BODY_KEYS,
   type X402ChallengeRelayRequest,
+  type X402LivePaymentRequiredResult,
+  type X402LiveRelayErrorResult,
   type X402MockChallengeFixture,
   type X402PaymentRequiredResult,
   type X402RelayErrorResult
@@ -27,10 +35,17 @@ const X402_ENV = {
   STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true"
 };
 
+const X402_LIVE_ENV = {
+  ...X402_ENV,
+  STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: "true"
+};
+
 const REQUEST: X402ChallengeRelayRequest = {
   toolName: "stocktrends_get_market_regime_latest",
   endpointPath: "/v1/market/regime/latest"
 };
+
+const LIVE_VALUE_SENTINEL = "synthetic-live-challenge-value-marker";
 
 const EXPECTED_TEN_TOOL_NAMES = [
   COST_ESTIMATE_TOOL_NAME,
@@ -98,6 +113,21 @@ describe("Phase 5F x402 mock challenge relay config and surface", () => {
     await server.close();
   });
 
+  it("exposes the same ten-tool, ten-resource, zero-prompt shape in live no-key challenge mode", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () => liveChallengeResponse("/v1/market/regime/latest"));
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
+
+    expect(toolNames).toEqual(EXPECTED_TEN_TOOL_NAMES);
+    expect((await client.listResources()).resources).toHaveLength(10);
+    expect(client.getServerCapabilities()?.prompts).toBeUndefined();
+    expect(fetchFn).not.toHaveBeenCalled();
+
+    await client.close();
+    await server.close();
+  });
+
   it("keeps API-key paid mode unchanged when x402 flags are absent", async () => {
     const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
     const { client, server } = await connectMcp(fetchFn, {
@@ -106,10 +136,15 @@ describe("Phase 5F x402 mock challenge relay config and surface", () => {
     });
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
+    const paidTool = (await client.listTools()).tools.find((tool) => tool.name === REQUEST.toolName);
 
     expect(toolNames.sort()).toEqual(EXPECTED_TEN_TOOL_NAMES);
     expect((await client.listResources()).resources).toHaveLength(10);
     expect(client.getServerCapabilities()?.prompts).toBeUndefined();
+    expect(paidTool?.title).toContain("(paid)");
+    expect(paidTool?.description).toContain("Live subscription/API-key execution");
+    expect(paidTool?.description).toContain("no x402");
+    expect(paidTool?._meta).not.toHaveProperty("x402Relay");
 
     await client.close();
     await server.close();
@@ -126,6 +161,58 @@ describe("Phase 5F x402 mock challenge relay config and surface", () => {
       }))
     );
     expect(X402_PUBLIC_MOCK_TOOL_DEFINITIONS).toHaveLength(9);
+  });
+
+  it("maps public live wiring to the same exact nine approved paid GET policies", () => {
+    expect(X402_PUBLIC_LIVE_TOOL_DEFINITIONS).toEqual(
+      AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.map((policy) => ({
+        name: policy.toolName,
+        endpointPath: policy.endpointPath,
+        httpMethod: policy.httpMethod,
+        access: "paid",
+        relayMode: "live_no_key_challenge"
+      }))
+    );
+    expect(X402_PUBLIC_LIVE_TOOL_DEFINITIONS).toHaveLength(9);
+  });
+
+  it("keeps mock registration metadata unchanged and uses truthful live/open-world metadata", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () => liveChallengeResponse("/v1/market/regime/latest"));
+    const mock = await connectMcp(fetchFn, X402_ENV);
+    const live = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const mockTool = (await mock.client.listTools()).tools.find((tool) => tool.name === REQUEST.toolName);
+    const liveTool = (await live.client.listTools()).tools.find((tool) => tool.name === REQUEST.toolName);
+
+    expect(mockTool?.description).toContain("mock-only");
+    expect(mockTool?.description).toContain("sends no request");
+    expect(mockTool?.annotations?.openWorldHint).toBe(false);
+    expect(mockTool?._meta).toMatchObject({ x402Relay: "mock_only", apiRequestSent: false });
+
+    expect(liveTool?.description).toContain("one external no-key GET request");
+    expect(liveTool?.description).toContain("No API key is used");
+    expect(liveTool?.description).toContain("no proof is accepted or forwarded");
+    expect(liveTool?.description).toContain("no payment header is sent");
+    expect(liveTool?.description).toContain("no payment or spend occurs");
+    expect(liveTool?.description).toContain("no paid API data is returned");
+    expect(liveTool?.description).not.toContain("mock-only");
+    expect(liveTool?.annotations?.openWorldHint).toBe(true);
+    expect(liveTool?._meta).toMatchObject({
+      x402Relay: "live_no_key_challenge",
+      apiRequestMayBeSent: true,
+      maxApiRequestsPerInvocation: 1,
+      apiKeyUsed: false,
+      proofForwarded: false,
+      paymentHeaderSent: false,
+      paymentOrSpendOccurs: false,
+      paidApiDataReturned: false
+    });
+    expect(liveTool?._meta).not.toHaveProperty("apiRequestSent", false);
+
+    await mock.client.close();
+    await mock.server.close();
+    await live.client.close();
+    await live.server.close();
   });
 });
 
@@ -282,6 +369,445 @@ describe("Phase 5F x402 public mock tool invocation", () => {
 
     await client.close();
     await server.close();
+  });
+});
+
+describe("Phase 5F x402 live no-key challenge invocation", () => {
+  it("makes exactly one injected no-key GET and returns shape-only structured metadata", async () => {
+    const fetchFn = vi.fn<FetchLike>(async (input, init) => {
+      expect(input).toBeInstanceOf(URL);
+      expect((input as URL).origin).toBe("https://api.stocktrends.com");
+      expect((input as URL).pathname).toBe("/v1/stim/latest");
+      expect((input as URL).searchParams.get("symbol_exchange")).toBe("IBM-N");
+      expect(init.method).toBe("GET");
+      expect(init.redirect).toBe("manual");
+      expect(init.credentials).toBe("omit");
+      expect(init.body).toBeUndefined();
+
+      const headers = new Headers(init.headers);
+      expect([...headers.keys()].sort()).toEqual(["accept", "user-agent"]);
+      expect(headers.has("authorization")).toBe(false);
+      expect(headers.has("x-api-key")).toBe(false);
+      expect(headers.has("payment-signature")).toBe(false);
+      expect(headers.has("x-payment")).toBe(false);
+      expect(headers.has("cookie")).toBe(false);
+
+      return liveChallengeResponse("/v1/stim/latest", LIVE_VALUE_SENTINEL);
+    });
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({
+      name: "stocktrends_get_stim_latest",
+      arguments: { symbol_exchange: "IBM_N" }
+    });
+    const body = structured<X402LivePaymentRequiredResult>(result);
+    const serialized = JSON.stringify(body);
+    const text = contentText(result);
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(result.isError).not.toBe(true);
+    expect(body).toMatchObject({
+      status: "payment_required",
+      error_code: "x402_payment_required",
+      api_status: 402,
+      tool_name: "stocktrends_get_stim_latest",
+      endpoint_path: "/v1/stim/latest",
+      method: "GET",
+      http_method: "GET",
+      challenge_source: "api_no_key_live",
+      paid_execution_authorized: false,
+      paid_execution_occurred: false,
+      api_request_sent: true,
+      auth_header_sent: false,
+      payment_header_sent: false,
+      proof_forwarded: false,
+      spend_occurred: false,
+      paid_api_data_returned: false,
+      automatic_paid_retries: false
+    });
+    expect(body.challenge).toEqual({
+      header_names_present: X402_CHALLENGE_HEADER_NAMES,
+      top_level_body_keys_present: X402_CHALLENGE_TOP_LEVEL_BODY_KEYS,
+      field_categories_present: X402_CHALLENGE_FIELD_CATEGORIES,
+      conditional_values_relayed: false,
+      x_request_id_value_relayed: false
+    });
+    expect(body.mcp_metadata).toMatchObject({
+      relay_mode: "live_challenge_enabled",
+      mock_only: false,
+      challenge_source: "api_no_key_live",
+      api_request_sent: true,
+      auth_header_sent: false,
+      payment_header_sent: false,
+      proof_forwarded: false,
+      spend_occurred: false,
+      paid_api_data_returned: false,
+      automatic_paid_retries: false,
+      repeated_identical_policy: "same_session_reserved_signature_denied",
+      live_challenge_limits: {
+        per_tool: 1,
+        per_session: 3,
+        reserved_for_tool: 1,
+        reserved_for_session: 1
+      }
+    });
+    expect("api_data" in body).toBe(false);
+    expect("challenge_values" in body.challenge).toBe(false);
+    expect(serialized).not.toContain(LIVE_VALUE_SENTINEL);
+    expect(serialized).not.toContain("<redacted-request-id>");
+    expect(text).not.toContain(LIVE_VALUE_SENTINEL);
+    expect(text).not.toContain("<redacted-request-id>");
+    expect(text).not.toContain(JSON.stringify(body));
+
+    await client.close();
+    await server.close();
+  });
+
+  it("preserves exact mock-only invocation behavior when the live flag is explicitly off", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () => liveChallengeResponse(REQUEST.endpointPath));
+    const { client, server } = await connectMcp(fetchFn, {
+      ...X402_ENV,
+      STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: "off"
+    });
+
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const body = structured<X402PaymentRequiredResult>(result);
+
+    expect(body.status).toBe("payment_required");
+    expect(body.api_request_sent).toBe(false);
+    expect(body.mcp_metadata.mock_only).toBe(true);
+    expect(fetchFn).not.toHaveBeenCalled();
+
+    await client.close();
+    await server.close();
+  });
+
+  it.each(PUBLIC_MOCK_INVOCATIONS)(
+    "maps $name to its exact allowlisted live GET route with one injected fetch",
+    async (invocation) => {
+      const fetchFn = vi.fn<FetchLike>(async (input, init) => {
+        expect(init.method).toBe("GET");
+        expect((input as URL).pathname).toBe(invocation.endpointPath);
+        return liveChallengeResponse(invocation.endpointPath);
+      });
+      const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+      const result = await client.callTool({ name: invocation.name, arguments: invocation.arguments });
+      const body = structured<X402LivePaymentRequiredResult>(result);
+
+      expect(body.status).toBe("payment_required");
+      expect(body.endpoint_path).toBe(invocation.endpointPath);
+      expect(body.tool_name).toBe(invocation.name);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+
+      await client.close();
+      await server.close();
+    }
+  );
+
+  it.each([
+    { symbol: "IBM" },
+    { symbol_exchange: "IBM_N", symbol: "IBM", exchange: "N" }
+  ])("fails non-canonical symbol input before resolver or network", async (arguments_) => {
+    const fetchFn = vi.fn<FetchLike>(async () => liveChallengeResponse("/v1/indicators/latest"));
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({
+      name: "stocktrends_get_indicators_latest",
+      arguments: arguments_
+    });
+    const body = structured<X402LiveRelayErrorResult>(result);
+
+    expect(result.isError).toBe(true);
+    expect(body.error.error_code).toBe("x402_symbol_exchange_required");
+    expect(body.api_request_sent).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
+
+    await client.close();
+    await server.close();
+  });
+
+  it("fails direct live helper use while the live flag is absent without reserving or fetching", async () => {
+    const config = parseConfig(X402_ENV).x402Relay;
+    const state = createX402LiveChallengeSessionState();
+    const fetchChallenge = vi.fn(async () => ({
+      status: 402,
+      approvedHeaderNamesPresent: [...X402_CHALLENGE_HEADER_NAMES],
+      body: createMockX402ChallengeFixture(REQUEST.endpointPath).body
+    }));
+
+    const result = await executePublicLiveX402ChallengeRelay(config, REQUEST, {}, state, fetchChallenge);
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_live_challenge_disabled");
+    }
+    expect(fetchChallenge).not.toHaveBeenCalled();
+    expect(state.totalReserved).toBe(0);
+  });
+
+  it("rejects proof-like live input before reservation and network", async () => {
+    const config = parseConfig(X402_LIVE_ENV).x402Relay;
+    const state = createX402LiveChallengeSessionState();
+    const fetchChallenge = vi.fn(async () => ({
+      status: 402,
+      approvedHeaderNamesPresent: [...X402_CHALLENGE_HEADER_NAMES],
+      body: createMockX402ChallengeFixture(REQUEST.endpointPath).body
+    }));
+
+    const result = await executePublicLiveX402ChallengeRelay(
+      config,
+      REQUEST,
+      { payment_proof: "<redacted-proof>" },
+      state,
+      fetchChallenge
+    );
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_proof_forwarding_not_enabled");
+    }
+    expect(fetchChallenge).not.toHaveBeenCalled();
+    expect(state.totalReserved).toBe(0);
+  });
+
+  it("rejects a non-allowlisted live route before reservation and network", async () => {
+    const config = parseConfig(X402_LIVE_ENV).x402Relay;
+    const state = createX402LiveChallengeSessionState();
+    const fetchChallenge = vi.fn(async () => ({
+      status: 402,
+      approvedHeaderNamesPresent: [...X402_CHALLENGE_HEADER_NAMES],
+      body: createMockX402ChallengeFixture("/v1/pricing/catalog").body
+    }));
+
+    const result = await executePublicLiveX402ChallengeRelay(
+      config,
+      { toolName: "stocktrends_unknown", endpointPath: "/v1/pricing/catalog" },
+      {},
+      state,
+      fetchChallenge
+    );
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_route_not_allowlisted");
+    }
+    expect(fetchChallenge).not.toHaveBeenCalled();
+    expect(state.totalReserved).toBe(0);
+  });
+
+  it("rejects a mismatched live tool-to-route binding before reservation and network", async () => {
+    const config = parseConfig(X402_LIVE_ENV).x402Relay;
+    const state = createX402LiveChallengeSessionState();
+    const fetchChallenge = vi.fn(async () => ({
+      status: 402,
+      approvedHeaderNamesPresent: [...X402_CHALLENGE_HEADER_NAMES],
+      body: createMockX402ChallengeFixture(REQUEST.endpointPath).body
+    }));
+
+    const result = await executePublicLiveX402ChallengeRelay(
+      config,
+      { toolName: "stocktrends_get_selections_latest", endpointPath: REQUEST.endpointPath },
+      {},
+      state,
+      fetchChallenge
+    );
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_route_not_allowlisted");
+    }
+    expect(fetchChallenge).not.toHaveBeenCalled();
+    expect(state.totalReserved).toBe(0);
+  });
+
+  it("reserves the normalized signature before fetch and denies an identical repeat", async () => {
+    const fetchFn = vi.fn<FetchLike>(async (input) => liveChallengeResponse((input as URL).pathname));
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const first = structured<X402LivePaymentRequiredResult>(
+      await client.callTool({ name: REQUEST.toolName, arguments: {} })
+    );
+    const secondResult = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const second = structured<X402LiveRelayErrorResult>(secondResult);
+
+    expect(first.status).toBe("payment_required");
+    expect(secondResult.isError).toBe(true);
+    expect(second.error.error_code).toBe("x402_live_challenge_repeated_call");
+    expect(second.api_request_sent).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("enforces the one-per-tool cap for different validated input before network", async () => {
+    const fetchFn = vi.fn<FetchLike>(async (input) => liveChallengeResponse((input as URL).pathname));
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const first = structured<X402LivePaymentRequiredResult>(
+      await client.callTool({ name: "stocktrends_get_selections_latest", arguments: { limit: 1 } })
+    );
+    const secondResult = await client.callTool({
+      name: "stocktrends_get_selections_latest",
+      arguments: { limit: 2 }
+    });
+    const second = structured<X402LiveRelayErrorResult>(secondResult);
+
+    expect(first.status).toBe("payment_required");
+    expect(second.error.error_code).toBe("x402_live_challenge_cap_exceeded");
+    expect(second.api_request_sent).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("enforces the three-per-session cap across different tools before network", async () => {
+    const fetchFn = vi.fn<FetchLike>(async (input) => liveChallengeResponse((input as URL).pathname));
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    for (const invocation of [
+      { name: "stocktrends_get_market_regime_latest", arguments: {} },
+      { name: "stocktrends_get_selections_latest", arguments: { limit: 1 } },
+      { name: "stocktrends_get_breadth_sector_latest", arguments: { limit: 1 } }
+    ]) {
+      expect(structured<X402LivePaymentRequiredResult>(await client.callTool(invocation)).status).toBe(
+        "payment_required"
+      );
+    }
+
+    const fourthResult = await client.callTool({
+      name: "stocktrends_get_leadership_summary_latest",
+      arguments: { limit_overall: 1, limit_bucket: 1 }
+    });
+    const fourth = structured<X402LiveRelayErrorResult>(fourthResult);
+
+    expect(fourth.error.error_code).toBe("x402_live_challenge_cap_exceeded");
+    expect(fourth.api_request_sent).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("keeps a failed-attempt reservation consumed and performs no retry or mock fallback", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ error: "temporary" }, 503));
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const firstResult = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const first = structured<X402LiveRelayErrorResult>(firstResult);
+    const secondResult = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const second = structured<X402LiveRelayErrorResult>(secondResult);
+
+    expect(first.error.error_code).toBe("x402_live_challenge_unexpected_status");
+    expect(first.api_status).toBe(503);
+    expect(first.api_request_sent).toBe(true);
+    expect(second.error.error_code).toBe("x402_live_challenge_repeated_call");
+    expect(second.api_request_sent).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("maps a mocked network failure to a deterministic local error with no retry", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () => {
+      throw new Error(LIVE_VALUE_SENTINEL);
+    });
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const body = structured<X402LiveRelayErrorResult>(result);
+
+    expect(body.error.error_code).toBe("x402_live_challenge_unexpected_status");
+    expect(body.api_status).toBeNull();
+    expect(body.api_request_sent).toBe(true);
+    expect(JSON.stringify(body)).not.toContain(LIVE_VALUE_SENTINEL);
+    expect(contentText(result)).not.toContain(LIVE_VALUE_SENTINEL);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("fails closed on paid output without proof and leaks none of the returned data", async () => {
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      jsonResponse({ api_data: { marker: LIVE_VALUE_SENTINEL } }, 200)
+    );
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const body = structured<X402LiveRelayErrorResult>(result);
+    const serialized = JSON.stringify(body);
+
+    expect(body.error.error_code).toBe("x402_live_challenge_paid_output_without_proof");
+    expect(body.paid_api_data_returned).toBe(false);
+    expect(serialized).not.toContain(LIVE_VALUE_SENTINEL);
+    expect(contentText(result)).not.toContain(LIVE_VALUE_SENTINEL);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("fails closed on redirect, wrong shape, and unapproved field paths without retry", async () => {
+    const cases: Array<{
+      response: Response;
+      expectedCode:
+        | "x402_live_challenge_unexpected_status"
+        | "x402_live_challenge_unexpected_shape"
+        | "x402_live_challenge_value_not_approved";
+    }> = [
+      {
+        response: new Response(null, { status: 302, headers: { location: "https://example.com" } }),
+        expectedCode: "x402_live_challenge_unexpected_status"
+      },
+      {
+        response: jsonResponse(createMockX402ChallengeFixture(REQUEST.endpointPath).body, 402, {
+          "payment-required": "<redacted-header-presence>"
+        }),
+        expectedCode: "x402_live_challenge_unexpected_shape"
+      },
+      {
+        response: liveChallengeResponse(REQUEST.endpointPath, undefined, { extra_field: "synthetic" }),
+        expectedCode: "x402_live_challenge_value_not_approved"
+      }
+    ];
+
+    for (const testCase of cases) {
+      const fetchFn = vi.fn<FetchLike>(async (_input, init) => {
+        expect(init.redirect).toBe("manual");
+        return testCase.response;
+      });
+      const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+      const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+      const body = structured<X402LiveRelayErrorResult>(result);
+
+      expect(body.error.error_code).toBe(testCase.expectedCode);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("builds only route-bound, validated query parameters with bounded defaults", () => {
+    expect(Object.fromEntries(buildLiveChallengeSearchParams("/v1/stim/latest", {
+      symbol_exchange: "IBM_N",
+      symbol: "IBM",
+      exchange: "N"
+    }))).toEqual({ symbol_exchange: "IBM-N" });
+    expect(Object.fromEntries(buildLiveChallengeSearchParams("/v1/selections/latest", {}))).toEqual({ limit: "50" });
+    expect(Object.fromEntries(buildLiveChallengeSearchParams("/v1/market/regime/history", {}))).toEqual({ limit: "12" });
+    expect(Object.fromEntries(buildLiveChallengeSearchParams("/v1/breadth/sector/latest", {}))).toEqual({
+      group_level: "sector",
+      limit: "50"
+    });
+    expect(Object.fromEntries(buildLiveChallengeSearchParams("/v1/leadership/summary/latest", {}))).toEqual({
+      limit_overall: "50",
+      limit_bucket: "20"
+    });
   });
 });
 
@@ -602,6 +1128,46 @@ describe("Phase 5F x402 redaction safety", () => {
     expect(redacted).toContain("[REDACTED]");
   });
 });
+
+function liveChallengeResponse(
+  endpointPath: string,
+  conditionalValueSentinel?: string,
+  extraBody: Record<string, unknown> = {}
+): Response {
+  const fixture = createMockX402ChallengeFixture(endpointPath);
+
+  if (conditionalValueSentinel) {
+    fixture.body.protocol = conditionalValueSentinel;
+    (fixture.body.pricing as Record<string, unknown>).amount = conditionalValueSentinel;
+    ((fixture.body.accepted_payment_methods as Record<string, unknown>[])[0] as Record<string, unknown>).network =
+      conditionalValueSentinel;
+  }
+
+  return jsonResponse(
+    { ...fixture.body, ...extraBody },
+    402,
+    {
+      "payment-required": "<redacted-payment-required>",
+      "x-request-id": "<redacted-request-id>",
+      "x-stocktrends-payment-required": "<redacted-payment-required>",
+      "x-stocktrends-accepted-payment-methods": "<redacted-accepted-payment-methods>",
+      "x-stocktrends-pricing-rule": "<redacted-pricing-rule>"
+    }
+  );
+}
+
+function contentText(result: unknown): string {
+  if (!result || typeof result !== "object" || !("content" in result) || !Array.isArray(result.content)) {
+    return "";
+  }
+
+  return result.content
+    .filter((item): item is { type: "text"; text: string } =>
+      Boolean(item && typeof item === "object" && item.type === "text" && typeof item.text === "string")
+    )
+    .map((item) => item.text)
+    .join("\n");
+}
 
 function structured<T>(result: unknown): T {
   if (

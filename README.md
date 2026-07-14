@@ -23,7 +23,7 @@ The MCP adapter:
 - Does not generate investment advice, research, or trading guidance.
 - Only translates reviewed, published Stock Trends API responses into MCP resource and tool responses.
 
-Public resources and the default/free mode described below are credential-free: no API key, subscription, or payment credential is required to install, inspect, or use them. The conditional paid ST-IM execution path is a separate, explicitly gated surface that is disabled by default (see [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution)). An additional default-off x402 posture can expose the same paid semantic tool names for local mock challenge integration only; it performs no network request, proof forwarding, payment, or spend.
+Public resources and the default/free mode described below are credential-free: no API key, subscription, or payment credential is required to install, inspect, or use them. The conditional paid ST-IM execution path is a separate, explicitly gated surface that is disabled by default (see [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution)). An additional default-off x402 posture can expose the same paid semantic tool names. Relay plus challenge flags preserve the local mock-only behavior; a distinct third live flag may enable a capped, one-request no-key challenge path. Neither x402 mode accepts or forwards proof, sends a payment header, returns paid data, pays, or spends.
 
 **New here?** Start with the [Default / Free Mode Quickstart](#default--free-mode-quickstart) below to install and run the server credential-free, then [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client) to wire it into an MCP client, and read [Paid Mode Configuration](#paid-mode-configuration) and the [Security Model](docs/SECURITY_MODEL.md) before setting any paid variable.
 
@@ -287,7 +287,7 @@ With this configuration the MCP client lists exactly ten tools. No paid request 
 
 Paid *execution* requires the additional gates described above (execution flag, mandatory preflight, explicit nonzero caps, and a covering budget cap). A step-by-step live-execution runbook is intentionally **not** included here. For the operator-facing *preconditions* that must hold before any separately authorized live run — framed conceptually, with no live call commands — see the [Phase 5A Operator Safety and Release Checklist](docs/PHASE5A_OPERATOR_SAFETY_AND_RELEASE_CHECKLIST.md). Do not enable paid execution merely to test installation — installation and tool-listing verification are fully demonstrable in free mode and in paid-exposed mode without execution.
 
-### Mock-only x402 challenge relay flags
+### x402 challenge relay flags
 
 PR #69 wires the PR #66 mock challenge helper through the existing nine paid
 semantic tool names. The x402 relay remains default-off and mock-only. It adds
@@ -305,18 +305,37 @@ symbol-dependent tools require canonical `symbol_exchange` in this mode so no
 instrument lookup or resolve path can run. An identical repeated challenge call
 in one server session fails closed with `x402_repeated_challenge_call`.
 
-The provisional flags are `STOCKTRENDS_ENABLE_X402_RELAY`,
+The x402 flags are `STOCKTRENDS_ENABLE_X402_RELAY`,
 `STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION`, and
+`STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY`, plus the unsupported
 `STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING`. All default to off. Only literal
 `true` enables the first two flags; `false`, `0`, `no`, and `off` disable them;
 ambiguous truthy values such as `1`, `yes`, or `on` fail startup with
-`invalid_config`. Proof forwarding is not supported in this mock-only build:
+`invalid_config`. Proof forwarding is not supported in this build:
 setting `STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING=true` fails closed. Active
 x402 relay configuration cannot be combined with
 `STOCKTRENDS_ENABLE_PAID_TOOLS`; mixed mode fails startup before any API-key
 read. There is no fallback between x402 and API-key mode.
 
-See the [Phase 5F x402 Public Mock Wiring Implementation Notes](docs/PHASE5F_X402_PUBLIC_MOCK_WIRING_IMPLEMENTATION_NOTES.md).
+The live flag also uses strict literal-`true` parsing and requires both relay
+and challenge flags to be literal `true`; otherwise startup fails with
+`invalid_config` / `x402_live_challenge_not_enabled`. When all three gates are
+true, an allowlisted semantic tool invocation may make exactly one no-key
+`GET` to its corresponding Stock Trends API route after canonical-input,
+proof, repeat, per-tool, and per-session gates pass. The request uses the
+reviewed API origin, manual redirects, omitted credentials, no body, and only
+safe `Accept`/`User-Agent` headers. It sends no API key, authorization header,
+payment header, proof, or cookie and performs no resolver, catalog, resource,
+retry, or fallback call.
+
+Live results return approved status/route/method, header-name, top-level-key,
+and field-category metadata only. Conditional challenge values, including the
+`x-request-id` value, are omitted from both `structuredContent` and text. The
+session reserves at most one live challenge per tool and three total; a
+reservation remains consumed after network, status, or shape failure to prevent
+retry loops. State is in-memory and resets on server restart.
+
+See the [Phase 5F x402 Public Mock Wiring Implementation Notes](docs/PHASE5F_X402_PUBLIC_MOCK_WIRING_IMPLEMENTATION_NOTES.md) and [Phase 5F x402 Live No-Key Challenge Implementation Notes](docs/PHASE5F_X402_LIVE_NO_KEY_CHALLENGE_IMPLEMENTATION_NOTES.md).
 
 ## Secret Safety
 
@@ -349,14 +368,19 @@ Included:
   tool names, with local shape-only challenge results, canonical-symbol
   enforcement, repeated-identical-call denial, and no network/proof/payment/
   spend path.
+- Default-off live no-key x402 challenge relay through those same nine semantic
+  tools, enabled only by its distinct third flag and both prerequisite flags.
+  It is capped at one request per tool and three per server session, relays
+  shape metadata only, and has no API key, proof, payment header, payment,
+  spend, paid output, resolver, retry, or fallback path.
 - Internal paid-mode configuration, host enforcement, endpoint/tool allowlist coupling, `X-API-Key`-only auth construction, redaction, static endpoint pricing policy, in-memory per-session spend caps, single-attempt fetch with no retries, and mock-only validation.
 
 Excluded:
 
 - Live API validation in automated tests (execution paths exist in code but are exercised mock-only; live validation requires separate operator authorization after merge).
-- Live x402 challenge relay, proof forwarding, payments, wallets, payment
-  retries, payment headers, and OAuth. Public x402 behavior in this build is
-  local mock-only challenge metadata.
+- x402 proof forwarding, paid fulfillment, payments, wallets, payment retries,
+  payment headers, and OAuth. Live x402 support in this build is challenge-only,
+  no-key, no-proof, no-payment, no-spend, and shape-metadata-only.
 - `Authorization: Bearer` fallback.
 - Remote HTTP/SSE/Streamable HTTP hosting.
 - Database or control-plane access.
@@ -410,8 +434,9 @@ All variables are optional; defaults keep the server in free mode. The **Affects
 | `STOCKTRENDS_ENABLE_PAID_TOOLS` | Paid tool exposure | `false` | Exposure flag. When `true` with a configured API key, exposes the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, the base selections tool *definition*, and the four market-context tool *definitions* (total tools become 10; the internal instrument resolver adds no public tool). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. Not a secret. |
 | `STOCKTRENDS_API_KEY` | Paid exposure + execution | None | **Secret — use a placeholder (`<your-api-key>`) in all docs, examples, screenshots, and shared artifacts; never commit or paste a real value.** Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as the `X-API-Key` header to the approved origin + allowlisted paid ST-IM, indicators, base `selections/latest`, and market-context endpoints after every gate passes (no `Authorization: Bearer` fallback). Never sent for public resources (including `stocktrends://leadership/definitions`), the cost-estimate planning tool, the pricing catalog, or the credential-free instrument resolver; never logged or exposed in errors/denials/returned data. |
 | `STOCKTRENDS_ENABLE_PAID_EXECUTION` | Paid execution | `false` | Execution flag, distinct from the exposure flag. Live subscription/API-key calls to `GET /v1/stim/latest`, `GET /v1/stim/history`, `GET /v1/indicators/latest`, `GET /v1/indicators/history`, `GET /v1/selections/latest`, `GET /v1/market/regime/latest`, `GET /v1/market/regime/history`, `GET /v1/breadth/sector/latest`, and `GET /v1/leadership/summary/latest` require this to be `true` **and** the paid-tools flag, an API key, authoritative static pricing/preflight, family-scoped catalog reconciliation, and ≥1 nonzero call cap plus a budget cap covering the nonzero cost (indicators additionally require a safe resolved canonical identity; selections and market-context additionally enforce bounded always-sent limits and repeated-identical-call loop safety). The flag alone (no tools flag / no key) exposes and executes nothing. Not a secret. |
-| `STOCKTRENDS_ENABLE_X402_RELAY` | Mock-only x402 tool exposure | `false` | Only literal `true` exposes the existing nine paid semantic tool names without an API key (ten tools total with the planning tool). `false`, `0`, `no`, and `off` disable it; ambiguous truthy values fail startup. Invocations remain local and fail closed unless the challenge flag is also enabled. Cannot be mixed with `STOCKTRENDS_ENABLE_PAID_TOOLS`. Not a secret. |
-| `STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION` | Mock-only x402 challenge behavior | `false` | Only usable with `STOCKTRENDS_ENABLE_X402_RELAY=true`. Literal `true` enables deterministic local PR #64 shape-only `payment_required` results for the existing nine paid semantic tools. It performs no live challenge request, resolver lookup, auth, proof, payment, or spend. Not a secret. |
+| `STOCKTRENDS_ENABLE_X402_RELAY` | x402 tool exposure | `false` | Only literal `true` exposes the existing nine paid semantic tool names without an API key (ten tools total with the planning tool). `false`, `0`, `no`, and `off` disable it; ambiguous truthy values fail startup. Invocations fail closed unless the challenge flag is also enabled. Cannot be mixed with `STOCKTRENDS_ENABLE_PAID_TOOLS`. Not a secret. |
+| `STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION` | x402 challenge behavior | `false` | Only usable with `STOCKTRENDS_ENABLE_X402_RELAY=true`. Literal `true` preserves deterministic local PR #64 shape-only mock results unless the distinct live flag is also true. It performs no resolver lookup, auth, proof, payment, or spend. Not a secret. |
+| `STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY` | Live no-key challenge request | `false` | Only literal `true` enables; requires both relay and challenge flags to be literal `true`, otherwise startup fails `x402_live_challenge_not_enabled`. Allows at most one no-key `GET` to the exact allowlisted route per accepted invocation, capped at one per tool and three total per server session. Manual redirects, omitted credentials, no body, no API key/auth/payment/proof header, no resolver/catalog/resource side call, no retry/fallback, no paid data, payment, or spend. Conditional challenge values are omitted. Not a secret. |
 | `STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING` | Unsupported x402 proof forwarding | `false` | Proof forwarding remains unsupported. Off values are accepted; `true` fails startup with `invalid_config` / proof-forwarding-not-enabled posture. No proof schema, storage, forwarding, payment header, or verification is added. Not a secret. |
 | `STOCKTRENDS_REQUIRE_PRICING_PREFLIGHT` | Paid execution | `true` | Pricing/preflight posture. Preflight is mandatory; setting this `false` denies paid execution (fail closed) rather than weakening the requirement. Not a secret. |
 | `STOCKTRENDS_MAX_PAID_CALLS_PER_SESSION` | Paid execution | `0` | Per-session paid-call cap. `0` denies all paid calls; live execution requires an explicit nonzero value. In-memory per session; resets on restart. Not a secret. |
@@ -582,3 +607,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5F x402 Public Mock Wiring Implementation Notes](docs/PHASE5F_X402_PUBLIC_MOCK_WIRING_IMPLEMENTATION_NOTES.md)
 - [Phase 5F x402 Public Mock Wiring Validation Report](docs/PHASE5F_X402_PUBLIC_MOCK_WIRING_VALIDATION_REPORT.md)
 - [Phase 5F x402 Live No-Key Challenge Relay Plan](docs/PHASE5F_X402_LIVE_NO_KEY_CHALLENGE_RELAY_PLAN.md)
+- [Phase 5F x402 Live No-Key Challenge Implementation Notes](docs/PHASE5F_X402_LIVE_NO_KEY_CHALLENGE_IMPLEMENTATION_NOTES.md)

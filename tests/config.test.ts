@@ -30,6 +30,7 @@ describe("config", () => {
     expect(config.x402Relay).toEqual({
       relayEnabled: false,
       challengeExecutionEnabled: false,
+      liveChallengeEnabled: false,
       proofForwardingEnabled: false,
       mockOnly: true,
       mode: "disabled"
@@ -239,6 +240,7 @@ describe("config", () => {
     expect(config.x402Relay).toMatchObject({
       relayEnabled: false,
       challengeExecutionEnabled: false,
+      liveChallengeEnabled: false,
       proofForwardingEnabled: false,
       mockOnly: true,
       mode: "disabled"
@@ -254,6 +256,7 @@ describe("config", () => {
     expect(config.x402Relay).toMatchObject({
       relayEnabled: true,
       challengeExecutionEnabled: true,
+      liveChallengeEnabled: false,
       proofForwardingEnabled: false,
       mockOnly: true,
       mode: "mock_challenge_enabled"
@@ -272,11 +275,54 @@ describe("config", () => {
     const config = parseConfig({
       STOCKTRENDS_ENABLE_X402_RELAY: value,
       STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: value,
+      STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: value,
       STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING: value
     });
 
     expect(config.x402Relay.mode).toBe("disabled");
     expect(config.x402Relay.proofForwardingEnabled).toBe(false);
+  });
+
+  it("enables live no-key challenge mode only when the live flag and both prerequisites are literal true", () => {
+    const config = parseConfig({
+      STOCKTRENDS_ENABLE_X402_RELAY: "true",
+      STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true",
+      STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: "true"
+    });
+
+    expect(config.x402Relay).toEqual({
+      relayEnabled: true,
+      challengeExecutionEnabled: true,
+      liveChallengeEnabled: true,
+      proofForwardingEnabled: false,
+      mockOnly: false,
+      mode: "live_challenge_enabled"
+    });
+  });
+
+  it.each(["1", "yes", "on", "enabled"])("rejects ambiguous live x402 truthy value %s", (value) => {
+    expect(() =>
+      parseConfig({
+        STOCKTRENDS_ENABLE_X402_RELAY: "true",
+        STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true",
+        STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: value
+      })
+    ).toThrow(StockTrendsMcpError);
+  });
+
+  it.each([
+    {},
+    { STOCKTRENDS_ENABLE_X402_RELAY: "true" },
+    { STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true" }
+  ])("fails live x402 config without both relay and challenge prerequisites", (prerequisites) => {
+    expectInvalidConfigDenial(
+      () =>
+        parseConfig({
+          ...prerequisites,
+          STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: "true"
+        }),
+      "x402_live_challenge_not_enabled"
+    );
   });
 
   it("rejects x402 proof forwarding true as unsupported in the mock-only build", () => {
@@ -323,6 +369,26 @@ describe("config", () => {
       get(target, property: string | symbol) {
         if (property === "STOCKTRENDS_API_KEY") {
           throw new Error("STOCKTRENDS_API_KEY should not be read for a mixed x402 config.");
+        }
+
+        return typeof property === "string" ? target[property as keyof typeof target] : undefined;
+      }
+    });
+
+    expectInvalidConfigDenial(() => parseConfig(env), "x402_mixed_mode_invalid");
+  });
+
+  it("fails closed on live x402/API-key paid-mode ambiguity before reading STOCKTRENDS_API_KEY", () => {
+    const envTarget = {
+      STOCKTRENDS_ENABLE_X402_RELAY: "true",
+      STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true",
+      STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: "true",
+      STOCKTRENDS_ENABLE_PAID_TOOLS: "true"
+    };
+    const env = new Proxy(envTarget, {
+      get(target, property: string | symbol) {
+        if (property === "STOCKTRENDS_API_KEY") {
+          throw new Error("STOCKTRENDS_API_KEY should not be read for a mixed live x402 config.");
         }
 
         return typeof property === "string" ? target[property as keyof typeof target] : undefined;

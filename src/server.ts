@@ -13,7 +13,7 @@ import { registerPaidIndicatorsTools } from "./tools/indicatorsTools.js";
 import { registerPaidMarketContextTools } from "./tools/marketContextTools.js";
 import { registerPaidSelectionsTools } from "./tools/selectionsTools.js";
 import { registerPaidStimTools } from "./tools/stimTools.js";
-import { registerX402PublicMockTools } from "./tools/x402Tools.js";
+import { registerX402PublicTools } from "./tools/x402Tools.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
 export const SERVER_VERSION = "1.0.0";
@@ -88,9 +88,9 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // Explicit x402 relay posture reuses the same nine paid semantic tool names
   // and their existing strict schemas. Mixed API-key/x402 configuration is
   // rejected before API-key parsing, so these registrations can never overlap
-  // with the API-key paid registrations above. Their handlers are local and
-  // mock-only: no client/resolver/pricing/auth/fetch seam is reachable.
-  registerX402PublicMockTools(server, config);
+  // with the API-key paid registrations above. Mock mode remains local-only;
+  // the distinct live flag selects the capped, no-key, one-GET challenge path.
+  registerX402PublicTools(server, client, config);
 
   return {
     server,
@@ -124,7 +124,9 @@ export async function startStdioServer(env: Env = process.env): Promise<void> {
 
   if (config.x402Relay.relayEnabled) {
     logger.warn(
-      config.x402Relay.challengeExecutionEnabled
+      config.x402Relay.liveChallengeEnabled
+        ? "Live no-key x402 challenge relay is ENABLED. An invocation of an allowlisted paid semantic tool may make one external no-key GET after canonical-input, proof, repeat, per-tool, and per-session gates pass. No API key, resolver, proof forwarding, payment header, automatic retry, paid output, payment, or spend path is enabled."
+        : config.x402Relay.challengeExecutionEnabled
         ? "Mock-only x402 challenge mode is enabled. The existing nine paid semantic tools are exposed, but every challenge result is local and shape-only: no network, resolver, API key, proof, payment header, paid output, or spend path is enabled."
         : "x402 relay exposure is enabled with challenge behavior disabled. The existing nine paid semantic tools are exposed, but every invocation fails closed locally with no request, resolver, API key, proof, payment header, paid output, or spend."
     );

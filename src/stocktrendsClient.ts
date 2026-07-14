@@ -15,6 +15,7 @@ export interface PublicEndpointResponse {
 
 export type JsonObject = Record<string, unknown>;
 export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
+export const MAX_X402_CHALLENGE_RESPONSE_BYTES = 64 * 1024;
 
 // Selected, non-secret ST-IM response metadata headers captured from a paid
 // response. Every field is optional (the metering middleware only emits each
@@ -60,6 +61,19 @@ export interface PublicDiscoveryRequest {
 export interface PublicDiscoveryResult {
   status: number;
   data: JsonObject | null;
+}
+
+export interface NoKeyX402ChallengeRequest {
+  endpointPath: string;
+  toolName: string;
+  searchParams: URLSearchParams;
+  approvedHeaderNames: readonly string[];
+}
+
+export interface NoKeyX402ChallengeResponse {
+  status: number;
+  approvedHeaderNamesPresent: string[];
+  body: JsonObject | null;
 }
 
 export class StockTrendsClient {
@@ -226,6 +240,71 @@ export class StockTrendsClient {
     return {
       status: response.status,
       data
+    };
+  }
+
+  // Dedicated live no-key x402 challenge path. It is deliberately separate
+  // from both public-resource/discovery reads and the API-key paid path: one
+  // GET attempt, no credentials, no auth/payment/proof header, no body, no
+  // redirect following, and no retry. Only approved header NAMES are observed;
+  // header values (including x-request-id) are never read or returned.
+  async fetchNoKeyX402Challenge(request: NoKeyX402ChallengeRequest): Promise<NoKeyX402ChallengeResponse> {
+    const url = this.buildUrl(request.endpointPath);
+
+    for (const [key, value] of request.searchParams) {
+      url.searchParams.append(key, value);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+    const safeData = { endpointPath: request.endpointPath, toolName: request.toolName };
+    let response: Response;
+
+    try {
+      response = await this.fetchFn(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "stocktrends-mcp-server/1.0"
+        },
+        credentials: "omit",
+        redirect: "manual",
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) {
+        throw new StockTrendsMcpError("timeout", safeData);
+      }
+
+      throw new StockTrendsMcpError("api_unavailable", safeData);
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const approvedHeaderNamesPresent = request.approvedHeaderNames
+      .map((name) => name.toLowerCase())
+      .filter((name) => response.headers.has(name));
+    let body: JsonObject | null = null;
+    const declaredLength = Number(response.headers.get("content-length"));
+    const declaredLengthApproved =
+      !Number.isFinite(declaredLength) || declaredLength < 0 || declaredLength <= MAX_X402_CHALLENGE_RESPONSE_BYTES;
+
+    if (declaredLengthApproved && isJsonResponse(response)) {
+      try {
+        const rawBody = await response.text();
+        if (new TextEncoder().encode(rawBody).byteLength <= MAX_X402_CHALLENGE_RESPONSE_BYTES) {
+          const parsed: unknown = JSON.parse(rawBody);
+          body = isJsonObject(parsed) ? parsed : null;
+        }
+      } catch {
+        body = null;
+      }
+    }
+
+    return {
+      status: response.status,
+      approvedHeaderNamesPresent,
+      body
     };
   }
 
