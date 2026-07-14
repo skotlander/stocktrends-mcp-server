@@ -612,3 +612,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5F x402 Live Challenge Contract-Drift Diagnosis](docs/PHASE5F_X402_LIVE_CHALLENGE_CONTRACT_DRIFT_DIAGNOSIS.md)
 - [Phase 5F x402 API Challenge Contract Confirmation](docs/PHASE5F_X402_API_CHALLENGE_CONTRACT_CONFIRMATION.md)
 - [Phase 5F x402 v2 Validator Reconciliation Implementation Notes](docs/PHASE5F_X402_V2_VALIDATOR_RECONCILIATION_IMPLEMENTATION_NOTES.md)
+- [Phase 5F x402 Live Challenge Revalidation Report](docs/PHASE5F_X402_LIVE_CHALLENGE_REVALIDATION_REPORT.md)
