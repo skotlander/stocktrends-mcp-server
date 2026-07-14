@@ -92,9 +92,10 @@ An accepted HTTP 402 response must have the exact approved header-name set,
 top-level body-key set, field-category set, route binding, and approved nested
 field map. Amounts use bounded positive decimal/numeric representations;
 asset/network/rule/family fields use bounded identifiers; recipient/address
-fields use a strict address-shaped string; expiry fields use positive integer
-timestamps or calendar-valid UTC timestamps; challenge/correlation/nonce fields
-use bounded identifiers; and accepted-method, pricing, and preview objects have
+fields use a strict address-shaped string; expiry fields use only strict,
+calendar-valid UTC timestamp strings with trailing `Z`;
+challenge/correlation/nonce fields use bounded identifiers; and accepted-method,
+pricing, and preview objects have
 required fields plus exclusive recipient/address and expiry alternatives.
 Wrong types, malformed values, missing required nested fields, or unexpected
 nested material fail closed. Missing shape fails

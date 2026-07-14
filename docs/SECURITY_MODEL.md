@@ -58,6 +58,8 @@ Still deferred and not approved:
   execution.
 - Live x402/payment validation, production payment tests, remote MCP transport,
   package/directory publication, and marketplace claims.
+- Any final, fulfilled, settled, completed, or transaction-complete x402 claim;
+  the existing relay groundwork establishes challenge inspection only.
 - Any broader challenge-value relay, replay policy, or payment authorization
   beyond a separately reviewed and auditable design.
 

@@ -560,12 +560,169 @@ describe("Phase 5F x402 live no-key challenge invocation", () => {
     await server.close();
   });
 
+  it.each([
+    {
+      name: "expires_at numeric one",
+      mutate: (body: Record<string, unknown>) => { livePreview(body).expires_at = 1; }
+    },
+    {
+      name: "expires_at ambiguous 11-digit string",
+      mutate: (body: Record<string, unknown>) => { livePreview(body).expires_at = "12345678901"; }
+    },
+    {
+      name: "expiry numeric one",
+      mutate: (body: Record<string, unknown>) => { liveAcceptedPaymentMethod(body).expiry = 1; }
+    },
+    {
+      name: "expiry ambiguous 11-digit string",
+      mutate: (body: Record<string, unknown>) => { liveAcceptedPaymentMethod(body).expiry = "12345678901"; }
+    },
+    {
+      name: "expires_at ambiguous 12-digit string",
+      mutate: (body: Record<string, unknown>) => { livePreview(body).expires_at = "123456789012"; }
+    },
+    {
+      name: "expiry ambiguous 12-digit string",
+      mutate: (body: Record<string, unknown>) => { liveAcceptedPaymentMethod(body).expiry = "123456789012"; }
+    },
+    {
+      name: "expiry boolean",
+      mutate: (body: Record<string, unknown>) => { liveAcceptedPaymentMethod(body).expiry = false; }
+    },
+    {
+      name: "expires_at object",
+      mutate: (body: Record<string, unknown>) => {
+        livePreview(body).expires_at = { marker: "synthetic-malformed-expiry-object" };
+      }
+    },
+    {
+      name: "expiry array",
+      mutate: (body: Record<string, unknown>) => {
+        liveAcceptedPaymentMethod(body).expiry = ["synthetic-malformed-expiry-array"];
+      }
+    },
+    {
+      name: "expires_at empty string",
+      mutate: (body: Record<string, unknown>) => { livePreview(body).expires_at = ""; }
+    },
+    {
+      name: "expiry unrelated string",
+      mutate: (body: Record<string, unknown>) => {
+        liveAcceptedPaymentMethod(body).expiry = "synthetic-malformed-expiry-string";
+      }
+    },
+    {
+      name: "expires_at timestamp with offset instead of trailing Z",
+      mutate: (body: Record<string, unknown>) => {
+        livePreview(body).expires_at = "2030-01-01T00:00:00+00:00";
+      }
+    },
+    {
+      name: "expiry non-calendar-valid UTC timestamp",
+      mutate: (body: Record<string, unknown>) => {
+        liveAcceptedPaymentMethod(body).expiry = "2030-02-31T00:00:00Z";
+      }
+    }
+  ])("rejects ambiguous or malformed live expiry semantics: $name", async ({ mutate }) => {
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      liveChallengeResponse(REQUEST.endpointPath, undefined, {}, mutate)
+    );
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const body = structured<X402LiveRelayErrorResult>(result);
+    const serialized = JSON.stringify(body);
+    const text = contentText(result);
+
+    expect(result.isError).toBe(true);
+    expect(body.error.error_code).toBe("x402_live_challenge_value_not_approved");
+    expect(serialized).not.toContain('"expiry"');
+    expect(serialized).not.toContain("expires_at");
+    expect(serialized).not.toContain("12345678901");
+    expect(serialized).not.toContain("synthetic-malformed-expiry");
+    expect(text).not.toContain("expiry");
+    expect(text).not.toContain("12345678901");
+    expect(text).not.toContain("synthetic-malformed-expiry");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it.each([
+    { name: "boolean", value: true },
+    { name: "object", value: { marker: "synthetic-malformed-amount-object" } },
+    { name: "array", value: ["synthetic-malformed-amount-array"] },
+    { name: "empty string", value: "" },
+    { name: "zero", value: 0 },
+    { name: "negative number", value: -1 },
+    { name: "unrelated string", value: "synthetic-malformed-amount-string" }
+  ])("rejects malformed live amount: $name", async ({ value }) => {
+    const fetchFn = vi.fn<FetchLike>(async () =>
+      liveChallengeResponse(REQUEST.endpointPath, undefined, {}, (body) => {
+        liveAcceptedPaymentMethod(body).amount = value;
+      })
+    );
+    const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+    const result = await client.callTool({ name: REQUEST.toolName, arguments: {} });
+    const body = structured<X402LiveRelayErrorResult>(result);
+    const serialized = JSON.stringify(body);
+    const text = contentText(result);
+
+    expect(result.isError).toBe(true);
+    expect(body.error.error_code).toBe("x402_live_challenge_value_not_approved");
+    expect(serialized).not.toContain('"amount"');
+    expect(serialized).not.toContain("synthetic-malformed-amount");
+    expect(text).not.toContain("amount");
+    expect(text).not.toContain("synthetic-malformed-amount");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it.each([
+    { name: "NaN", value: Number.NaN },
+    { name: "Infinity", value: Number.POSITIVE_INFINITY }
+  ])("rejects non-finite live amount through the injected response seam: $name", async ({ value }) => {
+    const config = parseConfig(X402_LIVE_ENV).x402Relay;
+    const state = createX402LiveChallengeSessionState();
+    const responseBody = createValidLiveChallengeBody(REQUEST.endpointPath);
+    liveAcceptedPaymentMethod(responseBody).amount = value;
+    const fetchChallenge = vi.fn(async () => ({
+      status: 402,
+      approvedHeaderNamesPresent: [...X402_CHALLENGE_HEADER_NAMES],
+      body: responseBody
+    }));
+
+    const result = await executePublicLiveX402ChallengeRelay(
+      config,
+      REQUEST,
+      {},
+      state,
+      fetchChallenge
+    );
+    const serialized = JSON.stringify(result);
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_live_challenge_value_not_approved");
+    }
+    expect(serialized).not.toContain('"amount"');
+    expect(serialized).not.toContain("challenge_values");
+    expect(fetchChallenge).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts strict synthetic conditional fields while continuing to omit every value", async () => {
+    const acceptedExpiry = "2031-04-05T06:07:08.123Z";
+    const acceptedExpiresAt = "2032-09-10T11:12:13Z";
     const fetchFn = vi.fn<FetchLike>(async () =>
       liveChallengeResponse(REQUEST.endpointPath, undefined, {}, (body) => {
         liveAcceptedPaymentMethod(body).amount = 2.5;
-        liveAcceptedPaymentMethod(body).expiry = 1_893_456_000;
+        liveAcceptedPaymentMethod(body).expiry = acceptedExpiry;
         livePricing(body).amount = 2.5;
+        livePreview(body).expires_at = acceptedExpiresAt;
       })
     );
     const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
@@ -577,14 +734,18 @@ describe("Phase 5F x402 live no-key challenge invocation", () => {
     expect(body.status).toBe("payment_required");
     expect(body.challenge.conditional_values_relayed).toBe(false);
     expect("challenge_values" in body.challenge).toBe(false);
+    expect(JSON.stringify(body)).not.toContain(acceptedExpiry);
+    expect(JSON.stringify(body)).not.toContain(acceptedExpiresAt);
+    expect(contentText(result)).not.toContain(acceptedExpiry);
+    expect(contentText(result)).not.toContain(acceptedExpiresAt);
     expect(contentText(result)).not.toContain("base-sepolia");
 
     await client.close();
     await server.close();
   });
 
-  it("does not leak a malformed conditional value through structured output, text, or logs", async () => {
-    const malformedMarker = "synthetic-malformed-live-recipient-marker";
+  it("does not leak malformed expiry or amount values through structured output, text, or logs", async () => {
+    const malformedMarker = "synthetic-malformed-live-expiry-amount-marker";
     const capturedLogs: string[] = [];
     const logSpies = (["log", "warn", "error"] as const).map((method) =>
       vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
@@ -593,7 +754,8 @@ describe("Phase 5F x402 live no-key challenge invocation", () => {
     );
     const fetchFn = vi.fn<FetchLike>(async () =>
       liveChallengeResponse(REQUEST.endpointPath, undefined, {}, (body) => {
-        liveAcceptedPaymentMethod(body).recipient = { marker: malformedMarker };
+        liveAcceptedPaymentMethod(body).amount = malformedMarker;
+        livePreview(body).expires_at = malformedMarker;
       })
     );
     const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);

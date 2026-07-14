@@ -938,17 +938,8 @@ function isApprovedLiveRecipient(value: unknown): boolean {
 }
 
 function isApprovedLiveExpiry(value: unknown): boolean {
-  if (typeof value === "number") {
-    return Number.isSafeInteger(value) && value > 0;
-  }
-
   if (typeof value !== "string" || value.length === 0 || value.length > 64) {
     return false;
-  }
-
-  if (/^[1-9]\d{9,12}$/.test(value)) {
-    const timestamp = Number(value);
-    return Number.isSafeInteger(timestamp) && timestamp > 0;
   }
 
   const match = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.(\d{1,3}))?Z$/.exec(value);
