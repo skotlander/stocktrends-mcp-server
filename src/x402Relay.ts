@@ -76,8 +76,9 @@ export const X402_EXTENSION_MAX_TOTAL_BYTES = 24 * 1024;
 
 // Current-source rich stocktrends_preview maxima across the exact nine relay
 // routes are depth 4, 23 object members, 224 aggregate entries, array length
-// 27, 231 string bytes, 31 key bytes, and 7,726 serialized bytes. These
-// rounded caps remain deliberately below the broader extension/tree budgets.
+// 27, 231 string bytes, 31 key bytes, and 7,726 validator-normalized
+// serialized bytes after JSON parsing plus JSON.stringify. These rounded caps
+// remain deliberately below the broader extension/tree budgets.
 export const X402_PREVIEW_MAX_DEPTH = 4;
 export const X402_PREVIEW_MAX_OBJECT_MEMBERS = 23;
 export const X402_PREVIEW_MAX_TOTAL_MEMBERS = 224;
@@ -1578,7 +1579,11 @@ function validateCanonicalLiveChallenge(
     return "x402_live_challenge_value_not_approved";
   }
 
-  const previewValidation = validateStocktrendsPreview(body.stocktrends_preview, endpointPath);
+  const previewValidation = validateStocktrendsPreview(
+    body.stocktrends_preview,
+    endpointPath,
+    pricing.amount_usd
+  );
   if (previewValidation === "prohibited") {
     return "x402_live_challenge_prohibited_material";
   }
@@ -1763,7 +1768,8 @@ function validateExtensionContainer(
 
 function validateStocktrendsPreview(
   value: unknown,
-  endpointPath: string
+  endpointPath: string,
+  canonicalOuterAmountUsd: string
 ): ExtensionValidationResult {
   const contract = X402_PREVIEW_ROUTE_CONTRACTS[endpointPath];
   if (contract === undefined || !isPlainRecord(value)) {
@@ -1775,7 +1781,12 @@ function validateStocktrendsPreview(
     return bounds;
   }
 
-  if (!isApprovedStocktrendsPreviewSchema(value, endpointPath, contract)) {
+  if (!isApprovedStocktrendsPreviewSchema(
+    value,
+    endpointPath,
+    contract,
+    canonicalOuterAmountUsd
+  )) {
     return hasProhibitedStocktrendsPreviewMaterial(value, endpointPath)
       ? "prohibited"
       : "invalid";
@@ -1854,7 +1865,8 @@ function scanBoundedStocktrendsPreview(value: Record<string, unknown>): Extensio
 function isApprovedStocktrendsPreviewSchema(
   preview: Record<string, unknown>,
   endpointPath: string,
-  contract: PreviewRouteContract
+  contract: PreviewRouteContract,
+  canonicalOuterAmountUsd: string
 ): boolean {
   const rootKeys = [
     "endpoint",
@@ -1911,7 +1923,11 @@ function isApprovedStocktrendsPreviewSchema(
     !hasBoundedStringArray(preview.notes, contract.notesLength) ||
     !hasExactStringArray(preview.related_endpoints, contract.relatedEndpoints) ||
     !hasExactStringArray(preview.next_recommended_calls, contract.nextRecommendedCalls) ||
-    !isApprovedPreviewPricing(preview.pricing, contract.pricingRuleId) ||
+    !isApprovedPreviewPricing(
+      preview.pricing,
+      contract.pricingRuleId,
+      canonicalOuterAmountUsd
+    ) ||
     preview.analytical_role !== contract.analyticalRole
   ) {
     return false;
@@ -2117,13 +2133,19 @@ function isApprovedPreviewSafeRequest(
   );
 }
 
-function isApprovedPreviewPricing(value: unknown, pricingRuleId: string): boolean {
+function isApprovedPreviewPricing(
+  value: unknown,
+  pricingRuleId: string,
+  canonicalOuterAmountUsd: string
+): boolean {
   return (
     isPlainRecord(value) &&
     hasExactObjectKeys(value, ["pricing_rule_id", "stc_cost", "effective_price_usd", "unit", "cost_source"]) &&
     value.pricing_rule_id === pricingRuleId &&
     isCanonicalPositiveFixedSix(value.stc_cost) &&
     isCanonicalPositiveFixedSix(value.effective_price_usd) &&
+    value.stc_cost === canonicalOuterAmountUsd &&
+    value.effective_price_usd === canonicalOuterAmountUsd &&
     value.unit === "request" &&
     value.cost_source === "/v1/pricing/catalog"
   );

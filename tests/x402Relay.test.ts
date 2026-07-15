@@ -74,6 +74,11 @@ const REQUEST: X402ChallengeRelayRequest = {
 };
 
 const LIVE_VALUE_SENTINEL = "synthetic-live-challenge-value-marker";
+const SOURCE_FIXED_SIX_AMOUNT = "1.250000";
+const PRICING_IDENTITY_MISMATCH_A = "2.000000";
+const PRICING_IDENTITY_MISMATCH_B = "3.000000";
+const PRICING_IDENTITY_MISMATCH_C = "4.000000";
+const PRICING_IDENTITY_SENTINEL = "synthetic-preview-pricing-identity-marker";
 const DIRECT_TOOL_INPUT_SENTINEL = "synthetic-direct-tool-input-secret-path-value";
 const METHOD_AUTHORITY_ALIASES = [
   "methodOverride",
@@ -992,12 +997,21 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
   });
 
   it.each(PUBLIC_MOCK_INVOCATIONS)(
-    "accepts the default compact source-shaped challenge for exact tool/route mapping $name",
+    "accepts the all-nine exact tool/route matrix with identical canonical fixed-six pricing for $name",
     async (invocation) => {
+      let observedExactPricingIdentity = false;
       const fetchFn = vi.fn<FetchLike>(async (input, init) => {
         expect(init.method).toBe("GET");
         expect((input as URL).pathname).toBe(invocation.endpointPath);
-        return canonicalLiveHttpResponse(invocation.endpointPath);
+        return canonicalLiveHttpResponse(invocation.endpointPath, (body) => {
+          const outerPricing = pricing(body);
+          const sourcePreviewPricing = previewPricing(body);
+          observedExactPricingIdentity = [
+            outerPricing.amount_usd,
+            sourcePreviewPricing.stc_cost,
+            sourcePreviewPricing.effective_price_usd
+          ].every((value) => value === SOURCE_FIXED_SIX_AMOUNT);
+        });
       });
       const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
 
@@ -1007,6 +1021,7 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       expect(body.endpoint_path).toBe(invocation.endpointPath);
       expect(body.tool_name).toBe(invocation.name);
       expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(observedExactPricingIdentity).toBe(true);
 
       await client.close();
       await server.close();
@@ -1435,16 +1450,50 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
   );
 
   it.each(["0.000001", "1.250000", `${"9".repeat(32)}.999999`])(
-    "accepts canonical fixed-six USD value %s",
+    "accepts a canonical fixed-six USD value",
     async (amountUsd) => {
       const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
       pricing(body).amount_usd = amountUsd;
+      previewPricing(body).stc_cost = amountUsd;
+      previewPricing(body).effective_price_usd = amountUsd;
       expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }))).status).toBe("payment_required");
     }
   );
 
+  it.each([
+    ["stc differs while effective matches outer", (body: Record<string, unknown>) => {
+      previewPricing(body).stc_cost = PRICING_IDENTITY_MISMATCH_A;
+    }],
+    ["effective differs while stc matches outer", (body: Record<string, unknown>) => {
+      previewPricing(body).effective_price_usd = PRICING_IDENTITY_MISMATCH_A;
+    }],
+    ["preview values match each other but differ from outer", (body: Record<string, unknown>) => {
+      previewPricing(body).stc_cost = PRICING_IDENTITY_MISMATCH_A;
+      previewPricing(body).effective_price_usd = PRICING_IDENTITY_MISMATCH_A;
+    }],
+    ["all three values are pairwise inconsistent", (body: Record<string, unknown>) => {
+      pricing(body).amount_usd = PRICING_IDENTITY_MISMATCH_C;
+      previewPricing(body).stc_cost = PRICING_IDENTITY_MISMATCH_A;
+      previewPricing(body).effective_price_usd = PRICING_IDENTITY_MISMATCH_B;
+    }]
+  ] as const)("rejects canonical preview pricing identity mismatch: %s", async (_name, mutate) => {
+    await expectPreviewPricingIdentityMismatchRejected(PUBLIC_MOCK_INVOCATIONS[5], mutate);
+  });
+
+  it.each([
+    PUBLIC_MOCK_INVOCATIONS[0],
+    PUBLIC_MOCK_INVOCATIONS[4],
+    PUBLIC_MOCK_INVOCATIONS[5],
+    PUBLIC_MOCK_INVOCATIONS[2]
+  ])("rejects a representative pricing mismatch for preview family route $endpointPath", async (invocation) => {
+    await expectPreviewPricingIdentityMismatchRejected(invocation, (body) => {
+      previewPricing(body).stc_cost = PRICING_IDENTITY_MISMATCH_A;
+      previewPricing(body).effective_price_usd = PRICING_IDENTITY_MISMATCH_A;
+    });
+  });
+
   it.each([1.25, "1.25", "1.25000", "1.2500000", "1e0", "+1.000000", "0.000000", "-1.000000", "01.000000", `${"9".repeat(33)}.000001`])(
-    "rejects non-canonical USD value %#",
+    "rejects a non-canonical USD value",
     async (amountUsd) => {
       const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
       pricing(body).amount_usd = amountUsd;
@@ -2288,12 +2337,14 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       network: omittedValues.network,
       scheme: omittedValues.scheme
     });
+    Object.assign(previewPricing(body), {
+      stc_cost: omittedValues.usdAmount,
+      effective_price_usd: omittedValues.usdAmount
+    });
     const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
     expect(result.status).toBe("payment_required");
     const serialized = JSON.stringify(result);
-    for (const value of Object.values(omittedValues)) {
-      expect(serialized).not.toContain(String(value));
-    }
+    expect(Object.values(omittedValues).every((value) => !serialized.includes(String(value)))).toBe(true);
   });
 
   it("preserves mock-only invocation when live mode is explicitly off", async () => {
@@ -3379,6 +3430,79 @@ async function executeInjectedForInvocation(
   return { result, fetchChallenge };
 }
 
+async function expectPreviewPricingIdentityMismatchRejected(
+  invocation: (typeof PUBLIC_MOCK_INVOCATIONS)[number],
+  mutate: (body: Record<string, unknown>) => void
+): Promise<void> {
+  const requestedPaths: string[] = [];
+  let atomicAmountUnchanged = false;
+  let allThreePricingValuesCanonical = false;
+  let valuesThatMustRemainOmitted: string[] = [];
+
+  const fetchFn = vi.fn<FetchLike>(async (request, init) => {
+    requestedPaths.push((request as URL).pathname);
+    const response = canonicalLiveHttpResponse(invocation.endpointPath, (body) => {
+      const originalAtomicAmount = acceptedRequirement(body).amount;
+      mutate(body);
+      const outerPricing = pricing(body);
+      const sourcePreviewPricing = previewPricing(body);
+      const pricingValues = [
+        outerPricing.amount_usd,
+        sourcePreviewPricing.stc_cost,
+        sourcePreviewPricing.effective_price_usd
+      ];
+      allThreePricingValuesCanonical = pricingValues.every((value) =>
+        typeof value === "string" &&
+        /^(?:0|[1-9]\d{0,31})\.\d{6}$/.test(value) &&
+        /[1-9]/.test(value.replace(".", ""))
+      );
+      atomicAmountUnchanged = acceptedRequirement(body).amount === originalAtomicAmount;
+      (body.stocktrends_preview as Record<string, unknown>).investment_agent_value =
+        PRICING_IDENTITY_SENTINEL;
+      valuesThatMustRemainOmitted = [
+        ...pricingValues.filter((value): value is string => typeof value === "string"),
+        ...(typeof originalAtomicAmount === "string" ? [originalAtomicAmount] : []),
+        PRICING_IDENTITY_SENTINEL
+      ];
+    });
+    expect(init.method === "GET").toBe(true);
+    expect(init.body === undefined).toBe(true);
+    return response;
+  });
+  const { client, server } = await connectMcp(fetchFn, X402_LIVE_ENV);
+
+  try {
+    const result = await client.callTool({ name: invocation.name, arguments: invocation.arguments });
+    const output = structured<X402LiveRelayErrorResult>(result);
+    const publicResult = `${JSON.stringify(result)}\n${contentText(result)}`;
+
+    expect(output.status).toBe("error");
+    expect(output.error.error_code).toBe("x402_live_challenge_value_not_approved");
+    expect(output.error.denial_reason).toBe("x402_live_challenge_value_not_approved");
+    expect(output.api_status).toBe(402);
+    expect(output.error.endpoint_path).toBe(invocation.endpointPath);
+    expect(output.error.tool_name).toBe(invocation.name);
+    expect(output.error.http_method).toBe("GET");
+    expect(output.api_request_sent).toBe(true);
+    expect(output.auth_header_sent).toBe(false);
+    expect(output.payment_header_sent).toBe(false);
+    expect(output.paid_execution_authorized).toBe(false);
+    expect(output.paid_execution_occurred).toBe(false);
+    expect(output.proof_forwarded).toBe(false);
+    expect(output.spend_occurred).toBe(false);
+    expect(output.paid_api_data_returned).toBe(false);
+    expect(output.automatic_paid_retries).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(requestedPaths).toEqual([invocation.endpointPath]);
+    expect(atomicAmountUnchanged).toBe(true);
+    expect(allThreePricingValuesCanonical).toBe(true);
+    expect(valuesThatMustRemainOmitted.every((value) => !publicResult.includes(value))).toBe(true);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
 function createCanonicalLiveChallengeBody(endpointPath: string): Record<string, unknown> {
   const resource = {
     url: endpointPath,
@@ -3417,7 +3541,7 @@ function createCanonicalLiveChallengeBody(endpointPath: string): Record<string, 
     protocol: "x402",
     resource: endpointPath,
     pricing: {
-      amount_usd: "1.250000",
+      amount_usd: SOURCE_FIXED_SIX_AMOUNT,
       unit: "request",
       network: "eip155:8453",
       token: asset,
@@ -3425,11 +3549,14 @@ function createCanonicalLiveChallengeBody(endpointPath: string): Record<string, 
     },
     accepted_payment_methods: ["subscription", "x402", "mpp"],
     payment_required: requirements,
-    stocktrends_preview: createSourceShapedPreview(endpointPath)
+    stocktrends_preview: createSourceShapedPreview(endpointPath, SOURCE_FIXED_SIX_AMOUNT)
   };
 }
 
-function createSourceShapedPreview(endpointPath: string): Record<string, unknown> {
+function createSourceShapedPreview(
+  endpointPath: string,
+  canonicalOuterAmountUsd: string
+): Record<string, unknown> {
   const contract = SOURCE_PREVIEW_FIXTURES[endpointPath];
   if (!contract) throw new Error(`missing source preview fixture contract for ${endpointPath}`);
 
@@ -3469,8 +3596,8 @@ function createSourceShapedPreview(endpointPath: string): Record<string, unknown
     next_recommended_calls: [...contract.nextRecommendedCalls],
     pricing: {
       pricing_rule_id: contract.pricingRuleId,
-      stc_cost: "1.000000",
-      effective_price_usd: "1.000000",
+      stc_cost: canonicalOuterAmountUsd,
+      effective_price_usd: canonicalOuterAmountUsd,
       unit: "request",
       cost_source: "/v1/pricing/catalog"
     },
@@ -3947,6 +4074,11 @@ function acceptedExtra(body: Record<string, unknown>): Record<string, unknown> {
 
 function pricing(body: Record<string, unknown>): Record<string, unknown> {
   return body.pricing as Record<string, unknown>;
+}
+
+function previewPricing(body: Record<string, unknown>): Record<string, unknown> {
+  const preview = body.stocktrends_preview as Record<string, unknown>;
+  return preview.pricing as Record<string, unknown>;
 }
 
 function setAllResourceUrls(body: Record<string, unknown>, resourceUrl: string): void {

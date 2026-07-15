@@ -113,9 +113,11 @@ The dedicated iterative preview scan enforces:
 | Array length | 27 | 27 |
 | UTF-8 bytes in one string | 256 | 231 |
 | UTF-8 bytes in one key | 32 | 31 |
-| Serialized preview bytes | 8,192 | 7,726 |
+| Validator-normalized serialized preview bytes | 8,192 | 7,726 |
 
 Traversal is iterative and rejects non-finite numbers, non-plain objects, prototype-pollution keys, invalid JSON-like values, and any cap excess without recursion.
+
+The 7,726-byte maximum is the serialized preview size measured by the validator after JSON parsing and JavaScript `JSON.stringify`. The observed compact Python API wire serialization for `/v1/stim/history` is 7,730 bytes. Numeric normalization can account for the difference, for example Python `0.0` becoming JavaScript `0` after parsing and reserialization. The validator limit remains 8 KiB, and both observed forms are below it. The validator measurement is not claimed to be an exact byte-for-byte measurement of the wire body.
 
 ## 8. Narrow descriptive-role allowances
 
@@ -196,6 +198,7 @@ No MPP or subscription execution was added. No `Payment-Signature`, `X-PAYMENT`,
 - A runtime policy overlay could author a different outer rail array; any unreviewed form fails closed.
 - All nine current routes have the same rail form, so there is no current wrong-route/different-policy positive control to encode. The route-bound map is still explicit and will fail closed until a changed route is separately reviewed.
 - Preview source changes require an MCP contract update; unknown keys, changed closed vocabularies, array changes, and changed symbolic example objects fail closed.
+- Preview production contracts and source-shaped fixtures are manually maintained, so future API changes require deliberate MCP review. A deterministic offline parity manifest or generator is a potential later improvement, not a requirement for this reconciliation or the next separately authorized canary.
 - Deployed-source alignment remains unknown.
 - This PR does not prove the exact field or branch rejected in PR #77.
 
