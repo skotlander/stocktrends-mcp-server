@@ -141,7 +141,7 @@ stocktrends_preview.pricing.stc_cost
 === body.pricing.amount_usd
 ```
 
-The comparison is literal. No trimming, normalization, rounding, floating-point conversion, or reformatting is performed. The MCP does not infer a USD-to-atomic conversion or identity. The inner x402 atomic amount remains separately validated by the existing canonical atomic-unit contract.
+The comparison is literal. No alternate representation is accepted. Preview pricing cannot alter request execution, atomic amount, asset, payee, network, timeout, route, proof, payment, retry, fallback, second route, or paid-output handling. No trimming, normalization, rounding, floating-point conversion, or reformatting is performed. The MCP does not infer a USD-to-atomic conversion or identity. The inner x402 atomic amount remains separately validated by the existing canonical atomic-unit contract.
 
 Preview pricing remains descriptive only. It cannot change payment execution, atomic amount, asset, payee, network, timeout, route, proof, payment, retry, or paid-output behavior. Pricing values remain omitted from MCP output, errors, metadata, and logs.
 
