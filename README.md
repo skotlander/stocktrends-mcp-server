@@ -615,3 +615,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5F x402 Live Challenge Revalidation Report](docs/PHASE5F_X402_LIVE_CHALLENGE_REVALIDATION_REPORT.md)
 - [Phase 5F x402 Value-Policy Mismatch Investigation](docs/PHASE5F_X402_VALUE_POLICY_MISMATCH_INVESTIGATION.md)
 - [Phase 5F x402 Final-Response-Envelope Reconciliation Implementation Notes](docs/PHASE5F_X402_FINAL_RESPONSE_ENVELOPE_RECONCILIATION_IMPLEMENTATION_NOTES.md)
+- [Phase 5F x402 Final-Response-Envelope Live Revalidation Report](docs/PHASE5F_X402_FINAL_RESPONSE_ENVELOPE_LIVE_REVALIDATION_REPORT.md)
