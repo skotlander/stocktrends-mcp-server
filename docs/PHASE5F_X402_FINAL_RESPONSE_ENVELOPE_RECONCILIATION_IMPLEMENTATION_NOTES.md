@@ -133,6 +133,18 @@ Potentially authority-adjacent words are accepted only at exact source roles and
 - market-regime confirmation endpoints are exactly the two source-authored descriptive routes; and
 - paid-output-like keys are allowed only inside the exact source symbolic `example_object`, whose complete route-specific object must match the approved template.
 
+Pricing has an additional identity invariant. Outer `body.pricing.amount_usd` is validated first as the canonical positive fixed-six USD string, and that exact canonical string is passed unchanged into `stocktrends_preview` validation. `stocktrends_preview.pricing.stc_cost` and `stocktrends_preview.pricing.effective_price_usd` must each independently be canonical positive fixed-six strings. Exact string equality is then required:
+
+```text
+stocktrends_preview.pricing.stc_cost
+=== stocktrends_preview.pricing.effective_price_usd
+=== body.pricing.amount_usd
+```
+
+The comparison is literal. No trimming, normalization, rounding, floating-point conversion, or reformatting is performed. The MCP does not infer a USD-to-atomic conversion or identity. The inner x402 atomic amount remains separately validated by the existing canonical atomic-unit contract.
+
+Preview pricing remains descriptive only. It cannot change payment execution, atomic amount, asset, payee, network, timeout, route, proof, payment, retry, or paid-output behavior. Pricing values remain omitted from MCP output, errors, metadata, and logs.
+
 These roles are ignored after validation and do not influence execution.
 
 ## 9. Universal prohibitions retained
@@ -174,6 +186,10 @@ Focused coverage now proves:
 - nested preview rails cannot repair the outer contract or widen the inner requirement;
 - a second inner accepted entry still fails;
 - all nine route previews and all four structural families pass;
+- all nine exact-route positive fixtures pass with exact three-way string equality among outer `amount_usd`, preview `stc_cost`, and preview `effective_price_usd`;
+- pricing-identity mismatch coverage rejects `stc_cost` alone, `effective_price_usd` alone, both preview values equal to each other but different from the outer value, and all three values pairwise inconsistent;
+- representative pricing mismatches cover all four preview families;
+- pricing-identity rejection coverage confirms no price or sentinel leakage and one request to the invoked route, with no retry, fallback, or second route;
 - exact method, path, rail, pricing, confirmation, inference, and provenance roles pass;
 - unknown/missing/mis-cased/mis-separated/misplaced preview roles fail;
 - wrong scalar/container types and every dedicated bound fail;
