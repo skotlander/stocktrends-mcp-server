@@ -26,6 +26,14 @@ import {
   X402_EXTENSION_MAX_STRING_BYTES,
   X402_EXTENSION_MAX_TOTAL_BYTES,
   X402_EXTENSION_MAX_TOTAL_MEMBERS,
+  X402_DESCRIPTIVE_PAYMENT_METHODS_MAX_LENGTH,
+  X402_PREVIEW_MAX_ARRAY_LENGTH,
+  X402_PREVIEW_MAX_DEPTH,
+  X402_PREVIEW_MAX_KEY_BYTES,
+  X402_PREVIEW_MAX_OBJECT_MEMBERS,
+  X402_PREVIEW_MAX_STRING_BYTES,
+  X402_PREVIEW_MAX_TOTAL_BYTES,
+  X402_PREVIEW_MAX_TOTAL_MEMBERS,
   X402_TOOL_INPUT_MAX_ARRAY_LENGTH,
   X402_TOOL_INPUT_MAX_DEPTH,
   X402_TOOL_INPUT_MAX_OBJECT_MEMBERS,
@@ -227,6 +235,241 @@ const PUBLIC_MOCK_INVOCATIONS = [
     arguments: { limit_overall: 1, limit_bucket: 1 }
   }
 ] as const;
+
+type SourcePreviewFlavor = "stim" | "selection" | "market" | "provenance";
+type SourcePreviewScalarType = "string" | "number" | "integer" | "boolean";
+
+interface SourcePreviewFixtureContract {
+  category: string;
+  pricingRuleId: string;
+  analyticalRole: string;
+  flavor: SourcePreviewFlavor;
+  requiredInputs: readonly string[];
+  optionalInputs: readonly string[];
+  safeQuery: Readonly<Record<string, SourcePreviewScalarType>>;
+  responseShape: readonly string[];
+  exampleObject: Readonly<Record<string, unknown>>;
+  notesLength: number;
+  relatedEndpoints: readonly string[];
+  nextRecommendedCalls: readonly string[];
+}
+
+const SOURCE_PREVIEW_FIXTURES: Readonly<Record<string, SourcePreviewFixtureContract>> = {
+  "/v1/stim/latest": {
+    category: "stim",
+    pricingRuleId: "stim_latest_paid",
+    analyticalRole: "probabilistic_forward_inference",
+    flavor: "stim",
+    requiredInputs: ["symbol_exchange"],
+    optionalInputs: ["symbol", "exchange"],
+    safeQuery: { symbol_exchange: "string" },
+    responseShape: [
+      "request_id", "symbol_exchange", "weekdate", "exchange", "symbol",
+      "x4wk1", "x4wk2", "x4wk", "x4wksd", "x13wk1", "x13wk2", "x13wk",
+      "x13wksd", "x40wk1", "x40wk2", "x40wk", "x40wksd",
+      "latest_data_weekdate", "is_stale", "missing_reason", "missing_weekdate"
+    ],
+    exampleObject: {
+      request_id: "req_demo", symbol_exchange: "SAMPLE-N", weekdate: "YYYY-MM-DD",
+      x13wk: 0, x13wksd: 1
+    },
+    notesLength: 5,
+    relatedEndpoints: [
+      "/v1/meta/inference", "/v1/meta/stim", "/v1/indicators/latest",
+      "/v1/stim/history", "/v1/selections/published/latest"
+    ],
+    nextRecommendedCalls: [
+      "/v1/meta/inference", "/v1/meta/stim", "/v1/decision/evaluate-symbol",
+      "/v1/portfolio/construct"
+    ]
+  },
+  "/v1/stim/history": {
+    category: "stim",
+    pricingRuleId: "stim_history_paid",
+    analyticalRole: "probabilistic_forward_inference",
+    flavor: "stim",
+    requiredInputs: ["symbol_exchange"],
+    optionalInputs: ["symbol", "exchange", "start", "end", "limit", "include_gaps"],
+    safeQuery: { symbol_exchange: "string", limit: "integer" },
+    responseShape: ["request_id", "symbol_exchange", "start", "end", "count", "data", "include_gaps", "gaps"],
+    exampleObject: {
+      request_id: "req_demo", symbol_exchange: "SAMPLE-N", count: 1,
+      data: [{ weekdate: "YYYY-MM-DD", x13wk: 0, x13wksd: 1 }]
+    },
+    notesLength: 4,
+    relatedEndpoints: ["/v1/meta/inference", "/v1/meta/stim", "/v1/stim/latest", "/v1/indicators/history"],
+    nextRecommendedCalls: [
+      "/v1/meta/inference", "/v1/meta/stim", "/v1/indicators/history", "/v1/decision/evaluate-symbol"
+    ]
+  },
+  "/v1/indicators/latest": {
+    category: "indicators",
+    pricingRuleId: "indicators_latest_paid",
+    analyticalRole: "symbol_signal_intelligence",
+    flavor: "provenance",
+    requiredInputs: ["symbol_exchange"],
+    optionalInputs: ["symbol", "exchange", "cs_only"],
+    safeQuery: { symbol_exchange: "string", cs_only: "boolean" },
+    responseShape: [
+      "request_id", "symbol_exchange", "weekdate", "exchange", "symbol", "type",
+      "currency_code", "trend", "trend_cnt", "mt_cnt", "prev_mtcnt", "rsi",
+      "rsi_updn", "vol_tag", "rvol", "atv", "fpr_chg1", "fpr_chg2", "fpr_chg4",
+      "fpr_chg13", "fpr_chg40", "pr_chg13", "pr_change", "shortavg", "longavg", "yr_hi", "yr_lo"
+    ],
+    exampleObject: {
+      request_id: "req_demo", symbol_exchange: "SAMPLE-N", weekdate: "YYYY-MM-DD",
+      trend: "^+", trend_cnt: 8, mt_cnt: 12, rsi: 118, rsi_updn: "+", vol_tag: "*"
+    },
+    notesLength: 6,
+    relatedEndpoints: ["/v1/indicators/history", "/v1/stim/latest", "/v1/selections/history"],
+    nextRecommendedCalls: ["/v1/indicators/history", "/v1/stim/latest"]
+  },
+  "/v1/indicators/history": {
+    category: "indicators",
+    pricingRuleId: "indicators_history_paid",
+    analyticalRole: "symbol_signal_intelligence",
+    flavor: "provenance",
+    requiredInputs: ["symbol_exchange"],
+    optionalInputs: ["symbol", "exchange", "cs_only", "start", "end", "limit"],
+    safeQuery: { symbol_exchange: "string", limit: "integer", cs_only: "boolean" },
+    responseShape: [
+      "request_id", "symbol_exchange", "cs_only", "start", "end", "count",
+      "data[].weekdate", "data[].exchange", "data[].symbol", "data[].symbol_exchange",
+      "data[].trend", "data[].trend_cnt", "data[].mt_cnt", "data[].rsi",
+      "data[].rsi_updn", "data[].vol_tag", "data[].pr_change"
+    ],
+    exampleObject: {
+      request_id: "req_demo", symbol_exchange: "SAMPLE-N", count: 1,
+      data: [{
+        weekdate: "YYYY-MM-DD", symbol_exchange: "SAMPLE-N", trend: "^-", trend_cnt: 4,
+        mt_cnt: 11, rsi: 104, rsi_updn: "-", vol_tag: ""
+      }]
+    },
+    notesLength: 4,
+    relatedEndpoints: ["/v1/indicators/latest", "/v1/stim/history", "/v1/prices/history"],
+    nextRecommendedCalls: ["/v1/stim/history", "/v1/decision/evaluate-symbol"]
+  },
+  "/v1/selections/latest": {
+    category: "selections",
+    pricingRuleId: "selections_latest_paid",
+    analyticalRole: "probabilistic_selection_universe",
+    flavor: "selection",
+    requiredInputs: [],
+    optionalInputs: ["exchange", "min_prob13wk", "limit", "include_data", "include_mast", "cs_only"],
+    safeQuery: { limit: "integer", include_data: "boolean" },
+    responseShape: [
+      "request_id", "weekdate", "exchange", "min_prob13wk", "include_data", "include_mast",
+      "cs_only", "count", "data[].weekdate", "data[].exchange", "data[].symbol",
+      "data[].prob13wk", "data[].symbol_exchange"
+    ],
+    exampleObject: {
+      request_id: "req_demo", weekdate: "YYYY-MM-DD", count: 1,
+      data: [{ symbol_exchange: "SAMPLE-N", prob13wk: 0 }]
+    },
+    notesLength: 2,
+    relatedEndpoints: ["/v1/selections/published/latest", "/v1/selections/history"],
+    nextRecommendedCalls: ["/v1/selections/published/latest", "/v1/indicators/latest"]
+  },
+  "/v1/market/regime/latest": {
+    category: "market",
+    pricingRuleId: "market_regime_latest",
+    analyticalRole: "market_regime_classifier",
+    flavor: "market",
+    requiredInputs: [],
+    optionalInputs: [],
+    safeQuery: {},
+    responseShape: [
+      "regime", "confidence", "regime_score", "bullish_pct", "bearish_pct",
+      "avg_rsi", "avg_mt_cnt", "weekdate", "signal_count"
+    ],
+    exampleObject: { regime: "mixed", confidence: 0, regime_score: 0, weekdate: "YYYY-MM-DD" },
+    notesLength: 1,
+    relatedEndpoints: ["/v1/market/regime/history", "/v1/market/regime/forecast"],
+    nextRecommendedCalls: ["/v1/market/regime/forecast", "/v1/decision/evaluate-symbol"]
+  },
+  "/v1/market/regime/history": {
+    category: "market",
+    pricingRuleId: "market_regime_history",
+    analyticalRole: "market_regime_classifier",
+    flavor: "market",
+    requiredInputs: [],
+    optionalInputs: ["limit", "start"],
+    safeQuery: { limit: "integer" },
+    responseShape: [
+      "history[].weekdate", "history[].regime", "history[].confidence", "history[].regime_score",
+      "history[].bullish_pct", "history[].bearish_pct", "history[].avg_rsi",
+      "history[].avg_mt_cnt", "history[].signal_count", "count", "limit", "start_date"
+    ],
+    exampleObject: {
+      history: [{ weekdate: "YYYY-MM-DD", regime: "mixed", regime_score: 0 }], count: 1
+    },
+    notesLength: 1,
+    relatedEndpoints: ["/v1/market/regime/latest", "/v1/market/regime/forecast"],
+    nextRecommendedCalls: ["/v1/market/regime/forecast"]
+  },
+  "/v1/breadth/sector/latest": {
+    category: "breadth",
+    pricingRuleId: "breadth_sector_latest_paid",
+    analyticalRole: "market_breadth_context",
+    flavor: "provenance",
+    requiredInputs: [],
+    optionalInputs: [
+      "group_level", "exchange", "weekdate", "cs_only", "include_unknown",
+      "min_price", "min_volume", "vol_scale", "limit"
+    ],
+    safeQuery: { group_level: "string", limit: "integer" },
+    responseShape: [
+      "request_id", "group_level", "exchange", "weekdate", "cs_only", "include_unknown", "count",
+      "data[].sector_code", "data[].sector_name", "data[].industry_group_code",
+      "data[].industry_group_name", "data[].industry_code", "data[].industry_name",
+      "data[].bullish_count", "data[].bearish_count", "data[].bullish_pct",
+      "data[].bearish_pct", "data[].avg_rsi", "data[].avg_mt_cnt", "data[].net_breadth"
+    ],
+    exampleObject: {
+      request_id: "req_demo", group_level: "sector", weekdate: "YYYY-MM-DD", count: 1,
+      data: [{
+        sector_code: "SAMPLE", sector_name: "Sample Sector", bullish_count: 0,
+        bearish_count: 0, bullish_pct: 0, bearish_pct: 0, avg_rsi: 100, net_breadth: 0
+      }]
+    },
+    notesLength: 1,
+    relatedEndpoints: ["/v1/breadth/sector/history", "/v1/market/regime/latest"],
+    nextRecommendedCalls: ["/v1/market/regime/latest", "/v1/leadership/summary/latest"]
+  },
+  "/v1/leadership/summary/latest": {
+    category: "leadership",
+    pricingRuleId: "leadership_summary_latest_paid",
+    analyticalRole: "leadership_intelligence",
+    flavor: "provenance",
+    requiredInputs: [],
+    optionalInputs: ["exchange", "weekdate", "type", "min_rsi", "min_mt_cnt", "limit_overall", "limit_bucket"],
+    safeQuery: { exchange: "string", type: "string", min_rsi: "integer", min_mt_cnt: "integer" },
+    responseShape: [
+      "request_id", "weekdate", "exchange", "filters.type", "filters.min_rsi", "filters.min_mt_cnt",
+      "overall_leaders[].symbol", "overall_leaders[].exchange", "overall_leaders[].rsi",
+      "overall_leaders[].mt_cnt", "overall_leaders[].trend", "overall_leaders[].trend_cnt",
+      "overall_leaders[].rsi_updn", "overall_leaders[].sector_name",
+      "overall_leaders[].industry_group_name", "sector_leaders[].symbol",
+      "sector_leaders[].sector_name", "industry_group_leaders[].symbol",
+      "industry_group_leaders[].industry_group_name", "note"
+    ],
+    exampleObject: {
+      request_id: "req_demo", weekdate: "YYYY-MM-DD", exchange: "N",
+      filters: { type: "CS", min_rsi: 40, min_mt_cnt: 4 },
+      overall_leaders: [{
+        symbol: "SAMPLE", exchange: "N", rsi: 118, mt_cnt: 10,
+        trend: "^+", trend_cnt: 6, sector_name: "Sample Sector"
+      }],
+      sector_leaders: [],
+      industry_group_leaders: []
+    },
+    notesLength: 2,
+    relatedEndpoints: [
+      "/v1/breadth/sector/latest", "/v1/market/regime/latest", "/v1/leadership/rotation/history"
+    ],
+    nextRecommendedCalls: ["/v1/market/regime/latest", "/v1/indicators/latest"]
+  }
+};
 
 describe("Phase 5F x402 mock challenge relay config and surface", () => {
   it("keeps default/free mode at one tool, ten resources, and zero prompts", async () => {
@@ -717,7 +960,7 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     });
     expect(body.challenge).toEqual({
       header_names_present: ["payment-required"],
-      top_level_body_keys_present: X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS,
+      top_level_body_keys_present: [...X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS, "stocktrends_preview"],
       field_categories_present: X402_LIVE_CHALLENGE_FIELD_CATEGORIES,
       conditional_values_relayed: false,
       x_request_id_value_relayed: false
@@ -736,8 +979,6 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     if (!present) delete extra.assetTransferMethod;
     extra.vendor_metadata = { mode: "rich", flags: [true, false], optional: null };
     paymentRequirements(body).extensions = createRepresentativeRichBazaarExtension();
-    body.stocktrends_preview = { envelope_note: "synthetic-known-preview" };
-
     const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
     expect(result.status).toBe("payment_required");
     if (result.status === "payment_required") {
@@ -771,6 +1012,169 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
       await server.close();
     }
   );
+
+  it("accepts the exact current-source market-regime preview roles and omits every preview and rail value", async () => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    const preview = body.stocktrends_preview as Record<string, unknown>;
+    preview.investment_agent_value = LIVE_VALUE_SENTINEL;
+    const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+    const serialized = JSON.stringify(result);
+
+    expect(result.status).toBe("payment_required");
+    expect(serialized).not.toContain(LIVE_VALUE_SENTINEL);
+    expect(serialized).not.toContain("subscription");
+    expect(serialized).not.toContain("mpp");
+    expect(serialized).not.toContain("1.000000");
+    expect(serialized).not.toContain("/v1/breadth/sector/latest");
+    expect(serialized).not.toContain("/v1/leadership/summary/latest");
+  });
+
+  it.each([
+    ["unknown root key", (preview: Record<string, unknown>) => { preview.synthetic_unknown = "sentinel-preview-value"; }],
+    ["unknown nested key", (preview: Record<string, unknown>) => {
+      (preview.endpoint as Record<string, unknown>).synthetic_unknown = "sentinel-preview-value";
+    }],
+    ["wrong type", (preview: Record<string, unknown>) => {
+      (preview.endpoint as Record<string, unknown>).requires_payment = "true";
+    }],
+    ["missing mandatory key", (preview: Record<string, unknown>) => { delete preview.output_summary; }],
+    ["extra array element", (preview: Record<string, unknown>) => {
+      (preview.response_shape as unknown[]).push("sentinel-preview-value");
+    }],
+    ["unexpected null", (preview: Record<string, unknown>) => { preview.investment_agent_value = null; }],
+    ["unexpected number", (preview: Record<string, unknown>) => { preview.investment_agent_value = 7; }],
+    ["unexpected boolean", (preview: Record<string, unknown>) => { preview.output_summary = false; }],
+    ["case variant", (preview: Record<string, unknown>) => {
+      preview.Pricing = preview.pricing;
+      delete preview.pricing;
+    }],
+    ["separator variant", (preview: Record<string, unknown>) => {
+      preview["safe-example-request"] = preview.safe_example_request;
+      delete preview.safe_example_request;
+    }],
+    ["fake ancestor", (preview: Record<string, unknown>) => {
+      preview.pricing = { fake: preview.pricing };
+    }],
+    ["fake descendant", (preview: Record<string, unknown>) => {
+      (preview.pricing as Record<string, unknown>).fake = { unit: "request" };
+    }],
+    ["unexpected array placement", (preview: Record<string, unknown>) => { preview.optional_inputs = []; }],
+    ["source method outside exact role", (preview: Record<string, unknown>) => { preview.method = "GET"; }]
+  ] as const)("rejects non-source preview schema: %s", async (_name, mutate) => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    mutate(body.stocktrends_preview as Record<string, unknown>);
+    const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+    expect(result.status).toBe("error");
+    expect(JSON.stringify(result)).not.toContain("sentinel-preview-value");
+  });
+
+  it.each([
+    "payment",
+    "payment_execution_result",
+    "settlement_result",
+    "transaction_hash",
+    "proof",
+    "payment_signature",
+    "authorization_credential",
+    "authentication_token",
+    "api_key",
+    "private_key",
+    "wallet_seed",
+    "facilitator_response",
+    "routeAuthority",
+    "method_override",
+    "amount_override",
+    "price_override",
+    "asset_override",
+    "payee_override",
+    "address_override",
+    "network_override",
+    "scheme_override",
+    "timeout_override"
+  ])("rejects universal prohibited preview concept %s outside an exact descriptive role", async (key) => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    (body.stocktrends_preview as Record<string, unknown>)[key] = "sentinel-preview-prohibited";
+    const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_live_challenge_prohibited_material");
+    }
+    expect(JSON.stringify(result)).not.toContain("sentinel-preview-prohibited");
+  });
+
+  it.each([
+    ["paid output root", (preview: Record<string, unknown>) => { preview.api_data = [{ regime: "bullish" }]; }],
+    ["paid result set", (preview: Record<string, unknown>) => { preview.results = [{ regime: "bullish" }]; }],
+    ["actual market-regime example values", (preview: Record<string, unknown>) => {
+      preview.example_object = {
+        regime: "bullish",
+        confidence: 0.99,
+        regime_score: 0.88,
+        weekdate: "2030-01-01"
+      };
+    }]
+  ] as const)("rejects preview paid-output carrier: %s", async (_name, mutate) => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    mutate(body.stocktrends_preview as Record<string, unknown>);
+    const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.error.error_code).toBe("x402_live_challenge_paid_output_without_proof");
+    }
+    expect(JSON.stringify(result)).not.toContain("bullish");
+  });
+
+  it("rejects source preview metadata placed at another root", async () => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    body.preview = body.stocktrends_preview;
+    delete body.stocktrends_preview;
+    const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+    expect(result.status).toBe("error");
+  });
+
+  it.each([
+    ["depth", (preview: Record<string, unknown>) => {
+      preview.investment_agent_value = nestedObject(X402_PREVIEW_MAX_DEPTH + 1, "sentinel-preview-bound");
+    }],
+    ["object members", (preview: Record<string, unknown>) => {
+      preview.optional_inputs = Object.fromEntries(
+        Array.from({ length: X402_PREVIEW_MAX_OBJECT_MEMBERS + 1 }, (_, index) => [`k${index}`, index])
+      );
+    }],
+    ["aggregate members", (preview: Record<string, unknown>) => {
+      preview.example_object = Object.fromEntries(
+        Array.from({ length: 9 }, (_, index) => [
+          `k${index}`,
+          Array.from({ length: X402_PREVIEW_MAX_ARRAY_LENGTH }, () => 0)
+        ])
+      );
+    }],
+    ["array length", (preview: Record<string, unknown>) => {
+      preview.response_shape = Array.from(
+        { length: X402_PREVIEW_MAX_ARRAY_LENGTH + 1 },
+        (_, index) => `field_${index}`
+      );
+    }],
+    ["string bytes", (preview: Record<string, unknown>) => {
+      preview.investment_agent_value = "x".repeat(X402_PREVIEW_MAX_STRING_BYTES + 1);
+    }],
+    ["key bytes", (preview: Record<string, unknown>) => {
+      preview["k".repeat(X402_PREVIEW_MAX_KEY_BYTES + 1)] = true;
+    }],
+    ["total bytes", (preview: Record<string, unknown>) => {
+      preview.notes = Array.from(
+        { length: X402_PREVIEW_MAX_ARRAY_LENGTH },
+        () => "x".repeat(X402_PREVIEW_MAX_STRING_BYTES)
+      );
+      expect(Buffer.byteLength(JSON.stringify(preview))).toBeGreaterThan(X402_PREVIEW_MAX_TOTAL_BYTES);
+    }]
+  ] as const)("rejects preview beyond the dedicated %s bound", async (_name, mutate) => {
+    const body = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    mutate(body.stocktrends_preview as Record<string, unknown>);
+    const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
+    expect(result.status).toBe("error");
+    expect(JSON.stringify(result)).not.toContain("sentinel-preview-bound");
+  });
 
   it("requires only the authoritative standard header and treats legacy metadata names as optional", async () => {
     const standardOnly = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath));
@@ -923,6 +1327,74 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     else body.accepted_payment_methods = value;
     const result = await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body }));
     expect(result.status).toBe("error");
+  });
+
+  it.each(PUBLIC_MOCK_INVOCATIONS)(
+    "accepts only the exact current-source descriptive rail policy for $endpointPath",
+    async (invocation) => {
+      const exactBody = createCanonicalLiveChallengeBody(invocation.endpointPath);
+      const exact = await executeInjectedForInvocation(
+        invocation,
+        canonicalInjectedResponse(invocation.endpointPath, { body: exactBody })
+      );
+      expect(exact.result.status).toBe("payment_required");
+      expect(exact.fetchChallenge).toHaveBeenCalledTimes(1);
+
+      const invalidPolicies: Array<[string, unknown]> = [
+        ["missing x402", ["subscription", "mpp"]],
+        ["unknown rail", ["subscription", "x402", "synthetic-rail"]],
+        ["duplicate rail", ["subscription", "x402", "x402"]],
+        ["wrong order", ["x402", "subscription", "mpp"]],
+        ["subset", ["x402", "mpp"]],
+        ["superset", ["subscription", "x402", "mpp", "synthetic-rail"]],
+        ["scalar", "x402"],
+        ["object", { rail: "x402" }],
+        ["null", null],
+        ["empty", []],
+        ["excessive", Array.from({ length: X402_DESCRIPTIVE_PAYMENT_METHODS_MAX_LENGTH + 1 }, (_, i) => `rail-${i}`)],
+        ["case variant", ["subscription", "X402", "mpp"]],
+        ["separator variant", ["subscription", "x_402", "mpp"]],
+        ["whitespace variant", ["subscription", "x402 ", "mpp"]]
+      ];
+
+      for (const [label, policy] of invalidPolicies) {
+        const body = createCanonicalLiveChallengeBody(invocation.endpointPath);
+        body.accepted_payment_methods = policy;
+        const { result, fetchChallenge } = await executeInjectedForInvocation(
+          invocation,
+          canonicalInjectedResponse(invocation.endpointPath, { body })
+        );
+        expect(result.status, label).toBe("error");
+        expect(fetchChallenge, label).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(result), label).not.toContain("synthetic-rail");
+      }
+    }
+  );
+
+  it("does not let nested preview rail metadata repair or widen the executable x402 requirement", async () => {
+    const missingOuterX402 = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    missingOuterX402.accepted_payment_methods = ["subscription", "mpp"];
+    expect((missingOuterX402.stocktrends_preview as Record<string, unknown>).supported_rails)
+      .toEqual(["subscription", "x402", "mpp"]);
+    const missingResult = await executeInjected(
+      canonicalInjectedResponse(REQUEST.endpointPath, { body: missingOuterX402 })
+    );
+    expect(missingResult.status).toBe("error");
+
+    const secondExecutableRail = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    const accepted = cloneJson(acceptedRequirement(secondExecutableRail));
+    paymentRequirements(secondExecutableRail).accepts = [accepted, { ...accepted, scheme: "mpp" }];
+    const secondResult = await executeInjected(
+      canonicalInjectedResponse(REQUEST.endpointPath, { body: secondExecutableRail })
+    );
+    expect(secondResult.status).toBe("error");
+  });
+
+  it("records that all nine current route policies have one identical deterministic source form", () => {
+    const forms = PUBLIC_MOCK_INVOCATIONS.map((invocation) =>
+      JSON.stringify(createCanonicalLiveChallengeBody(invocation.endpointPath).accepted_payment_methods)
+    );
+    expect(new Set(forms)).toEqual(new Set(['["subscription","x402","mpp"]']));
   });
 
   it.each([0, 2])("rejects accepts length %s instead of silently selecting", async (length) => {
@@ -1747,17 +2219,21 @@ describe("Phase 5F canonical x402 v2 live no-key challenge invocation", () => {
     }
   });
 
-  it("accepts the seven-key body and one benign optional preview, but rejects arbitrary top-level fields", async () => {
-    const sevenKey = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
-    const preview = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
-    preview.stocktrends_preview = { envelope_note: "synthetic-preview" };
+  it("requires the current source-authored final preview and rejects arbitrary root or preview fields", async () => {
+    const canonical = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    const missingPreview = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    delete missingPreview.stocktrends_preview;
+    const invalidPreview = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
+    (invalidPreview.stocktrends_preview as Record<string, unknown>).envelope_note = "synthetic-preview";
     const arbitrary = createCanonicalLiveChallengeBody(REQUEST.endpointPath);
     arbitrary.arbitrary_extension = { benign: true };
 
-    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: sevenKey }))).status)
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: canonical }))).status)
       .toBe("payment_required");
-    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: preview }))).status)
-      .toBe("payment_required");
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: missingPreview }))).status)
+      .toBe("error");
+    expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: invalidPreview }))).status)
+      .toBe("error");
     expect((await executeInjected(canonicalInjectedResponse(REQUEST.endpointPath, { body: arbitrary }))).status)
       .toBe("error");
   });
@@ -2886,6 +3362,23 @@ async function executeInjected(response: X402LiveChallengeResponse) {
   return executePublicLiveX402ChallengeRelay(config, REQUEST, {}, state, async () => response);
 }
 
+async function executeInjectedForInvocation(
+  invocation: (typeof PUBLIC_MOCK_INVOCATIONS)[number],
+  response: X402LiveChallengeResponse
+) {
+  const config = parseConfig(X402_LIVE_ENV).x402Relay;
+  const state = createX402LiveChallengeSessionState();
+  const fetchChallenge = vi.fn(async () => response);
+  const result = await executePublicLiveX402ChallengeRelay(
+    config,
+    { toolName: invocation.name, endpointPath: invocation.endpointPath },
+    invocation.arguments,
+    state,
+    fetchChallenge
+  );
+  return { result, fetchChallenge };
+}
+
 function createCanonicalLiveChallengeBody(endpointPath: string): Record<string, unknown> {
   const resource = {
     url: endpointPath,
@@ -2930,8 +3423,290 @@ function createCanonicalLiveChallengeBody(endpointPath: string): Record<string, 
       token: asset,
       scheme: "exact"
     },
-    accepted_payment_methods: ["x402"],
-    payment_required: requirements
+    accepted_payment_methods: ["subscription", "x402", "mpp"],
+    payment_required: requirements,
+    stocktrends_preview: createSourceShapedPreview(endpointPath)
+  };
+}
+
+function createSourceShapedPreview(endpointPath: string): Record<string, unknown> {
+  const contract = SOURCE_PREVIEW_FIXTURES[endpointPath];
+  if (!contract) throw new Error(`missing source preview fixture contract for ${endpointPath}`);
+
+  const preview: Record<string, unknown> = {
+    endpoint: {
+      method: "GET",
+      path: endpointPath,
+      purpose: "Synthetic source-shaped endpoint purpose.",
+      category: contract.category,
+      workflow_role: "Synthetic source-shaped workflow role.",
+      access_type: "paid",
+      requires_payment: true
+    },
+    investment_agent_value: "Synthetic bounded descriptive investment-agent value.",
+    supported_rails: ["subscription", "x402", "mpp"],
+    input_rule: contract.requiredInputs.length > 0 ? "Use the declared symbolic inputs." : null,
+    input_location: "query",
+    parameter_source: "query",
+    required_inputs: Object.fromEntries(
+      contract.requiredInputs.map((name) => [name, createSourcePreviewInputDescriptor(name, true, endpointPath)])
+    ),
+    optional_inputs: Object.fromEntries(
+      contract.optionalInputs.map((name) => [name, createSourcePreviewInputDescriptor(name, false, endpointPath)])
+    ),
+    safe_example_request: {
+      method: "GET",
+      path: endpointPath,
+      query: Object.fromEntries(
+        Object.entries(contract.safeQuery).map(([name, type]) => [name, sourcePreviewScalar(name, type)])
+      )
+    },
+    response_shape: [...contract.responseShape],
+    example_object: cloneJson(contract.exampleObject),
+    output_summary: "Synthetic bounded source-shaped output summary.",
+    notes: Array.from({ length: contract.notesLength }, (_, index) => `Synthetic source note ${index + 1}.`),
+    related_endpoints: [...contract.relatedEndpoints],
+    next_recommended_calls: [...contract.nextRecommendedCalls],
+    pricing: {
+      pricing_rule_id: contract.pricingRuleId,
+      stc_cost: "1.000000",
+      effective_price_usd: "1.000000",
+      unit: "request",
+      cost_source: "/v1/pricing/catalog"
+    },
+    analytical_role: contract.analyticalRole
+  };
+
+  if (contract.flavor === "stim") {
+    Object.assign(preview, createStimPreviewBranches());
+  } else if (contract.flavor === "selection") {
+    Object.assign(preview, {
+      inference_contract: createInferenceContractPreview(),
+      inference_provider: createInferenceProviderPreview(),
+      cognition_architecture: "docs/STOCK_TRENDS_COGNITION_ARCHITECTURE.md",
+      provenance_reference: createProvenancePreview()
+    });
+  } else if (contract.flavor === "market") {
+    Object.assign(preview, {
+      interpretation_guidance: createMarketInterpretationPreview(),
+      provenance_reference: createProvenancePreview()
+    });
+  } else {
+    preview.provenance_reference = createProvenancePreview();
+  }
+
+  return preview;
+}
+
+function createSourcePreviewInputDescriptor(
+  name: string,
+  required: boolean,
+  endpointPath: string
+): Record<string, unknown> {
+  const type = sourcePreviewInputType(name);
+  const base = { type, required } as Record<string, unknown>;
+  const description = "Synthetic bounded input description.";
+
+  switch (name) {
+    case "symbol_exchange":
+      Object.assign(base, {
+        example: "SAMPLE-N",
+        safe_default_for_demo: "SAMPLE-N",
+        pattern: "^[A-Z0-9.]+-[A-Z]$",
+        description
+      });
+      break;
+    case "symbol":
+      Object.assign(base, { example: "SAMPLE", description });
+      break;
+    case "exchange":
+      Object.assign(base, { enum: ["N", "Q", "A", "B", "T", "I"], example: "N", description });
+      break;
+    case "cs_only":
+      Object.assign(base, { safe_default: true, example: true, description });
+      break;
+    case "start":
+    case "end":
+      Object.assign(base, { format: "date", example: "YYYY-MM-DD", description });
+      break;
+    case "weekdate":
+      Object.assign(base, { format: "date", description });
+      if (endpointPath !== "/v1/breadth/sector/latest") base.example = "YYYY-MM-DD";
+      break;
+    case "limit":
+      Object.assign(base, { safe_default: 12, minimum: 1, maximum: 52 });
+      if (["/v1/stim/history", "/v1/indicators/history"].includes(endpointPath)) {
+        Object.assign(base, { example: 12, description });
+      }
+      break;
+    case "include_gaps":
+    case "include_data":
+    case "include_mast":
+    case "include_unknown":
+      base.safe_default = false;
+      break;
+    case "group_level":
+      Object.assign(base, { enum: ["sector", "industry_group", "industry"], safe_default: "sector" });
+      break;
+    case "min_price":
+    case "min_volume":
+      base.minimum = 0;
+      break;
+    case "vol_scale":
+      Object.assign(base, { safe_default: 1, minimum: 1 });
+      break;
+    case "min_prob13wk":
+      Object.assign(base, { example: 0.55, description });
+      break;
+    case "type":
+      Object.assign(base, { safe_default: "CS", example: "CS", description });
+      break;
+    case "min_rsi":
+    case "min_mt_cnt":
+      Object.assign(base, { safe_default: 4, minimum: 0, maximum: 500, example: 4, description });
+      break;
+    case "limit_overall":
+    case "limit_bucket":
+      Object.assign(base, { safe_default: 20, minimum: 1, maximum: 1000, example: 20 });
+      break;
+    default:
+      throw new Error(`unsupported source preview input ${name}`);
+  }
+
+  base.input_location = "query";
+  base.parameter_source = "query";
+  return base;
+}
+
+function sourcePreviewInputType(name: string): SourcePreviewScalarType {
+  if (["symbol_exchange", "symbol", "exchange", "start", "end", "weekdate", "group_level", "type"].includes(name)) {
+    return "string";
+  }
+  if (["min_prob13wk", "min_price"].includes(name)) return "number";
+  if (["limit", "min_volume", "vol_scale", "min_rsi", "min_mt_cnt", "limit_overall", "limit_bucket"].includes(name)) {
+    return "integer";
+  }
+  return "boolean";
+}
+
+function sourcePreviewScalar(name: string, type: SourcePreviewScalarType): unknown {
+  if (type === "boolean") return false;
+  if (type === "number") return 0.5;
+  if (type === "integer") return 1;
+  if (name === "group_level") return "sector";
+  if (name === "exchange") return "N";
+  if (name === "type") return "CS";
+  return "SAMPLE-N";
+}
+
+function createProvenancePreview(): Record<string, unknown> {
+  return {
+    historical_coverage_start_year: 1980,
+    approximate_observation_count: "16M+",
+    classification_framework: "Synthetic classification framework description.",
+    semantic_continuity: "Synthetic bounded semantic continuity description.",
+    full_metadata_endpoints: ["/v1/ai/context", "/v1/meta/indicators", "/v1/meta/stim"],
+    interpretation_limit: "Synthetic bounded interpretation limitation."
+  };
+}
+
+function createInferenceContractPreview(): Record<string, unknown> {
+  return {
+    endpoint: "/v1/meta/inference",
+    provider_agnostic: true,
+    core_concepts: [
+      "inference_provider",
+      "forecast_horizon",
+      "probability_distribution",
+      "confidence_measure",
+      "evidence",
+      "uncertainty",
+      "explanation",
+      "signal_source",
+      "reasoning_interpretation"
+    ]
+  };
+}
+
+function createInferenceProviderPreview(): Record<string, unknown> {
+  return {
+    provider_id: "stim",
+    provider_name: "Stock Trends Inference Model",
+    provider_role: "current_baseline_inference_provider",
+    provider_profile_endpoint: "/v1/meta/stim",
+    not_final_intelligence_layer: true,
+    future_causal_ai_compatible: true
+  };
+}
+
+function createStimPreviewBranches(): Record<string, unknown> {
+  return {
+    interpretation_dependency: {
+      endpoint: "/v1/meta/stim",
+      method: "GET",
+      required_before_interpretation: true,
+      reason: "Synthetic bounded dependency reason.",
+      inference_contract_endpoint: "/v1/meta/inference",
+      cognition_architecture: "docs/STOCK_TRENDS_COGNITION_ARCHITECTURE.md"
+    },
+    interpretation_guidance: {
+      inference_contract_endpoint: "/v1/meta/inference",
+      inference_provider: {
+        provider_id: "stim",
+        provider_role: "current_baseline_inference_provider",
+        not_final_intelligence_layer: true,
+        profile_endpoint: "/v1/meta/stim"
+      },
+      base_period_mean_returns_pct: {
+        x4wk: "Synthetic four-week baseline.",
+        x13wk: "Synthetic thirteen-week baseline.",
+        x40wk: "Synthetic forty-week baseline."
+      },
+      mean_return_fields: ["x4wk", "x13wk", "x40wk"],
+      standard_deviation_fields: ["x4wksd", "x13wksd", "x40wksd"],
+      calculation: {
+        delta_vs_base: "stim_mean - base_mean",
+        z: "(base_mean - stim_mean) / standard_deviation",
+        probability_outperform: "1 - normal_cdf(z)"
+      },
+      interpretation_rules: Array.from({ length: 6 }, (_, index) => `Synthetic interpretation rule ${index + 1}.`),
+      randomness_assumptions: Array.from({ length: 3 }, (_, index) => `Synthetic randomness assumption ${index + 1}.`),
+      distribution_framing: {
+        assumption: "normal_approximation",
+        central_limit_theorem_intuition: "Synthetic bounded distribution framing.",
+        probability_formula: "Synthetic bounded probability formula."
+      },
+      classification_role: "Synthetic bounded classification role.",
+      limitations: Array.from({ length: 7 }, (_, index) => `synthetic_limitation_${index + 1}`),
+      portfolio_applications: Array.from({ length: 6 }, (_, index) => `synthetic_application_${index + 1}`),
+      stim_select_style_logic: {
+        prob13wk_minimum: 0.55,
+        prob13wk_minimum_description: "Synthetic bounded probability threshold description.",
+        lower_confidence_bounds: "Synthetic bounded confidence-bound guidance."
+      }
+    },
+    required_interpretation_steps: Array.from(
+      { length: 10 },
+      (_, index) => `Synthetic interpretation step ${index + 1}.`
+    ),
+    inference_contract: createInferenceContractPreview(),
+    inference_provider: createInferenceProviderPreview(),
+    cognition_architecture: "docs/STOCK_TRENDS_COGNITION_ARCHITECTURE.md"
+  };
+}
+
+function createMarketInterpretationPreview(): Record<string, unknown> {
+  return {
+    regime_score_scale: {
+      range: [-1, 1],
+      formula: "Synthetic bounded regime formula.",
+      strong_bullish: "Synthetic strong-bullish category.",
+      mixed: "Synthetic mixed category.",
+      strong_bearish: "Synthetic strong-bearish category."
+    },
+    interpretation_rules: Array.from({ length: 5 }, (_, index) => `Synthetic regime rule ${index + 1}.`),
+    downstream_workflow: "Synthetic bounded downstream workflow description.",
+    confirmation_endpoints: ["/v1/breadth/sector/latest", "/v1/leadership/summary/latest"]
   };
 }
 

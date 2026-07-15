@@ -74,6 +74,19 @@ export const X402_EXTENSION_MAX_ARRAY_LENGTH = 64;
 export const X402_EXTENSION_MAX_STRING_BYTES = 2 * 1024;
 export const X402_EXTENSION_MAX_TOTAL_BYTES = 24 * 1024;
 
+// Current-source rich stocktrends_preview maxima across the exact nine relay
+// routes are depth 4, 23 object members, 224 aggregate entries, array length
+// 27, 231 string bytes, 31 key bytes, and 7,726 serialized bytes. These
+// rounded caps remain deliberately below the broader extension/tree budgets.
+export const X402_PREVIEW_MAX_DEPTH = 4;
+export const X402_PREVIEW_MAX_OBJECT_MEMBERS = 23;
+export const X402_PREVIEW_MAX_TOTAL_MEMBERS = 224;
+export const X402_PREVIEW_MAX_ARRAY_LENGTH = 27;
+export const X402_PREVIEW_MAX_STRING_BYTES = 256;
+export const X402_PREVIEW_MAX_KEY_BYTES = 32;
+export const X402_PREVIEW_MAX_TOTAL_BYTES = 8 * 1024;
+export const X402_DESCRIPTIVE_PAYMENT_METHODS_MAX_LENGTH = 3;
+
 export const X402_TOOL_INPUT_MAX_DEPTH = 32;
 export const X402_TOOL_INPUT_MAX_OBJECT_MEMBERS = 64;
 export const X402_TOOL_INPUT_MAX_TOTAL_MEMBERS = 4_096;
@@ -679,7 +692,7 @@ export async function executePublicLiveX402ChallengeRelay(
 
   let responseTreeScan: JsonTreeScanResult;
   try {
-    responseTreeScan = scanBoundedJsonTree(response.body);
+    responseTreeScan = scanBoundedJsonTree(response.body, normalizedRequest.endpointPath);
   } catch {
     return failClosedLive(
       normalizedRequest,
@@ -929,6 +942,13 @@ const X402_EXTENSION_SHADOW_KEYS = new Set([
   "records"
 ]);
 const X402_PAID_OUTPUT_SHAPE_KEYS = new Set(["apidata", "data", "results", "rows", "records"]);
+const X402_PREVIEW_OUTPUT_SHAPE_KEYS = new Set([
+  "exampleobject",
+  "history",
+  "overallleaders",
+  "sectorleaders",
+  "industrygroupleaders"
+]);
 const X402_SOURCE_OUTPUT_CARRIER_KEYS = new Set(["api_data", "data", "results", "rows", "records"]);
 const X402_METHOD_AUTHORITY_KEYS = new Set([
   "httpmethod",
@@ -1011,6 +1031,312 @@ const X402_TRANSACTION_STATE_COMPACT_KEYS = new Set([
 ]);
 const X402_SAFE_AUTONOMOUS_EXECUTION_KEY =
   "safe_for_autonomous_execution_with_budget_controls";
+
+const X402_SOURCE_PAYMENT_METHODS = Object.freeze(["subscription", "x402", "mpp"] as const);
+const X402_DESCRIPTIVE_PAYMENT_METHODS_BY_ROUTE: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "/v1/stim/latest": X402_SOURCE_PAYMENT_METHODS,
+  "/v1/stim/history": X402_SOURCE_PAYMENT_METHODS,
+  "/v1/indicators/latest": X402_SOURCE_PAYMENT_METHODS,
+  "/v1/indicators/history": X402_SOURCE_PAYMENT_METHODS,
+  "/v1/selections/latest": X402_SOURCE_PAYMENT_METHODS,
+  "/v1/market/regime/latest": X402_SOURCE_PAYMENT_METHODS,
+  "/v1/market/regime/history": X402_SOURCE_PAYMENT_METHODS,
+  "/v1/breadth/sector/latest": X402_SOURCE_PAYMENT_METHODS,
+  "/v1/leadership/summary/latest": X402_SOURCE_PAYMENT_METHODS
+});
+
+type PreviewScalarType = "string" | "number" | "integer" | "boolean";
+type PreviewRouteFlavor = "stim" | "selection" | "market" | "provenance";
+
+interface PreviewRouteContract {
+  category: string;
+  pricingRuleId: string;
+  analyticalRole: string;
+  flavor: PreviewRouteFlavor;
+  requiredInputs: readonly string[];
+  optionalInputs: readonly string[];
+  safeQuery: Readonly<Record<string, PreviewScalarType>>;
+  responseShape: readonly string[];
+  exampleObject: Readonly<Record<string, unknown>>;
+  notesLength: number;
+  relatedEndpoints: readonly string[];
+  nextRecommendedCalls: readonly string[];
+}
+
+const X402_PREVIEW_ROUTE_CONTRACTS: Readonly<Record<string, PreviewRouteContract>> = Object.freeze({
+  "/v1/stim/latest": {
+    category: "stim",
+    pricingRuleId: "stim_latest_paid",
+    analyticalRole: "probabilistic_forward_inference",
+    flavor: "stim",
+    requiredInputs: ["symbol_exchange"],
+    optionalInputs: ["symbol", "exchange"],
+    safeQuery: { symbol_exchange: "string" },
+    responseShape: [
+      "request_id", "symbol_exchange", "weekdate", "exchange", "symbol",
+      "x4wk1", "x4wk2", "x4wk", "x4wksd", "x13wk1", "x13wk2", "x13wk",
+      "x13wksd", "x40wk1", "x40wk2", "x40wk", "x40wksd",
+      "latest_data_weekdate", "is_stale", "missing_reason", "missing_weekdate"
+    ],
+    exampleObject: {
+      request_id: "req_demo",
+      symbol_exchange: "SAMPLE-N",
+      weekdate: "YYYY-MM-DD",
+      x13wk: 0,
+      x13wksd: 1
+    },
+    notesLength: 5,
+    relatedEndpoints: [
+      "/v1/meta/inference", "/v1/meta/stim", "/v1/indicators/latest",
+      "/v1/stim/history", "/v1/selections/published/latest"
+    ],
+    nextRecommendedCalls: [
+      "/v1/meta/inference", "/v1/meta/stim", "/v1/decision/evaluate-symbol",
+      "/v1/portfolio/construct"
+    ]
+  },
+  "/v1/stim/history": {
+    category: "stim",
+    pricingRuleId: "stim_history_paid",
+    analyticalRole: "probabilistic_forward_inference",
+    flavor: "stim",
+    requiredInputs: ["symbol_exchange"],
+    optionalInputs: ["symbol", "exchange", "start", "end", "limit", "include_gaps"],
+    safeQuery: { symbol_exchange: "string", limit: "integer" },
+    responseShape: [
+      "request_id", "symbol_exchange", "start", "end", "count", "data",
+      "include_gaps", "gaps"
+    ],
+    exampleObject: {
+      request_id: "req_demo",
+      symbol_exchange: "SAMPLE-N",
+      count: 1,
+      data: [{ weekdate: "YYYY-MM-DD", x13wk: 0, x13wksd: 1 }]
+    },
+    notesLength: 4,
+    relatedEndpoints: [
+      "/v1/meta/inference", "/v1/meta/stim", "/v1/stim/latest",
+      "/v1/indicators/history"
+    ],
+    nextRecommendedCalls: [
+      "/v1/meta/inference", "/v1/meta/stim", "/v1/indicators/history",
+      "/v1/decision/evaluate-symbol"
+    ]
+  },
+  "/v1/indicators/latest": {
+    category: "indicators",
+    pricingRuleId: "indicators_latest_paid",
+    analyticalRole: "symbol_signal_intelligence",
+    flavor: "provenance",
+    requiredInputs: ["symbol_exchange"],
+    optionalInputs: ["symbol", "exchange", "cs_only"],
+    safeQuery: { symbol_exchange: "string", cs_only: "boolean" },
+    responseShape: [
+      "request_id", "symbol_exchange", "weekdate", "exchange", "symbol", "type",
+      "currency_code", "trend", "trend_cnt", "mt_cnt", "prev_mtcnt", "rsi",
+      "rsi_updn", "vol_tag", "rvol", "atv", "fpr_chg1", "fpr_chg2",
+      "fpr_chg4", "fpr_chg13", "fpr_chg40", "pr_chg13", "pr_change",
+      "shortavg", "longavg", "yr_hi", "yr_lo"
+    ],
+    exampleObject: {
+      request_id: "req_demo",
+      symbol_exchange: "SAMPLE-N",
+      weekdate: "YYYY-MM-DD",
+      trend: "^+",
+      trend_cnt: 8,
+      mt_cnt: 12,
+      rsi: 118,
+      rsi_updn: "+",
+      vol_tag: "*"
+    },
+    notesLength: 6,
+    relatedEndpoints: ["/v1/indicators/history", "/v1/stim/latest", "/v1/selections/history"],
+    nextRecommendedCalls: ["/v1/indicators/history", "/v1/stim/latest"]
+  },
+  "/v1/indicators/history": {
+    category: "indicators",
+    pricingRuleId: "indicators_history_paid",
+    analyticalRole: "symbol_signal_intelligence",
+    flavor: "provenance",
+    requiredInputs: ["symbol_exchange"],
+    optionalInputs: ["symbol", "exchange", "cs_only", "start", "end", "limit"],
+    safeQuery: { symbol_exchange: "string", limit: "integer", cs_only: "boolean" },
+    responseShape: [
+      "request_id", "symbol_exchange", "cs_only", "start", "end", "count",
+      "data[].weekdate", "data[].exchange", "data[].symbol", "data[].symbol_exchange",
+      "data[].trend", "data[].trend_cnt", "data[].mt_cnt", "data[].rsi",
+      "data[].rsi_updn", "data[].vol_tag", "data[].pr_change"
+    ],
+    exampleObject: {
+      request_id: "req_demo",
+      symbol_exchange: "SAMPLE-N",
+      count: 1,
+      data: [{
+        weekdate: "YYYY-MM-DD",
+        symbol_exchange: "SAMPLE-N",
+        trend: "^-",
+        trend_cnt: 4,
+        mt_cnt: 11,
+        rsi: 104,
+        rsi_updn: "-",
+        vol_tag: ""
+      }]
+    },
+    notesLength: 4,
+    relatedEndpoints: ["/v1/indicators/latest", "/v1/stim/history", "/v1/prices/history"],
+    nextRecommendedCalls: ["/v1/stim/history", "/v1/decision/evaluate-symbol"]
+  },
+  "/v1/selections/latest": {
+    category: "selections",
+    pricingRuleId: "selections_latest_paid",
+    analyticalRole: "probabilistic_selection_universe",
+    flavor: "selection",
+    requiredInputs: [],
+    optionalInputs: ["exchange", "min_prob13wk", "limit", "include_data", "include_mast", "cs_only"],
+    safeQuery: { limit: "integer", include_data: "boolean" },
+    responseShape: [
+      "request_id", "weekdate", "exchange", "min_prob13wk", "include_data",
+      "include_mast", "cs_only", "count", "data[].weekdate", "data[].exchange",
+      "data[].symbol", "data[].prob13wk", "data[].symbol_exchange"
+    ],
+    exampleObject: {
+      request_id: "req_demo",
+      weekdate: "YYYY-MM-DD",
+      count: 1,
+      data: [{ symbol_exchange: "SAMPLE-N", prob13wk: 0 }]
+    },
+    notesLength: 2,
+    relatedEndpoints: ["/v1/selections/published/latest", "/v1/selections/history"],
+    nextRecommendedCalls: ["/v1/selections/published/latest", "/v1/indicators/latest"]
+  },
+  "/v1/market/regime/latest": {
+    category: "market",
+    pricingRuleId: "market_regime_latest",
+    analyticalRole: "market_regime_classifier",
+    flavor: "market",
+    requiredInputs: [],
+    optionalInputs: [],
+    safeQuery: {},
+    responseShape: [
+      "regime", "confidence", "regime_score", "bullish_pct", "bearish_pct",
+      "avg_rsi", "avg_mt_cnt", "weekdate", "signal_count"
+    ],
+    exampleObject: {
+      regime: "mixed",
+      confidence: 0,
+      regime_score: 0,
+      weekdate: "YYYY-MM-DD"
+    },
+    notesLength: 1,
+    relatedEndpoints: ["/v1/market/regime/history", "/v1/market/regime/forecast"],
+    nextRecommendedCalls: ["/v1/market/regime/forecast", "/v1/decision/evaluate-symbol"]
+  },
+  "/v1/market/regime/history": {
+    category: "market",
+    pricingRuleId: "market_regime_history",
+    analyticalRole: "market_regime_classifier",
+    flavor: "market",
+    requiredInputs: [],
+    optionalInputs: ["limit", "start"],
+    safeQuery: { limit: "integer" },
+    responseShape: [
+      "history[].weekdate", "history[].regime", "history[].confidence",
+      "history[].regime_score", "history[].bullish_pct", "history[].bearish_pct",
+      "history[].avg_rsi", "history[].avg_mt_cnt", "history[].signal_count",
+      "count", "limit", "start_date"
+    ],
+    exampleObject: {
+      history: [{ weekdate: "YYYY-MM-DD", regime: "mixed", regime_score: 0 }],
+      count: 1
+    },
+    notesLength: 1,
+    relatedEndpoints: ["/v1/market/regime/latest", "/v1/market/regime/forecast"],
+    nextRecommendedCalls: ["/v1/market/regime/forecast"]
+  },
+  "/v1/breadth/sector/latest": {
+    category: "breadth",
+    pricingRuleId: "breadth_sector_latest_paid",
+    analyticalRole: "market_breadth_context",
+    flavor: "provenance",
+    requiredInputs: [],
+    optionalInputs: [
+      "group_level", "exchange", "weekdate", "cs_only", "include_unknown",
+      "min_price", "min_volume", "vol_scale", "limit"
+    ],
+    safeQuery: { group_level: "string", limit: "integer" },
+    responseShape: [
+      "request_id", "group_level", "exchange", "weekdate", "cs_only",
+      "include_unknown", "count", "data[].sector_code", "data[].sector_name",
+      "data[].industry_group_code", "data[].industry_group_name",
+      "data[].industry_code", "data[].industry_name", "data[].bullish_count",
+      "data[].bearish_count", "data[].bullish_pct", "data[].bearish_pct",
+      "data[].avg_rsi", "data[].avg_mt_cnt", "data[].net_breadth"
+    ],
+    exampleObject: {
+      request_id: "req_demo",
+      group_level: "sector",
+      weekdate: "YYYY-MM-DD",
+      count: 1,
+      data: [{
+        sector_code: "SAMPLE",
+        sector_name: "Sample Sector",
+        bullish_count: 0,
+        bearish_count: 0,
+        bullish_pct: 0,
+        bearish_pct: 0,
+        avg_rsi: 100,
+        net_breadth: 0
+      }]
+    },
+    notesLength: 1,
+    relatedEndpoints: ["/v1/breadth/sector/history", "/v1/market/regime/latest"],
+    nextRecommendedCalls: ["/v1/market/regime/latest", "/v1/leadership/summary/latest"]
+  },
+  "/v1/leadership/summary/latest": {
+    category: "leadership",
+    pricingRuleId: "leadership_summary_latest_paid",
+    analyticalRole: "leadership_intelligence",
+    flavor: "provenance",
+    requiredInputs: [],
+    optionalInputs: [
+      "exchange", "weekdate", "type", "min_rsi", "min_mt_cnt",
+      "limit_overall", "limit_bucket"
+    ],
+    safeQuery: { exchange: "string", type: "string", min_rsi: "integer", min_mt_cnt: "integer" },
+    responseShape: [
+      "request_id", "weekdate", "exchange", "filters.type", "filters.min_rsi",
+      "filters.min_mt_cnt", "overall_leaders[].symbol", "overall_leaders[].exchange",
+      "overall_leaders[].rsi", "overall_leaders[].mt_cnt", "overall_leaders[].trend",
+      "overall_leaders[].trend_cnt", "overall_leaders[].rsi_updn",
+      "overall_leaders[].sector_name", "overall_leaders[].industry_group_name",
+      "sector_leaders[].symbol", "sector_leaders[].sector_name",
+      "industry_group_leaders[].symbol", "industry_group_leaders[].industry_group_name", "note"
+    ],
+    exampleObject: {
+      request_id: "req_demo",
+      weekdate: "YYYY-MM-DD",
+      exchange: "N",
+      filters: { type: "CS", min_rsi: 40, min_mt_cnt: 4 },
+      overall_leaders: [{
+        symbol: "SAMPLE",
+        exchange: "N",
+        rsi: 118,
+        mt_cnt: 10,
+        trend: "^+",
+        trend_cnt: 6,
+        sector_name: "Sample Sector"
+      }],
+      sector_leaders: [],
+      industry_group_leaders: []
+    },
+    notesLength: 2,
+    relatedEndpoints: [
+      "/v1/breadth/sector/latest", "/v1/market/regime/latest",
+      "/v1/leadership/rotation/history"
+    ],
+    nextRecommendedCalls: ["/v1/market/regime/latest", "/v1/indicators/latest"]
+  }
+});
 
 type JsonPathSegment = string | number;
 type ExtensionSemanticContext = "generic" | "bazaar_extensions";
@@ -1146,14 +1472,15 @@ function validateCanonicalLiveChallenge(
   if (!X402_LIVE_CHALLENGE_TOP_LEVEL_BODY_KEYS.every((key) => hasOwn(body, key))) {
     return "x402_live_challenge_unexpected_shape";
   }
+  if (!hasOwn(body, "stocktrends_preview")) {
+    return "x402_live_challenge_unexpected_shape";
+  }
 
   if (
     body.error !== "payment_required" ||
     body.detail !== "Payment is required to access this endpoint." ||
     body.protocol !== "x402" ||
-    !Array.isArray(body.accepted_payment_methods) ||
-    body.accepted_payment_methods.length !== 1 ||
-    body.accepted_payment_methods[0] !== "x402"
+    !isApprovedDescriptivePaymentMethodsForRoute(endpointPath, body.accepted_payment_methods)
   ) {
     return "x402_live_challenge_value_not_approved";
   }
@@ -1251,17 +1578,38 @@ function validateCanonicalLiveChallenge(
     return "x402_live_challenge_value_not_approved";
   }
 
-  if (hasOwn(body, "stocktrends_preview")) {
-    const previewValidation = validateExtensionContainer(body.stocktrends_preview);
-    if (previewValidation === "prohibited") {
-      return "x402_live_challenge_prohibited_material";
-    }
-    if (previewValidation !== "ok") {
-      return "x402_live_challenge_value_not_approved";
-    }
+  const previewValidation = validateStocktrendsPreview(body.stocktrends_preview, endpointPath);
+  if (previewValidation === "prohibited") {
+    return "x402_live_challenge_prohibited_material";
+  }
+  if (previewValidation !== "ok") {
+    return "x402_live_challenge_value_not_approved";
   }
 
   return null;
+}
+
+function isApprovedDescriptivePaymentMethodsForRoute(
+  endpointPath: string,
+  value: unknown
+): value is string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > X402_DESCRIPTIVE_PAYMENT_METHODS_MAX_LENGTH ||
+    value.some((rail) => typeof rail !== "string" || rail.length === 0) ||
+    new Set(value).size !== value.length ||
+    !value.includes("x402")
+  ) {
+    return false;
+  }
+
+  const expected = X402_DESCRIPTIVE_PAYMENT_METHODS_BY_ROUTE[endpointPath];
+  return (
+    expected !== undefined &&
+    expected.length === value.length &&
+    expected.every((rail, index) => value[index] === rail)
+  );
 }
 
 function isApprovedResourceInfo(value: unknown): value is Record<string, unknown> {
@@ -1411,6 +1759,636 @@ function validateExtensionContainer(
   }
 
   return jsonUtf8ByteLength(value) <= X402_EXTENSION_MAX_TOTAL_BYTES ? "ok" : "invalid";
+}
+
+function validateStocktrendsPreview(
+  value: unknown,
+  endpointPath: string
+): ExtensionValidationResult {
+  const contract = X402_PREVIEW_ROUTE_CONTRACTS[endpointPath];
+  if (contract === undefined || !isPlainRecord(value)) {
+    return "invalid";
+  }
+
+  const bounds = scanBoundedStocktrendsPreview(value);
+  if (bounds !== "ok") {
+    return bounds;
+  }
+
+  if (!isApprovedStocktrendsPreviewSchema(value, endpointPath, contract)) {
+    return hasProhibitedStocktrendsPreviewMaterial(value, endpointPath)
+      ? "prohibited"
+      : "invalid";
+  }
+
+  return "ok";
+}
+
+function scanBoundedStocktrendsPreview(value: Record<string, unknown>): ExtensionValidationResult {
+  let totalMembers = 0;
+  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.depth > X402_PREVIEW_MAX_DEPTH) {
+      return "invalid";
+    }
+
+    if (current.value === null || typeof current.value === "boolean") {
+      continue;
+    }
+    if (typeof current.value === "number") {
+      if (!Number.isFinite(current.value)) return "invalid";
+      continue;
+    }
+    if (typeof current.value === "string") {
+      if (!isBoundedUtf8String(current.value, 0, X402_PREVIEW_MAX_STRING_BYTES)) {
+        return "invalid";
+      }
+      if (hasForbiddenLiveString(current.value)) {
+        return "prohibited";
+      }
+      continue;
+    }
+
+    if (Array.isArray(current.value)) {
+      if (current.value.length > X402_PREVIEW_MAX_ARRAY_LENGTH) {
+        return "invalid";
+      }
+      totalMembers += current.value.length;
+      if (totalMembers > X402_PREVIEW_MAX_TOTAL_MEMBERS) {
+        return "invalid";
+      }
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: current.value[index], depth: current.depth + 1 });
+      }
+      continue;
+    }
+
+    if (!isPlainRecord(current.value)) {
+      return "invalid";
+    }
+    const entries = Object.entries(current.value);
+    if (entries.length > X402_PREVIEW_MAX_OBJECT_MEMBERS) {
+      return "invalid";
+    }
+    totalMembers += entries.length;
+    if (totalMembers > X402_PREVIEW_MAX_TOTAL_MEMBERS) {
+      return "invalid";
+    }
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      if (
+        !isBoundedUtf8String(key, 1, X402_PREVIEW_MAX_KEY_BYTES) ||
+        X402_PROTOTYPE_POLLUTION_KEYS.has(key.toLowerCase())
+      ) {
+        return "invalid";
+      }
+      stack.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+
+  return jsonUtf8ByteLength(value) <= X402_PREVIEW_MAX_TOTAL_BYTES ? "ok" : "invalid";
+}
+
+function isApprovedStocktrendsPreviewSchema(
+  preview: Record<string, unknown>,
+  endpointPath: string,
+  contract: PreviewRouteContract
+): boolean {
+  const rootKeys = [
+    "endpoint",
+    "investment_agent_value",
+    "supported_rails",
+    "input_rule",
+    "input_location",
+    "parameter_source",
+    "required_inputs",
+    "optional_inputs",
+    "safe_example_request",
+    "response_shape",
+    "example_object",
+    "output_summary",
+    "notes",
+    "related_endpoints",
+    "next_recommended_calls",
+    "pricing",
+    "analytical_role",
+    ...(contract.flavor === "stim"
+      ? [
+          "interpretation_dependency",
+          "interpretation_guidance",
+          "required_interpretation_steps",
+          "inference_contract",
+          "inference_provider",
+          "cognition_architecture"
+        ]
+      : contract.flavor === "selection"
+        ? ["inference_contract", "inference_provider", "cognition_architecture", "provenance_reference"]
+        : contract.flavor === "market"
+          ? ["interpretation_guidance", "provenance_reference"]
+          : ["provenance_reference"])
+  ];
+  if (!hasExactObjectKeys(preview, rootKeys)) {
+    return false;
+  }
+
+  if (
+    !isApprovedPreviewEndpoint(preview.endpoint, endpointPath, contract.category) ||
+    !isBoundedUtf8String(preview.investment_agent_value, 1, X402_PREVIEW_MAX_STRING_BYTES) ||
+    !hasExactStringArray(preview.supported_rails, X402_SOURCE_PAYMENT_METHODS) ||
+    (contract.requiredInputs.length > 0
+      ? !isBoundedUtf8String(preview.input_rule, 1, X402_PREVIEW_MAX_STRING_BYTES)
+      : preview.input_rule !== null) ||
+    preview.input_location !== "query" ||
+    preview.parameter_source !== "query" ||
+    !isApprovedPreviewInputs(preview.required_inputs, contract.requiredInputs, true, endpointPath) ||
+    !isApprovedPreviewInputs(preview.optional_inputs, contract.optionalInputs, false, endpointPath) ||
+    !isApprovedPreviewSafeRequest(preview.safe_example_request, endpointPath, contract.safeQuery) ||
+    !hasExactStringArray(preview.response_shape, contract.responseShape) ||
+    !jsonStructuralEqual(preview.example_object, contract.exampleObject) ||
+    !isBoundedUtf8String(preview.output_summary, 1, X402_PREVIEW_MAX_STRING_BYTES) ||
+    !hasBoundedStringArray(preview.notes, contract.notesLength) ||
+    !hasExactStringArray(preview.related_endpoints, contract.relatedEndpoints) ||
+    !hasExactStringArray(preview.next_recommended_calls, contract.nextRecommendedCalls) ||
+    !isApprovedPreviewPricing(preview.pricing, contract.pricingRuleId) ||
+    preview.analytical_role !== contract.analyticalRole
+  ) {
+    return false;
+  }
+
+  if (contract.flavor === "stim") {
+    return (
+      isApprovedStimInterpretationDependency(preview.interpretation_dependency) &&
+      isApprovedStimInterpretationGuidance(preview.interpretation_guidance) &&
+      hasBoundedStringArray(preview.required_interpretation_steps, 10) &&
+      isApprovedInferenceContract(preview.inference_contract) &&
+      isApprovedInferenceProvider(preview.inference_provider) &&
+      preview.cognition_architecture === "docs/STOCK_TRENDS_COGNITION_ARCHITECTURE.md"
+    );
+  }
+  if (contract.flavor === "selection") {
+    return (
+      isApprovedInferenceContract(preview.inference_contract) &&
+      isApprovedInferenceProvider(preview.inference_provider) &&
+      preview.cognition_architecture === "docs/STOCK_TRENDS_COGNITION_ARCHITECTURE.md" &&
+      isApprovedProvenanceReference(preview.provenance_reference)
+    );
+  }
+  if (contract.flavor === "market") {
+    return (
+      isApprovedMarketInterpretationGuidance(preview.interpretation_guidance) &&
+      isApprovedProvenanceReference(preview.provenance_reference)
+    );
+  }
+  return isApprovedProvenanceReference(preview.provenance_reference);
+}
+
+function isApprovedPreviewEndpoint(value: unknown, endpointPath: string, category: string): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactObjectKeys(value, [
+      "method", "path", "purpose", "category", "workflow_role", "access_type", "requires_payment"
+    ]) &&
+    value.method === "GET" &&
+    value.path === endpointPath &&
+    isBoundedUtf8String(value.purpose, 1, X402_PREVIEW_MAX_STRING_BYTES) &&
+    value.category === category &&
+    isBoundedUtf8String(value.workflow_role, 1, X402_PREVIEW_MAX_STRING_BYTES) &&
+    value.access_type === "paid" &&
+    value.requires_payment === true
+  );
+}
+
+function isApprovedPreviewInputs(
+  value: unknown,
+  expectedNames: readonly string[],
+  required: boolean,
+  endpointPath: string
+): boolean {
+  if (!isPlainRecord(value) || !hasExactObjectKeys(value, expectedNames)) {
+    return false;
+  }
+  return expectedNames.every((name) =>
+    isApprovedPreviewInputDescriptor(value[name], name, required, endpointPath)
+  );
+}
+
+function isApprovedPreviewInputDescriptor(
+  value: unknown,
+  inputName: string,
+  required: boolean,
+  endpointPath: string
+): boolean {
+  const keys = previewInputDescriptorKeys(inputName, endpointPath);
+  const expectedType = previewInputType(inputName);
+  if (
+    keys === null ||
+    expectedType === null ||
+    !isPlainRecord(value) ||
+    !hasExactObjectKeys(value, keys) ||
+    value.type !== expectedType ||
+    value.required !== required ||
+    value.input_location !== "query" ||
+    value.parameter_source !== "query"
+  ) {
+    return false;
+  }
+
+  for (const key of keys) {
+    const child = value[key];
+    if (["type", "required", "input_location", "parameter_source"].includes(key)) {
+      continue;
+    }
+    if (key === "description" && !isBoundedUtf8String(child, 1, X402_PREVIEW_MAX_STRING_BYTES)) {
+      return false;
+    }
+    if (key === "pattern" && child !== "^[A-Z0-9.]+-[A-Z]$") {
+      return false;
+    }
+    if (key === "format" && child !== "date") {
+      return false;
+    }
+    if (key === "enum") {
+      const expected = inputName === "group_level"
+        ? ["sector", "industry_group", "industry"]
+        : ["N", "Q", "A", "B", "T", "I"];
+      if (!hasExactStringArray(child, expected)) return false;
+    }
+    if (["example", "safe_default", "safe_default_for_demo"].includes(key)) {
+      if (!isApprovedPreviewScalar(child, expectedType)) return false;
+    }
+    if (["minimum", "maximum"].includes(key) && (typeof child !== "number" || !Number.isFinite(child))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function previewInputType(inputName: string): PreviewScalarType | null {
+  if ([
+    "symbol_exchange", "symbol", "exchange", "start", "end", "weekdate",
+    "group_level", "type"
+  ].includes(inputName)) return "string";
+  if (["min_prob13wk", "min_price"].includes(inputName)) return "number";
+  if ([
+    "limit", "min_volume", "vol_scale", "min_rsi", "min_mt_cnt",
+    "limit_overall", "limit_bucket"
+  ].includes(inputName)) return "integer";
+  if (["cs_only", "include_gaps", "include_data", "include_mast", "include_unknown"].includes(inputName)) {
+    return "boolean";
+  }
+  return null;
+}
+
+function previewInputDescriptorKeys(inputName: string, endpointPath: string): readonly string[] | null {
+  const locationKeys = ["input_location", "parameter_source"];
+  switch (inputName) {
+    case "symbol_exchange":
+      return ["type", "required", "example", "safe_default_for_demo", "pattern", "description", ...locationKeys];
+    case "symbol":
+      return ["type", "required", "example", "description", ...locationKeys];
+    case "exchange":
+      return ["type", "required", "enum", "example", "description", ...locationKeys];
+    case "cs_only":
+      return ["type", "required", "safe_default", "example", "description", ...locationKeys];
+    case "start":
+    case "end":
+      return ["type", "required", "format", "example", "description", ...locationKeys];
+    case "weekdate":
+      return endpointPath === "/v1/breadth/sector/latest"
+        ? ["type", "required", "format", "description", ...locationKeys]
+        : ["type", "required", "format", "example", "description", ...locationKeys];
+    case "limit":
+      return ["/v1/stim/history", "/v1/indicators/history"].includes(endpointPath)
+        ? ["type", "required", "safe_default", "minimum", "maximum", "example", "description", ...locationKeys]
+        : ["type", "required", "safe_default", "minimum", "maximum", ...locationKeys];
+    case "include_gaps":
+    case "include_data":
+    case "include_mast":
+    case "include_unknown":
+      return ["type", "required", "safe_default", ...locationKeys];
+    case "group_level":
+      return ["type", "required", "enum", "safe_default", ...locationKeys];
+    case "min_price":
+    case "min_volume":
+      return ["type", "required", "minimum", ...locationKeys];
+    case "vol_scale":
+      return ["type", "required", "safe_default", "minimum", ...locationKeys];
+    case "min_prob13wk":
+      return ["type", "required", "example", "description", ...locationKeys];
+    case "type":
+      return ["type", "required", "safe_default", "example", "description", ...locationKeys];
+    case "min_rsi":
+    case "min_mt_cnt":
+      return ["type", "required", "safe_default", "minimum", "maximum", "example", "description", ...locationKeys];
+    case "limit_overall":
+    case "limit_bucket":
+      return ["type", "required", "safe_default", "minimum", "maximum", "example", ...locationKeys];
+    default:
+      return null;
+  }
+}
+
+function isApprovedPreviewScalar(value: unknown, type: PreviewScalarType): boolean {
+  if (type === "string") return isBoundedUtf8String(value, 0, X402_PREVIEW_MAX_STRING_BYTES);
+  if (type === "boolean") return typeof value === "boolean";
+  if (type === "integer") return typeof value === "number" && Number.isSafeInteger(value);
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isApprovedPreviewSafeRequest(
+  value: unknown,
+  endpointPath: string,
+  safeQuery: Readonly<Record<string, PreviewScalarType>>
+): boolean {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactObjectKeys(value, ["method", "path", "query"]) ||
+    value.method !== "GET" ||
+    value.path !== endpointPath ||
+    !isPlainRecord(value.query) ||
+    !hasExactObjectKeys(value.query, Object.keys(safeQuery))
+  ) {
+    return false;
+  }
+  return Object.entries(safeQuery).every(([key, type]) =>
+    isApprovedPreviewScalar((value.query as Record<string, unknown>)[key], type)
+  );
+}
+
+function isApprovedPreviewPricing(value: unknown, pricingRuleId: string): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactObjectKeys(value, ["pricing_rule_id", "stc_cost", "effective_price_usd", "unit", "cost_source"]) &&
+    value.pricing_rule_id === pricingRuleId &&
+    isCanonicalPositiveFixedSix(value.stc_cost) &&
+    isCanonicalPositiveFixedSix(value.effective_price_usd) &&
+    value.unit === "request" &&
+    value.cost_source === "/v1/pricing/catalog"
+  );
+}
+
+function hasExactStringArray(value: unknown, expected: readonly string[]): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length === expected.length &&
+    value.every((entry, index) => entry === expected[index])
+  );
+}
+
+function hasBoundedStringArray(value: unknown, expectedLength: number): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length === expectedLength &&
+    value.every((entry) => isBoundedUtf8String(entry, 1, X402_PREVIEW_MAX_STRING_BYTES))
+  );
+}
+
+function isApprovedProvenanceReference(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactObjectKeys(value, [
+      "historical_coverage_start_year",
+      "approximate_observation_count",
+      "classification_framework",
+      "semantic_continuity",
+      "full_metadata_endpoints",
+      "interpretation_limit"
+    ]) &&
+    value.historical_coverage_start_year === 1980 &&
+    value.approximate_observation_count === "16M+" &&
+    isBoundedUtf8String(value.classification_framework, 1, X402_PREVIEW_MAX_STRING_BYTES) &&
+    isBoundedUtf8String(value.semantic_continuity, 1, X402_PREVIEW_MAX_STRING_BYTES) &&
+    hasExactStringArray(value.full_metadata_endpoints, [
+      "/v1/ai/context", "/v1/meta/indicators", "/v1/meta/stim"
+    ]) &&
+    isBoundedUtf8String(value.interpretation_limit, 1, X402_PREVIEW_MAX_STRING_BYTES)
+  );
+}
+
+function isApprovedInferenceContract(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactObjectKeys(value, ["endpoint", "provider_agnostic", "core_concepts"]) &&
+    value.endpoint === "/v1/meta/inference" &&
+    value.provider_agnostic === true &&
+    hasExactStringArray(value.core_concepts, [
+      "inference_provider",
+      "forecast_horizon",
+      "probability_distribution",
+      "confidence_measure",
+      "evidence",
+      "uncertainty",
+      "explanation",
+      "signal_source",
+      "reasoning_interpretation"
+    ])
+  );
+}
+
+function isApprovedInferenceProvider(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactObjectKeys(value, [
+      "provider_id",
+      "provider_name",
+      "provider_role",
+      "provider_profile_endpoint",
+      "not_final_intelligence_layer",
+      "future_causal_ai_compatible"
+    ]) &&
+    value.provider_id === "stim" &&
+    value.provider_name === "Stock Trends Inference Model" &&
+    value.provider_role === "current_baseline_inference_provider" &&
+    value.provider_profile_endpoint === "/v1/meta/stim" &&
+    value.not_final_intelligence_layer === true &&
+    value.future_causal_ai_compatible === true
+  );
+}
+
+function isApprovedStimInterpretationDependency(value: unknown): boolean {
+  return (
+    isPlainRecord(value) &&
+    hasExactObjectKeys(value, [
+      "endpoint",
+      "method",
+      "required_before_interpretation",
+      "reason",
+      "inference_contract_endpoint",
+      "cognition_architecture"
+    ]) &&
+    value.endpoint === "/v1/meta/stim" &&
+    value.method === "GET" &&
+    value.required_before_interpretation === true &&
+    isBoundedUtf8String(value.reason, 1, X402_PREVIEW_MAX_STRING_BYTES) &&
+    value.inference_contract_endpoint === "/v1/meta/inference" &&
+    value.cognition_architecture === "docs/STOCK_TRENDS_COGNITION_ARCHITECTURE.md"
+  );
+}
+
+function isApprovedStimInterpretationGuidance(value: unknown): boolean {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactObjectKeys(value, [
+      "inference_contract_endpoint",
+      "inference_provider",
+      "base_period_mean_returns_pct",
+      "mean_return_fields",
+      "standard_deviation_fields",
+      "calculation",
+      "interpretation_rules",
+      "randomness_assumptions",
+      "distribution_framing",
+      "classification_role",
+      "limitations",
+      "portfolio_applications",
+      "stim_select_style_logic"
+    ]) ||
+    value.inference_contract_endpoint !== "/v1/meta/inference" ||
+    !isPlainRecord(value.inference_provider) ||
+    !hasExactObjectKeys(value.inference_provider, [
+      "provider_id", "provider_role", "not_final_intelligence_layer", "profile_endpoint"
+    ]) ||
+    value.inference_provider.provider_id !== "stim" ||
+    value.inference_provider.provider_role !== "current_baseline_inference_provider" ||
+    value.inference_provider.not_final_intelligence_layer !== true ||
+    value.inference_provider.profile_endpoint !== "/v1/meta/stim" ||
+    !isPlainRecord(value.base_period_mean_returns_pct) ||
+    !hasExactObjectKeys(value.base_period_mean_returns_pct, ["x4wk", "x13wk", "x40wk"]) ||
+    !Object.values(value.base_period_mean_returns_pct).every((entry) =>
+      isBoundedUtf8String(entry, 1, X402_PREVIEW_MAX_STRING_BYTES)
+    ) ||
+    !hasExactStringArray(value.mean_return_fields, ["x4wk", "x13wk", "x40wk"]) ||
+    !hasExactStringArray(value.standard_deviation_fields, ["x4wksd", "x13wksd", "x40wksd"]) ||
+    !isPlainRecord(value.calculation) ||
+    !hasExactObjectKeys(value.calculation, ["delta_vs_base", "z", "probability_outperform"]) ||
+    !Object.values(value.calculation).every((entry) =>
+      isBoundedUtf8String(entry, 1, X402_PREVIEW_MAX_STRING_BYTES)
+    ) ||
+    !hasBoundedStringArray(value.interpretation_rules, 6) ||
+    !hasBoundedStringArray(value.randomness_assumptions, 3) ||
+    !isPlainRecord(value.distribution_framing) ||
+    !hasExactObjectKeys(value.distribution_framing, [
+      "assumption", "central_limit_theorem_intuition", "probability_formula"
+    ]) ||
+    !Object.values(value.distribution_framing).every((entry) =>
+      isBoundedUtf8String(entry, 1, X402_PREVIEW_MAX_STRING_BYTES)
+    ) ||
+    !isBoundedUtf8String(value.classification_role, 1, X402_PREVIEW_MAX_STRING_BYTES) ||
+    !hasBoundedStringArray(value.limitations, 7) ||
+    !hasBoundedStringArray(value.portfolio_applications, 6) ||
+    !isPlainRecord(value.stim_select_style_logic) ||
+    !hasExactObjectKeys(value.stim_select_style_logic, [
+      "prob13wk_minimum", "prob13wk_minimum_description", "lower_confidence_bounds"
+    ]) ||
+    value.stim_select_style_logic.prob13wk_minimum !== 0.55 ||
+    !isBoundedUtf8String(
+      value.stim_select_style_logic.prob13wk_minimum_description,
+      1,
+      X402_PREVIEW_MAX_STRING_BYTES
+    ) ||
+    !isBoundedUtf8String(
+      value.stim_select_style_logic.lower_confidence_bounds,
+      1,
+      X402_PREVIEW_MAX_STRING_BYTES
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isApprovedMarketInterpretationGuidance(value: unknown): boolean {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactObjectKeys(value, [
+      "regime_score_scale", "interpretation_rules", "downstream_workflow", "confirmation_endpoints"
+    ]) ||
+    !isPlainRecord(value.regime_score_scale)
+  ) {
+    return false;
+  }
+  const scale = value.regime_score_scale;
+  return (
+    hasExactObjectKeys(scale, [
+      "range", "formula", "strong_bullish", "mixed", "strong_bearish"
+    ]) &&
+    Array.isArray(scale.range) &&
+    scale.range.length === 2 &&
+    scale.range[0] === -1 &&
+    scale.range[1] === 1 &&
+    ["formula", "strong_bullish", "mixed", "strong_bearish"].every((key) =>
+      isBoundedUtf8String(scale[key], 1, X402_PREVIEW_MAX_STRING_BYTES)
+    ) &&
+    hasBoundedStringArray(value.interpretation_rules, 5) &&
+    isBoundedUtf8String(value.downstream_workflow, 1, X402_PREVIEW_MAX_STRING_BYTES) &&
+    hasExactStringArray(value.confirmation_endpoints, [
+      "/v1/breadth/sector/latest", "/v1/leadership/summary/latest"
+    ])
+  );
+}
+
+function hasProhibitedStocktrendsPreviewMaterial(value: unknown, endpointPath: string): boolean {
+  const stack: Array<{ value: unknown; path: JsonPathSegment[] }> = [{ value, path: [] }];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (typeof current.value === "string") {
+      if (hasForbiddenLiveString(current.value)) return true;
+      continue;
+    }
+    if (Array.isArray(current.value)) {
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: current.value[index], path: [...current.path, index] });
+      }
+      continue;
+    }
+    if (!isPlainRecord(current.value)) continue;
+    const entries = Object.entries(current.value);
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index];
+      const childPath = [...current.path, key];
+      if (
+        !isApprovedPreviewProtectedRole(childPath, child, endpointPath) &&
+        isProhibitedExtensionKey(key, childPath, "generic", child, value)
+      ) {
+        return true;
+      }
+      stack.push({ value: child, path: childPath });
+    }
+  }
+  return false;
+}
+
+function isApprovedPreviewProtectedRole(
+  path: readonly JsonPathSegment[],
+  value: unknown,
+  endpointPath: string
+): boolean {
+  if (
+    (pathsEqual(path, ["endpoint", "method"]) && value === "GET") ||
+    (pathsEqual(path, ["endpoint", "path"]) && value === endpointPath) ||
+    (pathsEqual(path, ["endpoint", "requires_payment"]) && value === true) ||
+    (pathsEqual(path, ["safe_example_request", "method"]) && value === "GET") ||
+    (pathsEqual(path, ["safe_example_request", "path"]) && value === endpointPath) ||
+    (pathsEqual(path, ["pricing"]) && isPlainRecord(value)) ||
+    (pathsEqual(path, ["interpretation_dependency", "method"]) && value === "GET") ||
+    (
+      pathsEqual(path, ["interpretation_guidance", "confirmation_endpoints"]) &&
+      hasExactStringArray(value, ["/v1/breadth/sector/latest", "/v1/leadership/summary/latest"])
+    )
+  ) {
+    return true;
+  }
+
+  if (path.length >= 2 && path[0] === "example_object") {
+    const expectedExample = X402_PREVIEW_ROUTE_CONTRACTS[endpointPath]?.exampleObject;
+    const expectedValue = expectedExample === undefined
+      ? undefined
+      : getJsonPathValue(expectedExample, path.slice(1));
+    return expectedValue !== undefined && jsonStructuralEqual(value, expectedValue);
+  }
+  return false;
 }
 
 function isProhibitedExtensionKey(
@@ -1977,7 +2955,7 @@ function approvedLiveTopLevelKeys(body: JsonObject | null): string[] {
   ];
 }
 
-function scanBoundedJsonTree(value: unknown): JsonTreeScanResult {
+function scanBoundedJsonTree(value: unknown, endpointPath?: string): JsonTreeScanResult {
   const result: JsonTreeScanResult = {
     valid: true,
     hasForbiddenMaterial: false,
@@ -2062,9 +3040,12 @@ function scanBoundedJsonTree(value: unknown): JsonTreeScanResult {
       }
       const childPath = [...current.path, key];
       const compactKey = tokenizeIdentifier(key).join("");
+      const previewOutputCandidate =
+        childPath[0] === "stocktrends_preview" && X402_PREVIEW_OUTPUT_SHAPE_KEYS.has(compactKey);
       if (
-        X402_PAID_OUTPUT_SHAPE_KEYS.has(compactKey) &&
-        !isApprovedFullResponseBazaarOutputCarrierPath(childPath, value)
+        (X402_PAID_OUTPUT_SHAPE_KEYS.has(compactKey) || previewOutputCandidate) &&
+        !isApprovedFullResponseBazaarOutputCarrierPath(childPath, value) &&
+        !isApprovedFullResponsePreviewOutputCarrierPath(childPath, value, endpointPath)
       ) {
         result.hasPaidOutput = true;
       }
@@ -2101,6 +3082,34 @@ function isApprovedFullResponseBazaarOutputCarrierPath(
     ) !== "not_approved";
   }
   return false;
+}
+
+function isApprovedFullResponsePreviewOutputCarrierPath(
+  path: readonly JsonPathSegment[],
+  responseRoot: unknown,
+  endpointPath: string | undefined
+): boolean {
+  if (
+    endpointPath === undefined ||
+    path[0] !== "stocktrends_preview" ||
+    path[1] !== "example_object"
+  ) {
+    return false;
+  }
+  const contract = X402_PREVIEW_ROUTE_CONTRACTS[endpointPath];
+  const actualExample = getJsonPathValue(responseRoot, ["stocktrends_preview", "example_object"]);
+  if (contract === undefined || !jsonStructuralEqual(actualExample, contract.exampleObject)) {
+    return false;
+  }
+
+  if (path.length === 2) {
+    return true;
+  }
+  const expectedValue = getJsonPathValue(contract.exampleObject, path.slice(2));
+  return expectedValue !== undefined && jsonStructuralEqual(
+    getJsonPathValue(responseRoot, path),
+    expectedValue
+  );
 }
 
 function hasForbiddenLiveResponseMaterial(value: unknown): boolean {
