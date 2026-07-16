@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Statically validates that every external package directly imported by
 // compiled runtime JavaScript under dist/ is declared in this package's
 // own "dependencies". Run with `npm run check:runtime-deps`.
