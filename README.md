@@ -620,3 +620,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Package Artifact and Installation Validation Architecture](docs/PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md)
 - [Package Runtime Dependency Contract Correction](docs/PACKAGE_RUNTIME_DEPENDENCY_CONTRACT_CORRECTION.md)
 - [Package Identity and License Decision Record](docs/PACKAGE_IDENTITY_AND_LICENSE_DECISION_RECORD.md)
+- [Package Metadata and Closed Artifact Allowlist Implementation](docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md)

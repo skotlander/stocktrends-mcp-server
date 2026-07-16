@@ -1,12 +1,29 @@
 {
   "name": "stocktrends-mcp-server",
   "version": "1.0.0",
-  "description": "Local stdio MCP adapter for public Stock Trends API resources.",
+  "description": "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.",
   "type": "module",
   "main": "dist/server.js",
   "types": "dist/server.d.ts",
   "bin": {
     "stocktrends-mcp-server": "dist/server.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skotlander/stocktrends-mcp-server.git"
+  },
+  "homepage": "https://github.com/skotlander/stocktrends-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/skotlander/stocktrends-mcp-server/issues"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -14,7 +31,8 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check:runtime-deps": "node scripts/check-runtime-dependency-contract.mjs"
+    "check:runtime-deps": "node scripts/check-runtime-dependency-contract.mjs",
+    "check:package-metadata": "node scripts/check-package-metadata.mjs"
   },
   "keywords": [
     "mcp",
