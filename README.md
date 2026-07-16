@@ -618,3 +618,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Phase 5F x402 Final-Response-Envelope Live Revalidation Report](docs/PHASE5F_X402_FINAL_RESPONSE_ENVELOPE_LIVE_REVALIDATION_REPORT.md)
 - [Phase 5F x402 Closure and Roadmap Handoff Memo](docs/PHASE5F_X402_CLOSURE_AND_HANDOFF_MEMO.md)
 - [Package Artifact and Installation Validation Architecture](docs/PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md)
+- [Package Runtime Dependency Contract Correction](docs/PACKAGE_RUNTIME_DEPENDENCY_CONTRACT_CORRECTION.md)
