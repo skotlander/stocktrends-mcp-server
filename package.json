@@ -20,8 +20,9 @@
     "mcp",
     "stocktrends"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Stocktrends Publications",
+  "license": "MIT",
+  "private": true,
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
