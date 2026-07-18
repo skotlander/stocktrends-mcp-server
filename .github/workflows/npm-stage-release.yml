@@ -1,0 +1,162 @@
+# ============================================================================
+# Release-publication workflow: manual, post-bootstrap, stage-only.
+#
+# WHAT THIS IS (and is not)
+#   This is the selected post-bootstrap release path for the public package
+#   @stocktrends-publications/stocktrends-mcp-server. It is INERT repository
+#   configuration. Merging this file does NOT configure npm trusted publishing,
+#   does NOT authorize a publication, and does NOT run anything. It cannot be
+#   triggered by an ordinary push, merge, pull request, schedule, or tag: its
+#   only event is `workflow_dispatch`, and it fails closed on a main-branch
+#   gate, an exact typed confirmation phrase, and an exact expected-version
+#   gate.
+#
+# POST-BOOTSTRAP ONLY -- DO NOT DISPATCH FOR THE INITIAL 1.0.0 RELEASE
+#   npm staged publishing (`npm stage publish`) and npm trusted publishing
+#   require the package to ALREADY EXIST on the npm registry. A brand-new
+#   package cannot be created through this staged path. Therefore:
+#     * The first version, 1.0.0, is a SEPARATE, owner-controlled, 2FA-protected
+#       MANUAL bootstrap publication. This workflow does not perform it and must
+#       not be dispatched before it.
+#     * This workflow must not be dispatched before BOTH the separately
+#       authorized 1.0.0 bootstrap publication AND the npm trusted-publisher
+#       configuration are complete.
+#
+# TRUSTED-PUBLISHER CONFIGURATION (a later, separate owner action)
+#   npm trusted publishing must later be configured on the package to trust
+#   EXACTLY this workflow, identified by its filename `npm-stage-release.yml`.
+#   That configuration must grant STAGE-ONLY permission (the `npm trust`
+#   `--allow-stage-publish` flag) and must NOT grant direct-publish permission:
+#   this workflow only ever runs `npm stage publish`, never a direct publish.
+#
+# STAGED APPROVAL IS A SEPARATE OWNER ACTION
+#   Submitting a staged package is not publishing it. A staged package becomes
+#   public only when a human maintainer reviews and approves it with two-factor
+#   authentication, via the npm CLI or npmjs.com. That approval is NOT part of
+#   this workflow and is not performed here (there is no approval step, and
+#   approval is not reachable through OIDC).
+#
+# TOKENLESS BY DESIGN
+#   Authentication is GitHub Actions OIDC (`id-token: write`). There is no
+#   NODE_AUTH_TOKEN, no npm token, no long-lived publication credential, and no
+#   GitHub secret reference anywhere in this file. A private source repository
+#   can still use trusted publishing; it simply does not receive automatic npm
+#   provenance attestations, which is an accepted limitation for this release.
+#
+# OUT OF SCOPE (never performed by this workflow)
+#   No direct `npm publish`; no staged approval/promotion; no GitHub Release;
+#   no repository write; no MCP Registry submission; no live Stock Trends API
+#   call; and no x402, proof, payment, settlement, or spend operation.
+# ============================================================================
+
+name: npm stage release (manual, post-bootstrap, stage-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: "Exact package version to stage; must equal package.json version (e.g. 1.0.0)."
+        required: true
+        type: string
+      confirm_phrase:
+        description: "Type STAGE_STOCKTRENDS_NPM_RELEASE exactly to proceed. Any other value fails closed."
+        required: true
+        type: string
+
+# Minimal permissions: checkout read access and OIDC token issuance only. No
+# repository write permission is granted.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  stage-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail closed unless dispatched from the main branch
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "Refusing to stage: this workflow may run only from refs/heads/main (got ${{ github.ref }})."
+            exit 1
+          fi
+
+      - name: Fail closed unless the exact confirmation phrase was supplied
+        run: |
+          if [ "${{ inputs.confirm_phrase }}" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]; then
+            echo "Refusing to stage: confirmation phrase did not match exactly."
+            exit 1
+          fi
+
+      - name: Checkout (read-only)
+        uses: actions/checkout@v4
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Ensure npm is at least 11.15.0 (staged-publishing floor)
+        run: |
+          npm install -g npm@^11.15.0
+          MIN="11.15.0"
+          CUR="$(npm --version)"
+          if [ "$(printf '%s\n%s\n' "$MIN" "$CUR" | sort -V | head -n1)" != "$MIN" ]; then
+            echo "Refusing to stage: npm $CUR is below the required $MIN floor."
+            exit 1
+          fi
+          echo "npm $CUR satisfies the $MIN floor."
+
+      - name: Install dependencies deterministically
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run the full test suite
+        run: npm test
+
+      - name: Validate the runtime dependency contract
+        run: npm run check:runtime-deps
+
+      - name: Validate package metadata and lockfile identity
+        run: npm run check:package-metadata
+
+      - name: Validate this release workflow's own publication controls
+        run: npm run check:release-workflow
+
+      - name: Verify package identity and the requested version before packing
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          node -e "const fs=require('node:fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));const name='@stocktrends-publications/stocktrends-mcp-server';const want=process.env.EXPECTED_VERSION;const e=[];if(pkg.name!==name)e.push('name '+pkg.name+' must be '+name);if(pkg.version!==want)e.push('version '+pkg.version+' must equal the requested '+want);if(Object.prototype.hasOwnProperty.call(pkg,'private'))e.push('private field must be absent');if(!pkg.publishConfig||pkg.publishConfig.access!=='public')e.push('publishConfig.access must be public');if(!pkg.publishConfig||pkg.publishConfig.registry!=='https://registry.npmjs.org/')e.push('publishConfig.registry must be the public npm registry');if(e.length){console.error(e.join('\n'));process.exit(1)}console.log('Verified '+name+'@'+pkg.version);"
+
+      # Bind the exact tarball to a single $TARBALL variable exported to
+      # $GITHUB_ENV, so the SHA-256 step, the allowlist validation, and the
+      # staging command all operate on the *same* created artifact -- never a
+      # re-globbed working-directory guess.
+      - name: Create and bind the exact package tarball
+        run: |
+          npm pack
+          TARBALL="$(ls -1 ./*.tgz | head -n1)"
+          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
+          echo "Bound tarball TARBALL=$TARBALL"
+
+      - name: Compute and report the SHA-256 digest of the exact tarball
+        run: |
+          sha256sum "$TARBALL" | tee "$TARBALL.sha256"
+
+      - name: Validate the exact tarball contents against the closed allowlist
+        run: |
+          tar -tzf "$TARBALL" | sed 's#^package/##' | grep -v '/$' > packed-files.txt
+          cat packed-files.txt
+          node --input-type=module -e "import fs from 'node:fs';import {REVIEWED_FILES,isCoveredByFiles} from './scripts/check-package-metadata.mjs';const files=fs.readFileSync('packed-files.txt','utf8').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);const extra=files.filter(f=>f!=='package.json'&&!isCoveredByFiles(f,REVIEWED_FILES));if(extra.length){console.error('Tarball contains paths outside the closed allowlist:\n'+extra.join('\n'));process.exit(1)}for(const required of ['package.json','dist/server.js','README.md','LICENSE']){if(!files.includes(required)){console.error('Tarball is missing required path: '+required);process.exit(1)}}console.log('Tarball contents match the closed allowlist ('+files.length+' files).');"
+
+      - name: Submit the validated tarball for staged review (OIDC, tokenless)
+        run: |
+          npm stage publish "$TARBALL" --access public
+
+      - name: Post-stage notice
+        run: |
+          echo "The tarball was submitted for staged review only."
+          echo "A separate owner action with two-factor authentication is required before it becomes public."

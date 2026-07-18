@@ -766,16 +766,54 @@ Minimum controls for this surface:
   not a checkout-relative file path — and requires a completed MCP
   `initialize` handshake, not merely a zero exit code, before treating the
   installed artifact as functional.
-- **`private: true` and no publication posture.** `package.json` declares
-  `"private": true` and no `publishConfig`, making an accidental `npm
-  publish` fail closed. This posture is reviewed at each package-validation
-  pass, not re-decided by it.
-- **No registry publication without a later, separate, explicitly reviewed
-  decision.** Building, packing, and installing a local artifact is
-  packaging validation, not publication. `npm publish`, `npm view`, `npm
-  search`, and `npm info` remain out of scope for every validation pass
-  described here; registry availability and any actual publication remain
-  reserved to a decision that does not exist today.
+- **Configured public identity, with the accidental-publication guard removed
+  under governed control (P-4).** `package.json` is now configured for the
+  future public scoped identity
+  `@stocktrends-publications/stocktrends-mcp-server` and carries an explicit
+  public npm `publishConfig` (`access: public`, registry
+  `https://registry.npmjs.org/`). The former `"private": true`
+  accidental-publication guard has been **deliberately removed through the
+  governed P-4 publication-configuration implementation**
+  ([`PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md`](PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md)),
+  not as a side effect. Accidental or unauthorized publication is now controlled
+  instead by a layered set of fail-closed controls, each enforced by the
+  authoritative validators (`npm run check:package-metadata`,
+  `npm run check:release-workflow`) and their focused test suites:
+  - exact scoped-identity validation (`name` exact, plus a scope guard
+    rejecting any other package scope);
+  - exact GitHub repository-identity validation (`repository` must identify
+    exactly `skotlander/stocktrends-mcp-server`);
+  - exact public registry/access validation (`publishConfig` must be exactly
+    `access: public` + the public npm registry);
+  - forbidden lifecycle-script validation (no `preinstall`/`install`/
+    `postinstall`/`prepare`/`prepack`/`postpack`/`prepublish`/`prepublishOnly`/
+    `publish`/`postpublish`);
+  - package/lockfile identity-agreement validation;
+  - the manual `workflow_dispatch`-only release workflow
+    (`.github/workflows/npm-stage-release.yml`) — no push, merge, pull request,
+    schedule, or tag can trigger it;
+  - explicit main-branch, confirmation-phrase (`STAGE_STOCKTRENDS_NPM_RELEASE`),
+    and expected-version gates;
+  - a stage-only OIDC design (`npm stage publish` of the exact validated,
+    hashed tarball only — no direct `npm publish`, no `npm stage approve`);
+  - the absence of any long-lived publication credential, npm token, or
+    `NODE_AUTH_TOKEN`;
+  - separate owner authorization for the bootstrap publication, workflow
+    dispatch, staged approval, and public-installation validation.
+- **Configuration is not publication.** This repository configuration does
+  **not** mean the package has been created, reserved, staged, published, or
+  made publicly installable. `npm publish`, `npm stage publish`, `npm view`,
+  `npm search`, `npm info`, and any npm account or trusted-publisher operation
+  remain out of scope for every validation pass described here; the bootstrap
+  publication, workflow dispatch, staged approval, and public-install
+  validation each remain a separate owner authorization that does not exist
+  today. No `npm trust`, package creation, staging, publication, or public
+  installation has occurred.
+- **Private source repository; no automatic provenance expected.** The source
+  GitHub repository remains private, and automatic npm provenance is not
+  expected while that remains true. Trusted publishing itself is still usable
+  from a private repository; only the automatic provenance attestation is
+  unavailable.
 - **No packaged artifact is retained by validation.** Every `.tgz`, unpacked
   artifact directory, and temporary consumer created during package
   validation is deleted at the end of that validation; none is committed to

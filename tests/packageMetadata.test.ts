@@ -4,11 +4,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  analyzeLockfileIdentity,
   analyzePackageMetadata,
   classifyFilesEntry,
   isCoveredByFiles,
   isSourceMapEntry,
-  MalformedManifestError
+  MalformedManifestError,
+  parseGitHubRepoIdentity
 } from "../scripts/check-package-metadata.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,7 +29,7 @@ afterEach(() => {
 // checker compares against. A drift in either one fails here.
 function reviewedManifest(): Record<string, unknown> {
   return {
-    name: "stocktrends-mcp-server",
+    name: "@stocktrends-publications/stocktrends-mcp-server",
     version: "1.0.0",
     description:
       "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.",
@@ -48,9 +50,33 @@ function reviewedManifest(): Record<string, unknown> {
     keywords: ["mcp", "stocktrends"],
     author: "Stocktrends Publications",
     license: "MIT",
-    private: true,
+    publishConfig: { access: "public", registry: "https://registry.npmjs.org/" },
     dependencies: { "@modelcontextprotocol/sdk": "^1.29.0", zod: "^4.4.3" },
     devDependencies: { vitest: "^4.1.10" }
+  };
+}
+
+// The reviewed lockfile root, spelled out literally so it pins the identity the
+// checker enforces rather than importing the checker's constants. The scoped
+// root name appears in both the top-level entry and packages[""]; the bin key
+// remains the unscoped executable name (part of the unchanged bin contract).
+function reviewedLockfile(): Record<string, unknown> {
+  return {
+    name: "@stocktrends-publications/stocktrends-mcp-server",
+    version: "1.0.0",
+    lockfileVersion: 3,
+    requires: true,
+    packages: {
+      "": {
+        name: "@stocktrends-publications/stocktrends-mcp-server",
+        version: "1.0.0",
+        license: "MIT",
+        dependencies: { "@modelcontextprotocol/sdk": "^1.29.0", zod: "^4.4.3" },
+        bin: { "stocktrends-mcp-server": "dist/server.js" },
+        devDependencies: { vitest: "^4.1.10" },
+        engines: { node: ">=18" }
+      }
+    }
   };
 }
 
@@ -61,6 +87,30 @@ function writeManifest(manifest: unknown, raw?: string): string {
   const packageJsonPath = path.join(root, "package.json");
   writeFileSync(packageJsonPath, raw ?? JSON.stringify(manifest, null, 2), "utf8");
   return packageJsonPath;
+}
+
+// Writes a package.json + package-lock.json pair into one temp directory and
+// returns both paths for the lockfile-identity checks.
+function writeManifestAndLock(
+  manifest: unknown,
+  lock: unknown,
+  lockRaw?: string
+): { packageJsonPath: string; packageLockPath: string } {
+  const root = mkdtempSync(path.join(tmpdir(), "package-metadata-"));
+  tempDirs.push(root);
+  const packageJsonPath = path.join(root, "package.json");
+  const packageLockPath = path.join(root, "package-lock.json");
+  writeFileSync(packageJsonPath, JSON.stringify(manifest, null, 2), "utf8");
+  writeFileSync(packageLockPath, lockRaw ?? JSON.stringify(lock, null, 2), "utf8");
+  return { packageJsonPath, packageLockPath };
+}
+
+// Applies a mutation to the reviewed lockfile and returns the identity
+// violations it produces against the reviewed manifest.
+function lockViolationsFor(mutate: (lock: Record<string, unknown>) => void): string[] {
+  const lock = reviewedLockfile();
+  mutate(lock);
+  return analyzeLockfileIdentity(writeManifestAndLock(reviewedManifest(), lock)).violations;
 }
 
 // Applies a mutation to the reviewed manifest and returns the violations it
@@ -85,40 +135,71 @@ describe("package metadata contract check", () => {
   });
 
   describe("publication safety", () => {
-    it("fails when private is missing", () => {
+    it("fails when the removed private guard is present as boolean true", () => {
       const violations = violationsFor((manifest) => {
-        delete manifest.private;
+        manifest.private = true;
       });
 
       expect(violations).toHaveLength(1);
-      expect(violations[0]).toContain("private must be boolean true");
+      expect(violations[0]).toContain("private must be absent");
     });
 
-    it("fails when private is false", () => {
+    it("fails when private is present as boolean false", () => {
       const violations = violationsFor((manifest) => {
         manifest.private = false;
       });
 
       expect(violations).toHaveLength(1);
-      expect(violations[0]).toContain("private must be boolean true");
+      expect(violations[0]).toContain("private must be absent");
     });
 
-    it("fails when private is the string \"true\" rather than the boolean", () => {
+    it("fails when private is present as the string \"true\"", () => {
       const violations = violationsFor((manifest) => {
         manifest.private = "true";
       });
 
       expect(violations).toHaveLength(1);
-      expect(violations[0]).toContain("private must be boolean true");
+      expect(violations[0]).toContain("private must be absent");
     });
 
-    it("fails when publishConfig is present", () => {
+    it("fails when publishConfig is absent", () => {
       const violations = violationsFor((manifest) => {
-        manifest.publishConfig = { access: "public" };
+        delete manifest.publishConfig;
       });
 
       expect(violations).toHaveLength(1);
-      expect(violations[0]).toContain("publishConfig must not be present");
+      expect(violations[0]).toContain("publishConfig must be exactly");
+    });
+
+    it("fails when publishConfig access is not public", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.publishConfig = { access: "restricted", registry: "https://registry.npmjs.org/" };
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("publishConfig must be exactly");
+    });
+
+    it("fails when publishConfig points at a non-npm registry", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.publishConfig = { access: "public", registry: "https://npm.pkg.github.com/" };
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("publishConfig must be exactly");
+    });
+
+    it("fails when publishConfig carries an extra key", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.publishConfig = {
+          access: "public",
+          registry: "https://registry.npmjs.org/",
+          tag: "next"
+        };
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("publishConfig must be exactly");
     });
 
     it.each([
@@ -143,22 +224,35 @@ describe("package metadata contract check", () => {
   });
 
   describe("identity and metadata fields", () => {
-    it("fails on package name drift", () => {
+    it("fails on package name drift within the authorized scope", () => {
       const violations = violationsFor((manifest) => {
-        manifest.name = "stocktrends-mcp";
+        manifest.name = "@stocktrends-publications/stocktrends-mcp";
       });
 
       expect(violations).toHaveLength(1);
       expect(violations[0]).toContain("name must be exactly");
     });
 
-    it("fails on package scope drift", () => {
+    it("fails when the authorized scope is dropped", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.name = "stocktrends-mcp-server";
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("name must be exactly");
+    });
+
+    it("fails on a wrong package scope", () => {
       const violations = violationsFor((manifest) => {
         manifest.name = "@stocktrends/stocktrends-mcp-server";
       });
 
       expect(violations.some((violation) => violation.includes("name must be exactly"))).toBe(true);
-      expect(violations.some((violation) => violation.includes("must remain unscoped"))).toBe(true);
+      expect(
+        violations.some((violation) =>
+          violation.includes("must use the authorized @stocktrends-publications scope")
+        )
+      ).toBe(true);
     });
 
     it("fails on version drift", () => {
@@ -202,8 +296,12 @@ describe("package metadata contract check", () => {
         manifest.repository = { type: "git", url: "git+https://github.com/example/other.git" };
       });
 
-      expect(violations).toHaveLength(1);
-      expect(violations[0]).toContain("repository must be exactly");
+      expect(violations.some((v) => v.includes("repository must be exactly"))).toBe(true);
+      expect(
+        violations.some((v) =>
+          v.includes("must identify exactly the GitHub repository skotlander/stocktrends-mcp-server")
+        )
+      ).toBe(true);
     });
 
     it("fails when repository carries an extra key", () => {
@@ -253,6 +351,75 @@ describe("package metadata contract check", () => {
 
       expect(violations).toHaveLength(1);
       expect(violations[0]).toContain("engines must be exactly");
+    });
+  });
+
+  describe("GitHub repository identity", () => {
+    it("fails when the repository field is absent", () => {
+      const violations = violationsFor((manifest) => {
+        delete manifest.repository;
+      });
+
+      expect(violations.some((v) => v.includes("repository must be present"))).toBe(true);
+    });
+
+    it("fails on another GitHub owner", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.repository = { type: "git", url: "git+https://github.com/otheruser/stocktrends-mcp-server.git" };
+      });
+
+      expect(
+        violations.some((v) => v.includes("must identify exactly the GitHub repository skotlander/stocktrends-mcp-server"))
+      ).toBe(true);
+    });
+
+    it("fails on another repository name under the same owner", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.repository = { type: "git", url: "git+https://github.com/skotlander/other-repo.git" };
+      });
+
+      expect(
+        violations.some((v) => v.includes("must identify exactly the GitHub repository skotlander/stocktrends-mcp-server"))
+      ).toBe(true);
+    });
+
+    it("fails on a non-GitHub repository host", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.repository = { type: "git", url: "git+https://gitlab.com/skotlander/stocktrends-mcp-server.git" };
+      });
+
+      expect(violations.some((v) => v.includes("no github.com owner/repo could be resolved"))).toBe(true);
+    });
+
+    it("fails on malformed repository metadata (non-object, non-string)", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.repository = 42;
+      });
+
+      expect(violations.some((v) => v.includes("repository is malformed"))).toBe(true);
+    });
+
+    it("fails on an unparseable repository URL", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.repository = { type: "git", url: "not-a-real-url" };
+      });
+
+      expect(violations.some((v) => v.includes("no github.com owner/repo could be resolved"))).toBe(true);
+    });
+
+    it("parses the reviewed and equivalent GitHub URL forms", () => {
+      expect(parseGitHubRepoIdentity("git+https://github.com/skotlander/stocktrends-mcp-server.git")).toBe(
+        "skotlander/stocktrends-mcp-server"
+      );
+      expect(parseGitHubRepoIdentity("https://github.com/skotlander/stocktrends-mcp-server")).toBe(
+        "skotlander/stocktrends-mcp-server"
+      );
+      expect(parseGitHubRepoIdentity("git@github.com:skotlander/stocktrends-mcp-server.git")).toBe(
+        "skotlander/stocktrends-mcp-server"
+      );
+      expect(parseGitHubRepoIdentity("https://gitlab.com/skotlander/stocktrends-mcp-server.git")).toBeNull();
+      expect(parseGitHubRepoIdentity(42)).toBeNull();
+      expect(parseGitHubRepoIdentity("")).toBeNull();
     });
   });
 
@@ -489,6 +656,91 @@ describe("package metadata contract check", () => {
     });
   });
 
+  describe("lockfile root identity", () => {
+    it("passes for the reviewed manifest/lockfile pair", () => {
+      const { packageJsonPath, packageLockPath } = writeManifestAndLock(reviewedManifest(), reviewedLockfile());
+
+      expect(analyzeLockfileIdentity({ packageJsonPath, packageLockPath }).violations).toEqual([]);
+    });
+
+    it("passes for this repository's actual manifest and lockfile", () => {
+      const packageJsonPath = path.resolve(__dirname, "../package.json");
+      const packageLockPath = path.resolve(__dirname, "../package-lock.json");
+
+      expect(analyzeLockfileIdentity({ packageJsonPath, packageLockPath }).violations).toEqual([]);
+    });
+
+    it("fails when the lockfile top-level name is unscoped", () => {
+      const violations = lockViolationsFor((lock) => {
+        lock.name = "stocktrends-mcp-server";
+      });
+
+      expect(violations.some((violation) => violation.includes("top-level name must be exactly"))).toBe(true);
+      expect(violations.some((violation) => violation.includes("root identity must agree"))).toBe(true);
+    });
+
+    it("fails when the lockfile root package name is unscoped", () => {
+      const violations = lockViolationsFor((lock) => {
+        (lock.packages as Record<string, Record<string, unknown>>)[""].name = "stocktrends-mcp-server";
+      });
+
+      expect(violations.some((violation) => violation.includes('packages[""].name must be exactly'))).toBe(true);
+      expect(violations.some((violation) => violation.includes("root identity must agree"))).toBe(true);
+    });
+
+    it("fails when the lockfile root package entry is missing", () => {
+      const violations = lockViolationsFor((lock) => {
+        lock.packages = {};
+      });
+
+      expect(violations.some((violation) => violation.includes('root package entry at packages[""]'))).toBe(true);
+    });
+
+    it("fails when the lockfile root version drifts", () => {
+      const violations = lockViolationsFor((lock) => {
+        lock.version = "1.0.1";
+        (lock.packages as Record<string, Record<string, unknown>>)[""].version = "1.0.1";
+      });
+
+      expect(violations.some((violation) => violation.includes("top-level version must be exactly"))).toBe(true);
+      expect(violations.some((violation) => violation.includes('packages[""].version must be exactly'))).toBe(true);
+    });
+
+    it("fails when the lockfile root runtime dependencies drift", () => {
+      const violations = lockViolationsFor((lock) => {
+        (lock.packages as Record<string, Record<string, unknown>>)[""].dependencies = {
+          "@modelcontextprotocol/sdk": "^1.29.0"
+        };
+      });
+
+      expect(
+        violations.some((violation) =>
+          violation.includes('packages[""].dependencies must remain exactly the reviewed runtime dependency contract')
+        )
+      ).toBe(true);
+    });
+
+    it("fails when package.json and lockfile identities disagree", () => {
+      const manifest = reviewedManifest();
+      manifest.name = "@stocktrends-publications/stocktrends-mcp";
+      const { packageJsonPath, packageLockPath } = writeManifestAndLock(manifest, reviewedLockfile());
+
+      const violations = analyzeLockfileIdentity({ packageJsonPath, packageLockPath }).violations;
+
+      expect(violations.some((violation) => violation.includes("root identity must agree"))).toBe(true);
+    });
+
+    it("throws MalformedManifestError when the lockfile is not valid JSON", () => {
+      const { packageJsonPath, packageLockPath } = writeManifestAndLock(
+        reviewedManifest(),
+        reviewedLockfile(),
+        "{ not json"
+      );
+
+      expect(() => analyzeLockfileIdentity({ packageJsonPath, packageLockPath })).toThrow(MalformedManifestError);
+    });
+  });
+
   describe("malformed manifests", () => {
     it("fails clearly when package.json is not valid JSON", () => {
       const packageJsonPath = writeManifest(null, "{ not json");
@@ -525,11 +777,11 @@ describe("package metadata contract check", () => {
     it("reports every independent violation deterministically", () => {
       const first = violationsFor((manifest) => {
         manifest.license = "ISC";
-        manifest.private = false;
+        manifest.author = "Wrong Author";
       });
       const second = violationsFor((manifest) => {
         manifest.license = "ISC";
-        manifest.private = false;
+        manifest.author = "Wrong Author";
       });
 
       expect(first).toEqual(second);
