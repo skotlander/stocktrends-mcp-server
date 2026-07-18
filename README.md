@@ -622,3 +622,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Package Identity and License Decision Record](docs/PACKAGE_IDENTITY_AND_LICENSE_DECISION_RECORD.md)
 - [Package Metadata and Closed Artifact Allowlist Implementation](docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md)
 - [Offline Pack and Artifact-Content Validation Report](docs/OFFLINE_PACKAGE_ARTIFACT_CONTENT_VALIDATION_REPORT.md)
+- [B-5 POSIX Installed-Bin Correction Memo](docs/B5_POSIX_INSTALLED_BIN_CORRECTION_MEMO.md)
