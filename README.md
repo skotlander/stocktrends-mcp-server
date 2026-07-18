@@ -59,7 +59,7 @@ Optional: `npm start` starts the local stdio server process directly and is main
 In addition to the repository-checkout path above, this repository's package has been built, packed, and validated locally as an installable npm package artifact — on Windows and WSL2 Ubuntu (see the [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md)). This path is for consumers who already have, or can build, the reviewed local package artifact. **It is not an npm registry install.**
 
 - The artifact is **not retained in this repository** — no `.tgz` is committed, and none ships with a checkout.
-- The artifact is **not published to any npm registry.** `package.json` declares `"private": true`, and no `publishConfig` or publication script exists.
+- The artifact is **not published to any npm registry.** `package.json` is now configured with its intended public identity — the scoped name `@stocktrends-publications/stocktrends-mcp-server` and an explicit public `publishConfig` (`access: public`, the public npm registry) — but **the package has not been created, reserved, or published**, and no publication workflow has been run. The `"private": true` accidental-publication guard was deliberately removed as the reviewed configuration step that arms a *future* release; its removal does not make the package available now (see the [Package Publication Configuration Implementation Notes](docs/PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md)).
 - To use this path, a consumer must build the artifact themselves from a reviewed checkout, or obtain the reviewed local `.tgz` through a channel outside this repository (for example, directly from the maintainer).
 
 To build the local artifact yourself from a checkout:
@@ -72,13 +72,13 @@ npm run build
 npm pack
 ```
 
-This produces `stocktrends-mcp-server-1.0.0.tgz` in the current directory — the reviewed closed artifact allowlist is `dist/**/*.js`, `dist/**/*.d.ts`, `README.md`, and `LICENSE` (see the [Package Metadata and Closed Artifact Allowlist Implementation](docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md)). Install it into a **separate** consumer project (not this checkout):
+This produces `stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz` in the current directory — the reviewed closed artifact allowlist is `dist/**/*.js`, `dist/**/*.d.ts`, `README.md`, and `LICENSE` (see the [Package Metadata and Closed Artifact Allowlist Implementation](docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md)). Install it into a **separate** consumer project (not this checkout):
 
 ```sh
-npm install <path-to-local-stocktrends-mcp-server-1.0.0.tgz>
+npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz>
 ```
 
-Do **not** run `npm install stocktrends-mcp-server` by itself — that instructs npm to resolve the name against a registry, and no registry publication of this package exists.
+Do **not** run `npm install @stocktrends-publications/stocktrends-mcp-server` by itself — that instructs npm to resolve the scoped name against the registry, and no registry publication of this package exists yet. Public installation by name (and any `npx`/Claude Code install command) remains unavailable until a separate, explicitly authorized publication and its validation have completed.
 
 Once installed, the package provides an npm-managed command shim rather than a checkout-relative `dist/server.js` path. On POSIX systems (Linux, macOS, WSL) this is a symlink at `node_modules/.bin/stocktrends-mcp-server`; on Windows it is a generated shim at `node_modules\.bin\stocktrends-mcp-server.cmd`. **Do not assume the bin is installed globally** — resolve it from the consumer project's own `node_modules/.bin`. See [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client) below for package-installed client configuration examples alongside the checkout examples.
 
@@ -161,7 +161,7 @@ Windows equivalent (the generated `.cmd` shim):
 }
 ```
 
-`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
 
 **Optional paid-exposure variant (exposure only — not execution).** This adds the paid tool *definitions* to the client's tool list; it does not authorize or perform any paid API call:
 
@@ -219,7 +219,7 @@ claude mcp add --transport stdio stocktrends -- <path-to-consumer-project>/node_
 claude mcp add --transport stdio stocktrends -- <path-to-consumer-project>\node_modules\.bin\stocktrends-mcp-server.cmd
 ```
 
-`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
 
 ### C. Generic MCP stdio client
 
@@ -251,7 +251,7 @@ Windows (the generated `.cmd` shim):
 }
 ```
 
-`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
 
 **Optional paid-exposure variant** (same rules as Claude Desktop above — exposure only, execution flag absent):
 
@@ -724,3 +724,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Package Publication Account and Name Readiness Report](docs/PACKAGE_PUBLICATION_ACCOUNT_AND_NAME_READINESS_REPORT.md)
 - [Package Publication Organization Readiness Closure](docs/PACKAGE_PUBLICATION_ORGANIZATION_READINESS_CLOSURE.md)
 - [Package Publication Implementation Decision](docs/PACKAGE_PUBLICATION_IMPLEMENTATION_DECISION.md)
+- [Package Publication Configuration Implementation Notes](docs/PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md)

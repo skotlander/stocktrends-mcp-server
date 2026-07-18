@@ -1,5 +1,5 @@
 {
-  "name": "stocktrends-mcp-server",
+  "name": "@stocktrends-publications/stocktrends-mcp-server",
   "version": "1.0.0",
   "description": "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.",
   "type": "module",
@@ -32,7 +32,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "check:runtime-deps": "node scripts/check-runtime-dependency-contract.mjs",
-    "check:package-metadata": "node scripts/check-package-metadata.mjs"
+    "check:package-metadata": "node scripts/check-package-metadata.mjs",
+    "check:release-workflow": "node scripts/check-release-workflow.mjs"
   },
   "keywords": [
     "mcp",
@@ -40,7 +41,10 @@
   ],
   "author": "Stocktrends Publications",
   "license": "MIT",
-  "private": true,
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"

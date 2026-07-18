@@ -1,12 +1,18 @@
 // Statically validates this repository's package.json against the reviewed
 // package metadata contract and the closed `files` allowlist recorded in
-// docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md.
+// docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md, updated by the
+// P-4 publication configuration in
+// docs/PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md (scoped public
+// identity, removal of the `private: true` guard, explicit public
+// publishConfig), and also validates that package-lock.json's root package
+// identity agrees with that reviewed identity.
 //
-// Scope boundary: this check reads the manifest and nothing else. It runs no
-// npm command, builds nothing, packs nothing, installs nothing, and reaches no
-// registry or network. It therefore validates what the manifest *declares* --
-// it does not and cannot measure what npm would actually place in a package
-// artifact. That evidence is separate work.
+// Scope boundary: this check reads package.json and package-lock.json and
+// nothing else. It runs no npm command, builds nothing, packs nothing, installs
+// nothing, and reaches no registry or network. It therefore validates what the
+// manifests *declare* -- it does not and cannot measure what npm would actually
+// place in a package artifact, and it does not publish. That evidence is
+// separate work.
 //
 // Run with `npm run check:package-metadata`.
 import fs from "node:fs";
@@ -16,12 +22,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const DEFAULT_PACKAGE_JSON_PATH = path.join(repoRoot, "package.json");
+const DEFAULT_PACKAGE_LOCK_PATH = path.join(repoRoot, "package-lock.json");
 
 const MAX_REPORTED_VIOLATIONS = 50;
 
 export class MalformedManifestError extends Error {}
 
-export const REVIEWED_NAME = "stocktrends-mcp-server";
+// The owner-settled publication identity (P-4). The package is published under
+// the owner-controlled npm organization scope; the scope is load-bearing and
+// enforced both as the exact name and as a scope-prefix guard below.
+export const REVIEWED_SCOPE = "@stocktrends-publications";
+export const REVIEWED_NAME = "@stocktrends-publications/stocktrends-mcp-server";
 export const REVIEWED_VERSION = "1.0.0";
 export const REVIEWED_DESCRIPTION =
   "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.";
@@ -32,10 +43,21 @@ export const REVIEWED_REPOSITORY = Object.freeze({
   type: "git",
   url: "git+https://github.com/skotlander/stocktrends-mcp-server.git"
 });
+// The exact GitHub repository the npm trusted publisher must later be bound to.
+// Enforced as an explicit, bounded owner/repo identity in addition to the exact
+// `repository` object match, so an owner/repo/host change is named directly.
+export const REVIEWED_GITHUB_REPOSITORY = "skotlander/stocktrends-mcp-server";
 export const REVIEWED_BUGS = Object.freeze({
   url: "https://github.com/skotlander/stocktrends-mcp-server/issues"
 });
 export const REVIEWED_ENGINES = Object.freeze({ node: ">=18" });
+// The explicit public-access, public-npm-registry publication configuration
+// (P-4). Making public access explicit is required for a scoped package; the
+// registry is pinned so the target cannot silently drift.
+export const REVIEWED_PUBLISH_CONFIG = Object.freeze({
+  access: "public",
+  registry: "https://registry.npmjs.org/"
+});
 export const REVIEWED_FILES = Object.freeze(["dist/**/*.js", "dist/**/*.d.ts", "README.md", "LICENSE"]);
 export const REVIEWED_RUNTIME_DEPENDENCIES = Object.freeze({
   "@modelcontextprotocol/sdk": "^1.29.0",
@@ -78,6 +100,22 @@ const EXACT_OBJECT_FIELDS = Object.freeze([
 
 export function normalizeSlashes(value) {
   return String(value).split("\\").join("/");
+}
+
+// Resolves a repository URL to its `owner/repo` GitHub identity, or null when
+// the URL is not a parseable github.com repository (a non-GitHub host or a
+// malformed value both yield null so the caller fails closed). Handles the
+// `git+https://`, `https://`, `ssh://`, and `git@github.com:` forms and an
+// optional trailing `.git`.
+export function parseGitHubRepoIdentity(url) {
+  if (typeof url !== "string" || url.trim().length === 0) return null;
+  const normalized = url.trim().replace(/^git\+/, "");
+  const httpsMatch =
+    /^(?:https?|ssh|git):\/\/github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?(?:[/#?].*)?$/i.exec(normalized);
+  const scpMatch = /^git@github\.com:([^/]+)\/([^/#?]+?)(?:\.git)?$/i.exec(normalized);
+  const match = httpsMatch || scpMatch;
+  if (!match) return null;
+  return `${match[1]}/${match[2]}`;
 }
 
 export function containsGlob(value) {
@@ -284,23 +322,81 @@ function checkExactFields(manifest, violations) {
     }
   }
 
-  if (typeof manifest.name === "string" && manifest.name.startsWith("@")) {
+  // A scoped name is now the reviewed identity, but only under the one
+  // authorized scope. Any other scope is a mismatch even before the exact-name
+  // check, so an accidental scope swap is named explicitly.
+  if (
+    typeof manifest.name === "string" &&
+    manifest.name.startsWith("@") &&
+    !manifest.name.startsWith(`${REVIEWED_SCOPE}/`)
+  ) {
     violations.push(
-      `name must remain unscoped; no package scope is authorized (found ${summarizeValue(manifest.name)}).`
+      `name must use the authorized ${REVIEWED_SCOPE} scope; no other package scope is authorized (found ${summarizeValue(manifest.name)}).`
+    );
+  }
+}
+
+// Explicit, bounded GitHub repository-identity invariant. The exact
+// `repository` object is already pinned by EXACT_OBJECT_FIELDS; this adds a
+// dedicated owner/repo check because the npm trusted publisher must later be
+// bound to exactly this repository. It rejects another owner, another
+// repository, a missing field, a non-GitHub host, and malformed metadata.
+function checkRepositoryIdentity(manifest, violations) {
+  const repo = manifest.repository;
+
+  if (repo === undefined || repo === null) {
+    violations.push(
+      `repository must be present and identify the GitHub repository ${REVIEWED_GITHUB_REPOSITORY} (found ${summarizeValue(repo)}).`
+    );
+    return;
+  }
+
+  let url;
+  if (typeof repo === "string") {
+    url = repo;
+  } else if (typeof repo === "object" && !Array.isArray(repo) && typeof repo.url === "string") {
+    url = repo.url;
+  } else {
+    violations.push(
+      `repository is malformed; it must identify the GitHub repository ${REVIEWED_GITHUB_REPOSITORY} (found ${summarizeValue(repo)}).`
+    );
+    return;
+  }
+
+  const identity = parseGitHubRepoIdentity(url);
+  if (identity === null) {
+    violations.push(
+      `repository must identify the GitHub repository ${REVIEWED_GITHUB_REPOSITORY}; no github.com owner/repo could be resolved from ${summarizeValue(url)}.`
+    );
+    return;
+  }
+
+  if (identity !== REVIEWED_GITHUB_REPOSITORY) {
+    violations.push(
+      `repository must identify exactly the GitHub repository ${REVIEWED_GITHUB_REPOSITORY} (found ${summarizeValue(identity)}).`
     );
   }
 }
 
 function checkPublicationSafety(manifest, violations) {
-  if (manifest.private !== true) {
+  // P-4 deliberately removed the boolean `private: true` accidental-publication
+  // guard as the controlled step that arms the configured public release. It
+  // must not creep back in -- a stray `private` field (true, false, or a
+  // string) would either re-block publication or read as an unreviewed toggle,
+  // so the reviewed posture is the field's total absence.
+  if (Object.prototype.hasOwnProperty.call(manifest, "private")) {
     violations.push(
-      `private must be boolean true -- it is the accidental-publication guard (found ${summarizeValue(manifest.private)}).`
+      `private must be absent; the boolean "private": true accidental-publication guard is deliberately removed for the configured public release (found ${summarizeValue(manifest.private)}).`
     );
   }
 
-  if (manifest.publishConfig !== undefined) {
+  // The public-access, public-npm-registry publishConfig must be present and
+  // exact. Its absence would leave scoped-package access implicit (npm defaults
+  // a scoped package to restricted), and any extra key or drifted value could
+  // retarget the release.
+  if (!deepEqual(manifest.publishConfig, REVIEWED_PUBLISH_CONFIG)) {
     violations.push(
-      `publishConfig must not be present; no publication configuration is authorized (found ${summarizeValue(manifest.publishConfig)}).`
+      `publishConfig must be exactly ${summarizeValue(REVIEWED_PUBLISH_CONFIG)} -- explicit public access to the public npm registry (found ${summarizeValue(manifest.publishConfig)}).`
     );
   }
 
@@ -414,9 +510,75 @@ export function analyzePackageMetadata({ packageJsonPath }) {
   const violations = [];
 
   checkExactFields(manifest, violations);
+  checkRepositoryIdentity(manifest, violations);
   checkPublicationSafety(manifest, violations);
   checkFilesAllowlist(manifest, violations);
   checkRuntimeDependencyContract(manifest, violations);
+
+  return { violations };
+}
+
+// Validates that the lockfile's root package identity agrees with the reviewed
+// scoped identity and with package.json, and that the reviewed root runtime
+// dependency contract is unchanged in the lockfile. This is a bounded identity
+// and agreement check -- it deliberately does not walk transitive dependency
+// entries (drift there is caught by reviewing the lockfile diff, which the P-4
+// change keeps to the two root-name lines). It reads the two manifests and
+// nothing else: no npm command, no build, no install, no registry access.
+// Throws MalformedManifestError when either file cannot be read or parsed.
+export function analyzeLockfileIdentity({ packageJsonPath, packageLockPath }) {
+  const manifest = readManifest(packageJsonPath);
+  const lock = readManifest(packageLockPath);
+  const violations = [];
+
+  const rootPackage =
+    lock.packages !== null && typeof lock.packages === "object" && !Array.isArray(lock.packages)
+      ? lock.packages[""]
+      : undefined;
+  const hasRootPackage =
+    rootPackage !== null && typeof rootPackage === "object" && !Array.isArray(rootPackage);
+
+  if (lock.name !== REVIEWED_NAME) {
+    violations.push(
+      `package-lock.json top-level name must be exactly ${summarizeValue(REVIEWED_NAME)} (found ${summarizeValue(lock.name)}).`
+    );
+  }
+
+  if (!hasRootPackage) {
+    violations.push(
+      `package-lock.json must contain a root package entry at packages[""] (found ${summarizeValue(rootPackage)}).`
+    );
+  } else {
+    if (rootPackage.name !== REVIEWED_NAME) {
+      violations.push(
+        `package-lock.json packages[""].name must be exactly ${summarizeValue(REVIEWED_NAME)} (found ${summarizeValue(rootPackage.name)}).`
+      );
+    }
+    if (rootPackage.version !== REVIEWED_VERSION) {
+      violations.push(
+        `package-lock.json packages[""].version must be exactly ${summarizeValue(REVIEWED_VERSION)} (found ${summarizeValue(rootPackage.version)}).`
+      );
+    }
+    if (!deepEqual(rootPackage.dependencies, REVIEWED_RUNTIME_DEPENDENCIES)) {
+      violations.push(
+        `package-lock.json packages[""].dependencies must remain exactly the reviewed runtime dependency contract ${summarizeValue(REVIEWED_RUNTIME_DEPENDENCIES)} (found ${summarizeValue(rootPackage.dependencies)}).`
+      );
+    }
+  }
+
+  if (lock.version !== REVIEWED_VERSION) {
+    violations.push(
+      `package-lock.json top-level version must be exactly ${summarizeValue(REVIEWED_VERSION)} (found ${summarizeValue(lock.version)}).`
+    );
+  }
+
+  // package.json and the lockfile root must agree with each other, not merely
+  // each with the constant -- an incoherent pair is itself the defect.
+  if (manifest.name !== lock.name || (hasRootPackage && manifest.name !== rootPackage.name)) {
+    violations.push(
+      `package.json name ${summarizeValue(manifest.name)} and package-lock.json root identity must agree.`
+    );
+  }
 
   return { violations };
 }
@@ -428,24 +590,29 @@ function isDirectExecution() {
 
 if (isDirectExecution()) {
   try {
-    const result = analyzePackageMetadata({ packageJsonPath: DEFAULT_PACKAGE_JSON_PATH });
+    const metadataResult = analyzePackageMetadata({ packageJsonPath: DEFAULT_PACKAGE_JSON_PATH });
+    const lockResult = analyzeLockfileIdentity({
+      packageJsonPath: DEFAULT_PACKAGE_JSON_PATH,
+      packageLockPath: DEFAULT_PACKAGE_LOCK_PATH
+    });
+    const violations = [...metadataResult.violations, ...lockResult.violations];
 
-    if (result.violations.length > 0) {
-      console.error(`check-package-metadata: FAIL - ${result.violations.length} manifest contract violation(s):`);
-      for (const violation of result.violations.slice(0, MAX_REPORTED_VIOLATIONS)) {
+    if (violations.length > 0) {
+      console.error(`check-package-metadata: FAIL - ${violations.length} manifest/lockfile contract violation(s):`);
+      for (const violation of violations.slice(0, MAX_REPORTED_VIOLATIONS)) {
         console.error(`  - ${violation}`);
       }
-      if (result.violations.length > MAX_REPORTED_VIOLATIONS) {
-        console.error(`  ... and ${result.violations.length - MAX_REPORTED_VIOLATIONS} more.`);
+      if (violations.length > MAX_REPORTED_VIOLATIONS) {
+        console.error(`  ... and ${violations.length - MAX_REPORTED_VIOLATIONS} more.`);
       }
       process.exit(1);
     }
 
     console.log(
-      `check-package-metadata: PASS - reviewed package metadata and the closed files allowlist (${REVIEWED_FILES.length} entries) are satisfied.`
+      `check-package-metadata: PASS - reviewed package metadata, the closed files allowlist (${REVIEWED_FILES.length} entries), and package-lock root identity are satisfied.`
     );
     console.log(
-      "check-package-metadata: scope - manifest contract only. No artifact contents were measured; no npm command, build, pack, install, or registry query was run."
+      "check-package-metadata: scope - manifest and lockfile-root contract only. No artifact contents were measured; no npm command, build, pack, install, or registry query was run."
     );
   } catch (error) {
     if (error instanceof MalformedManifestError) {
