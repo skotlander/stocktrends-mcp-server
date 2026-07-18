@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { parseConfig, type Env, type StockTrendsMcpConfig } from "./config.js";
@@ -135,15 +137,52 @@ export async function startStdioServer(env: Env = process.env): Promise<void> {
   await runtime.server.connect(new StdioServerTransport());
 }
 
+// Testing seam: the default implementations of the three path primitives
+// isDirectExecution needs. Tests inject a partial override (e.g. a
+// realpathNative that throws only for one specific input) to exercise
+// individual failure branches without constructing real broken filesystem
+// state.
+export interface DirectExecutionDeps {
+  fileURLToPath: (url: string | URL) => string;
+  resolvePath: (...pathSegments: string[]) => string;
+  realpathNative: (path: string) => string;
+}
+
+export const defaultDirectExecutionDeps: DirectExecutionDeps = {
+  fileURLToPath,
+  resolvePath: resolve,
+  realpathNative: realpathSync.native
+};
+
+function toCanonicalPath(pathLike: string, deps: DirectExecutionDeps): string {
+  return deps.realpathNative(pathLike);
+}
+
+// True iff the executing entry-point path and this module resolve to the
+// same canonical filesystem object. Canonicalizing both sides (rather than
+// comparing raw URL/path strings) makes the comparison transparent to a
+// POSIX npm-bin symlink while leaving every other supported invocation shape
+// unaffected. Any conversion, resolution, or realpath exception fails closed
+// to false -- the safer default is "did not detect direct execution".
+export function isDirectExecution(
+  moduleUrl: string = import.meta.url,
+  entrypoint: string | undefined = process.argv[1],
+  deps: DirectExecutionDeps = defaultDirectExecutionDeps
+): boolean {
+  if (!entrypoint) return false;
+  try {
+    const modulePath = toCanonicalPath(deps.fileURLToPath(moduleUrl), deps);
+    const entryPath = toCanonicalPath(deps.resolvePath(entrypoint), deps);
+    return modulePath === entryPath;
+  } catch {
+    return false;
+  }
+}
+
 if (isDirectExecution()) {
   startStdioServer().catch((error) => {
     const logger = createLogger({ logLevel: "error" });
     logger.error(safeErrorMessage(error));
     process.exitCode = 1;
   });
-}
-
-function isDirectExecution(): boolean {
-  const entrypoint = process.argv[1];
-  return entrypoint ? import.meta.url === pathToFileURL(entrypoint).href : false;
 }
