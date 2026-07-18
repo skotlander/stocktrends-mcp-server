@@ -718,3 +718,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [B-5 POSIX Installed-Bin Correction Memo](docs/B5_POSIX_INSTALLED_BIN_CORRECTION_MEMO.md)
 - [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md)
 - [Package Documentation Refresh and Tail Validation Report](docs/PACKAGE_DOCUMENTATION_REFRESH_AND_TAIL_VALIDATION_REPORT.md)
+- [Package Readiness Closure and Publication Decision Handoff](docs/PACKAGE_READINESS_CLOSURE_AND_PUBLICATION_DECISION_HANDOFF.md)
