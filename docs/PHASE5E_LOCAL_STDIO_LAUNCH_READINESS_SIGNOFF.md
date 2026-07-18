@@ -554,6 +554,69 @@ reconfirmation at HEAD `74a47b0`, and the deviations record above:
 
 ---
 
+## 15. Addendum (2026-07-18): package-artifact channel validated (PR-5)
+
+**This addendum is dated 2026-07-18 and is appended by PR-5
+([`PACKAGE_DOCUMENTATION_REFRESH_AND_TAIL_VALIDATION_REPORT.md`](PACKAGE_DOCUMENTATION_REFRESH_AND_TAIL_VALIDATION_REPORT.md)).
+It does not rewrite or reinterpret the original 2026-07-12 signoff above —
+that signoff remains exactly what it was: a docs-only PR #60 declaration
+covering the repository-checkout channel, on the PR #55–#59 evidence chain,
+at HEAD `74a47b0`. The package-artifact channel did not exist at that time
+and this addendum does not claim otherwise.**
+
+Since that original signoff, a second, distinct installation channel has been
+designed, implemented, and validated, recorded across
+[`PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md`](PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md),
+[`PACKAGE_IDENTITY_AND_LICENSE_DECISION_RECORD.md`](PACKAGE_IDENTITY_AND_LICENSE_DECISION_RECORD.md),
+[`PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md`](PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md),
+[`OFFLINE_PACKAGE_ARTIFACT_CONTENT_VALIDATION_REPORT.md`](OFFLINE_PACKAGE_ARTIFACT_CONTENT_VALIDATION_REPORT.md),
+[`B5_POSIX_INSTALLED_BIN_CORRECTION_MEMO.md`](B5_POSIX_INSTALLED_BIN_CORRECTION_MEMO.md), and
+[`CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md`](CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md).
+This addendum records that current status, dated and separated from the
+original declaration above:
+
+- **The original repository-checkout channel remains supported**, unchanged
+  in shape: `git clone` + `npm install` + `npm run build`, then local stdio
+  client configuration. Nothing in the package-artifact work deprecated or
+  altered it.
+- **A second local package-artifact channel has now been validated** —
+  installing this package from a locally built `.tgz` into an isolated
+  consumer, then launching the npm-installed command shim (not a
+  checkout-relative file path).
+- **PR #90** (`Cross-Platform Package Install / Stdio Validation Report`)
+  established completed MCP `initialize` handshakes through the
+  npm-installed bin on both **Windows** and **WSL2 Ubuntu**, each preceded by
+  a strict offline cache gate and an isolated clean install, with the exact
+  1-tool / 10-resource / 0-prompt default/free surface observed on both
+  platforms.
+- **B-5 (the POSIX installed-bin direct-execution defect) is closed on the
+  approved tested environments** — the exact Windows 11 and WSL2 Ubuntu
+  environments and the exact source commit recorded in that report; this is
+  not a claim of universal operating-system compatibility.
+- **The validated package channel remains local and unpublished.** No
+  `npm publish` has been run in any form; `package.json` still declares
+  `"private": true`; no `publishConfig` and no lifecycle/publication script
+  exists. A consumer must possess or build the reviewed local `.tgz`
+  themselves — there is no `npm install stocktrends-mcp-server` by name
+  against any registry.
+- **No hosted or remote MCP exists.** Every validated channel — checkout and
+  package — remains local stdio only.
+- **No directory or marketplace submission has occurred.** The directory
+  metadata readiness content remains reviewed, reusable content only; no
+  actual submission has been made under either channel.
+- **Package readiness is not final until PR-6.** This addendum, PR #90, and
+  the PR-5 documentation refresh and V-28 tail revalidation together
+  establish package-artifact evidence; they do not themselves constitute the
+  package-readiness closure, which is reserved for a separately reviewed
+  PR-6 record.
+- **Publication requires a later, explicit owner decision.** Nothing in this
+  addendum, in PR #90, or in PR-5 authorizes, approves, or implies npm
+  registry publication or directory/marketplace submission. Removing
+  `private: true` and performing any actual publication remain reserved to a
+  separate, later, explicitly reviewed decision that does not exist today.
+
+---
+
 **Reminder:** This signoff is documentation only. It performs no validation,
 makes no live API call (paid or credential-free), uses no API key, runs no
 MCP Inspector session, performs no paid validation, exercises no
