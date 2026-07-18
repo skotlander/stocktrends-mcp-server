@@ -126,6 +126,86 @@ Complete every item before tagging or announcing:
   the §4 non-approved surfaces, and no tag, release note, or announcement
   wording claims otherwise.
 
+## 2a. Package-artifact readiness checklist (C13–C30)
+
+Added by PR-5 after the package artifact validation phase
+([`PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md`](PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md)).
+These items gate a package-artifact-inclusive release **in addition to**
+C1–C12 above; none of them authorizes registry publication or directory
+submission — those remain separate, later, explicitly reviewed decisions
+(PR-6 and beyond).
+
+- [ ] **C13 — Package identity and MIT license coherence.** `package.json`
+  declares `"license": "MIT"`, a canonical MIT `LICENSE` artifact exists at
+  the repository root with copyright holder "Stocktrends Publications"
+  (2026), and both agree (no declared-license/license-text mismatch). See
+  the [Package Identity and License Decision Record](PACKAGE_IDENTITY_AND_LICENSE_DECISION_RECORD.md).
+- [ ] **C14 — Closed 37-path artifact allowlist enforced.** `package.json`
+  `files` contains exactly `dist/**/*.js`, `dist/**/*.d.ts`, `README.md`,
+  `LICENSE`; a freshly packed artifact contains exactly 37 paths (17
+  `dist/**/*.js` + 17 `dist/**/*.d.ts` + `package.json` + `README.md` +
+  `LICENSE`) and nothing outside that set.
+- [ ] **C15 — Excluded categories confirmed absent from the packed
+  artifact.** Source maps (`dist/**/*.js.map`), TypeScript source (`src/**`),
+  tests/fixtures (`tests/**`), internal docs (`docs/**`), the lockfile
+  (`package-lock.json`), build/test configuration, and any secret-shaped or
+  credential value are all absent from the unpacked artifact.
+- [ ] **C16 — Static runtime-dependency validator green.**
+  `npm run check:runtime-deps` passes against the current `dist/**/*.js` —
+  every directly imported external package is declared in `dependencies`
+  (currently `@modelcontextprotocol/sdk`, `zod`).
+- [ ] **C17 — Local offline pack completed.** A single `npm pack` (or
+  `npm pack --dry-run` for a metadata-only check) ran with a literal
+  `--offline` posture, produced the expected file count, and made no
+  registry request.
+- [ ] **C18 — Local offline consumer install completed.** A single
+  `npm install <local-tgz>` into an isolated temporary consumer, with
+  literal `--offline`, `--ignore-scripts`, `--no-save`, and empty npm
+  configs, exited zero with no `ENOTCACHED` and no registry fallback.
+- [ ] **C19 — npm-installed-bin MCP `initialize` completed.** The
+  npm-installed command shim (POSIX symlink or Windows `.cmd`) was launched
+  directly — not a checkout-relative file path — and completed the MCP
+  `initialize` handshake.
+- [ ] **C20 — Exact 1-tool / 10-resource / 0-prompt default/free surface
+  observed** through the installed bin: `stocktrends_estimate_workflow_cost`
+  only; all nine paid/x402 tools absent; the ten public resource URIs;
+  prompts capability `undefined`.
+- [ ] **C21 — No tool invocation or resource read during package
+  validation.** `callTool` and `readResource` were never called against the
+  installed bin — both would make a live Stock Trends API request, which is
+  out of scope for package/install validation.
+- [ ] **C22 — No network attempt observed.** A process-level network guard
+  confirmed zero outbound fetch/HTTP/TLS/DNS/socket attempts during startup,
+  `initialize`, tool listing, resource listing, and shutdown.
+- [ ] **C23 — `private: true` preserved** in both the repository manifest and
+  every installed-consumer manifest inspected.
+- [ ] **C24 — No `publishConfig`** in the repository manifest or any
+  installed-consumer manifest inspected.
+- [ ] **C25 — No lifecycle or publication script** (`preinstall`, `install`,
+  `postinstall`, `prepare`, `prepack`, `postpack`, `prepublish`,
+  `prepublishOnly`, `publish`, `postpublish`) exists in `package.json`.
+- [ ] **C26 — No registry publication occurred or is claimed.** `npm publish`
+  was never run in any form; no released document describes this package as
+  registry-available or installable by name from a registry.
+- [ ] **C27 — No directory/marketplace submission occurred.** The metadata
+  readiness content remains reviewed, reusable content only (§C7); no actual
+  submission has been made.
+- [ ] **C28 — PR-4 Windows and WSL2 cross-platform evidence confirmed.** The
+  merged [Cross-Platform Package Install / Stdio Validation Report](CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md)
+  (PR #90) records completed installed-bin `initialize` handshakes on both
+  Windows and WSL2 Ubuntu, with B-5 closed on both tested environments (see
+  the [B-5 POSIX Installed-Bin Correction Memo](B5_POSIX_INSTALLED_BIN_CORRECTION_MEMO.md)).
+- [ ] **C29 — PR-5 V-28 final refreshed-README tail validation completed.**
+  After the documentation refresh, a final repack, closed-allowlist
+  comparison, secret/forbidden-content scan, refreshed-README-in-artifact
+  byte comparison, and a minimal installed-bin handshake all passed; see the
+  [Package Documentation Refresh and Tail Validation Report](PACKAGE_DOCUMENTATION_REFRESH_AND_TAIL_VALIDATION_REPORT.md).
+- [ ] **C30 — PR-6 readiness closure still required.** Completing C13–C29
+  establishes package-artifact readiness evidence only. It grants no
+  registry-publication authority and no directory/marketplace-submission
+  authority; PR-6's package-readiness closure record, and a later separate
+  publication decision, remain required before either occurs.
+
 ## 3. Release decision record template
 
 Record each release decision secret-free, in this shape:

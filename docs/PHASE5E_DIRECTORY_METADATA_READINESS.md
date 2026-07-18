@@ -59,11 +59,14 @@ Only facts the repository already records; this document invents nothing.
   record the operator/maintainer as Skot Kortje / Stock Trends
   (`skortje@stocktrends.com`) — see the Phase 5D controlled validation
   report. No other contact is asserted.
-- **License:** **not asserted here.** `package.json` carries a
-  `"license": "ISC"` field, but the repository contains no `LICENSE` file
-  and no reviewed license decision is recorded in the documentation set. A
-  future submission must resolve and record the license status in its own
-  separately reviewed step (§11) rather than reuse an unconfirmed field.
+- **License:** **MIT.** `package.json` carries `"license": "MIT"`, and a
+  canonical MIT `LICENSE` artifact exists at the repository root, with
+  copyright holder "Stocktrends Publications" (2026). This resolves the
+  license inconsistency this section previously disclaimed; see the
+  [Package Identity and License Decision Record](PACKAGE_IDENTITY_AND_LICENSE_DECISION_RECORD.md)
+  for the full decision record. A future submission must still re-verify
+  this status against the then-current `package.json` and `LICENSE` before
+  reuse (§11).
 
 ## 3. Short human-readable description
 
@@ -116,10 +119,10 @@ drift.
   "tools_paid_exposed": 10,
   "resources": 10,
   "auth": "X-API-Key (optional; paid exposure only; never for resources)",
-  "payment_rails": "none (no x402, no wallet, no OAuth, no Bearer)",
+  "payment_rails": "x402 challenge-validation-only, default-off; no proof forwarding, payment, settlement, paid output, or spend; no wallet; no OAuth; no Bearer",
   "investment_advice": false,
   "autonomous_use_approved": false,
-  "install": "git clone + npm install + npm run build",
+  "install": "git clone + npm install + npm run build (repository checkout, primary); or a locally built/validated npm package artifact (local .tgz, not registry-published) — see README",
   "paid_execution": "controlled local operator only; disabled by default",
   "surface_counts": {
     "tools_default": 1,
@@ -263,17 +266,28 @@ this document may ever claim:
   [`README.md`](../README.md) — `git clone` + `npm install` +
   `npm run build`, then a local stdio client configuration per the README's
   "Connect a local stdio MCP client" section (Claude Desktop, Claude Code
-  free-mode, or the generic stdio template). This is the only supported
-  install channel; there is no npm package and no hosted endpoint.
+  free-mode, or the generic stdio template). This remains the primary
+  supported install channel.
+- **Local package-artifact install path:** a second, distinct install path —
+  installing from a locally built and validated npm package artifact (a
+  local `.tgz`) — has since been validated cross-platform; see the README's
+  [Local Package Artifact Installation](../README.md#local-package-artifact-installation-validated-not-published)
+  section and the
+  [Cross-Platform Package Install / Stdio Validation Report](CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md).
+  **This is not a registry install and not registry publication** — no
+  `npm install stocktrends-mcp-server` by name is possible; the consumer
+  must possess or build the reviewed local artifact themselves. There is no
+  npm registry publication and no hosted endpoint.
 - **Security model:** [`SECURITY_MODEL.md`](SECURITY_MODEL.md).
 - **Operator smoke-test runbook (current surface, no-spend):**
   [`PHASE5E_OPERATOR_SMOKE_TEST_RUNBOOK.md`](PHASE5E_OPERATOR_SMOKE_TEST_RUNBOOK.md).
 - **Release checklist:**
   [`PHASE5E_LAUNCH_RELEASE_CHECKLIST.md`](PHASE5E_LAUNCH_RELEASE_CHECKLIST.md).
-- **Launch-readiness signoff:** `PHASE5E_LAUNCH_READINESS_SIGNOFF.md` — once
-  merged (PR #60); until then, the governing signoff is the Phase 5D
-  market-context production readiness signoff (controlled local stdio
-  operator scope).
+- **Launch-readiness signoff:**
+  [`PHASE5E_LOCAL_STDIO_LAUNCH_READINESS_SIGNOFF.md`](PHASE5E_LOCAL_STDIO_LAUNCH_READINESS_SIGNOFF.md)
+  — merged (PR #60); see also its dated addendum recording the subsequent
+  package-artifact validation (PR #90) and this documentation refresh
+  (PR-5).
 
 **Drift note:** any future submission must re-verify every count, name, URI,
 and reference in this document against the then-current README and source —

@@ -719,3 +719,64 @@ the gap recorded in the design memo §2 (the market-regime and breadth routes
 were already listed). `/v1/leadership/definitions` is deliberately kept **off**
 the prohibited list: it is the verified public/zero-cost route registered as
 the credential-free `stocktrends://leadership/definitions` resource.
+
+## 18. Package Distribution and Supply-Chain Surface
+
+This section addresses a surface prior sections of this model did not cover:
+**a packaged npm artifact is a supply-chain/distribution surface**, distinct
+from the runtime/network/API-key surfaces above, and is now validated
+locally per
+[`PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md`](PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md).
+It updates and does not relax sections 1–17; it does not restate that
+architecture in full.
+
+Minimum controls for this surface:
+
+- **Closed artifact allowlist.** `package.json` `files` is a closed,
+  enumerated allowlist (`dist/**/*.js`, `dist/**/*.d.ts`, `README.md`,
+  `LICENSE`) rather than a denylist. Any packed path outside that allowlist
+  is a validation failure, not a warning.
+- **Secret and forbidden-material scanning over the unpacked artifact.**
+  Every package-validation pass scans the artifact's **unpacked contents**
+  (not merely the manifest) for API keys, tokens, credentials, wallet or
+  signing material, captured proof/payment values, `.env`/local
+  configuration, test fixtures, and internal documentation. A placeholder
+  such as `<your-api-key>` is not a finding; a credential-shaped value is.
+- **No lifecycle install script.** No `preinstall`, `install`, `postinstall`,
+  `prepare`, `prepack`, `postpack`, `prepublish`, `prepublishOnly`,
+  `publish`, or `postpublish` script exists. This is a deliberate
+  accidental-execution and accidental-publication control, not an omission —
+  a consumer's `npm install` never triggers arbitrary code from this
+  package, and no lifecycle hook exists that could fire an unintended
+  publish.
+- **Direct runtime dependency completeness.** Every externally imported
+  package in the compiled `dist/**/*.js` output must be declared in
+  `dependencies` (`npm run check:runtime-deps`), checked **statically and
+  offline** against the compiled output — never inferred from a successful
+  install, since hoisting can resolve an undeclared import without the
+  contract being complete.
+- **Local offline installation only.** Package-artifact validation installs
+  the locally packed artifact into an isolated temporary consumer using a
+  literal `--offline` posture against an already-primed local cache;
+  `--prefer-offline` and any implicit network fallback are prohibited, since
+  either would silently defeat the offline boundary this control exists to
+  enforce.
+- **npm-installed-bin validation.** Package validation launches the actual
+  npm-installed command shim (a POSIX symlink or a Windows `.cmd` shim) —
+  not a checkout-relative file path — and requires a completed MCP
+  `initialize` handshake, not merely a zero exit code, before treating the
+  installed artifact as functional.
+- **`private: true` and no publication posture.** `package.json` declares
+  `"private": true` and no `publishConfig`, making an accidental `npm
+  publish` fail closed. This posture is reviewed at each package-validation
+  pass, not re-decided by it.
+- **No registry publication without a later, separate, explicitly reviewed
+  decision.** Building, packing, and installing a local artifact is
+  packaging validation, not publication. `npm publish`, `npm view`, `npm
+  search`, and `npm info` remain out of scope for every validation pass
+  described here; registry availability and any actual publication remain
+  reserved to a decision that does not exist today.
+- **No packaged artifact is retained by validation.** Every `.tgz`, unpacked
+  artifact directory, and temporary consumer created during package
+  validation is deleted at the end of that validation; none is committed to
+  the repository.

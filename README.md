@@ -48,11 +48,39 @@ npm install
 npm run build
 ```
 
-This `git clone` + `npm install` + `npm run build` sequence, followed by local stdio execution of the compiled `dist/server.js`, is the only supported install channel for this phase. There is no npm package, no registry publication, and no hosted MCP endpoint — packaging and publication are explicitly deferred, not omitted (see the [Phase 5E Launch/Distribution Readiness Design Memo](docs/PHASE5E_LAUNCH_DISTRIBUTION_READINESS_DESIGN_MEMO.md)).
+This `git clone` + `npm install` + `npm run build` sequence, followed by local stdio execution of the compiled `dist/server.js`, remains fully supported and is the primary install channel for this repository. A second, distinct install path — a locally built and validated npm package artifact (a local `.tgz`, not a registry install) — has also been validated cross-platform; see [Local Package Artifact Installation](#local-package-artifact-installation-validated-not-published) below and the [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md). **Neither path means this package is published.** There is no npm registry publication and no hosted MCP endpoint. A validated local artifact is not registry availability — a consumer must possess or build the reviewed local `.tgz` themselves; packaging has been validated, and publication remains a separate, later, explicitly authorized decision (see the [Package Artifact and Installation Validation Architecture](docs/PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md)).
 
 No environment variables or `.env` file are required for this path. Do not set `STOCKTRENDS_ENABLE_PAID_TOOLS`, `STOCKTRENDS_API_KEY`, or `STOCKTRENDS_ENABLE_PAID_EXECUTION` while testing default/free mode.
 
 Optional: `npm start` starts the local stdio server process directly and is mainly useful as a manual smoke check (it will sit waiting for JSON-RPC input on stdin). Stop it with Ctrl+C before launching the server via MCP Inspector below.
+
+### Local Package Artifact Installation (validated, not published)
+
+In addition to the repository-checkout path above, this repository's package has been built, packed, and validated locally as an installable npm package artifact — on Windows and WSL2 Ubuntu (see the [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md)). This path is for consumers who already have, or can build, the reviewed local package artifact. **It is not an npm registry install.**
+
+- The artifact is **not retained in this repository** — no `.tgz` is committed, and none ships with a checkout.
+- The artifact is **not published to any npm registry.** `package.json` declares `"private": true`, and no `publishConfig` or publication script exists.
+- To use this path, a consumer must build the artifact themselves from a reviewed checkout, or obtain the reviewed local `.tgz` through a channel outside this repository (for example, directly from the maintainer).
+
+To build the local artifact yourself from a checkout:
+
+```sh
+git clone <repository-url>
+cd stocktrends-mcp-server
+npm install
+npm run build
+npm pack
+```
+
+This produces `stocktrends-mcp-server-1.0.0.tgz` in the current directory — the reviewed closed artifact allowlist is `dist/**/*.js`, `dist/**/*.d.ts`, `README.md`, and `LICENSE` (see the [Package Metadata and Closed Artifact Allowlist Implementation](docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md)). Install it into a **separate** consumer project (not this checkout):
+
+```sh
+npm install <path-to-local-stocktrends-mcp-server-1.0.0.tgz>
+```
+
+Do **not** run `npm install stocktrends-mcp-server` by itself — that instructs npm to resolve the name against a registry, and no registry publication of this package exists.
+
+Once installed, the package provides an npm-managed command shim rather than a checkout-relative `dist/server.js` path. On POSIX systems (Linux, macOS, WSL) this is a symlink at `node_modules/.bin/stocktrends-mcp-server`; on Windows it is a generated shim at `node_modules\.bin\stocktrends-mcp-server.cmd`. **Do not assume the bin is installed globally** — resolve it from the consumer project's own `node_modules/.bin`. See [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client) below for package-installed client configuration examples alongside the checkout examples.
 
 ### Inspect with MCP Inspector (no API key)
 
@@ -78,7 +106,12 @@ Free/default mode needs no API key, so nothing secret is involved in this quicks
 
 ## Connect a local stdio MCP client
 
-This section wires the compiled server into an MCP client over local stdio. Build first (`npm run build`); every example below launches the compiled entry point with `command: "node"` and `args: ["<absolute-path-to-checkout>/dist/server.js"]`, where `<absolute-path-to-checkout>` is the absolute path to this repository on your machine. Every **primary** example in this section is free mode: no `STOCKTRENDS_*` variable is set, no API key is configured, and no spend is possible. Read [Secret Safety](#secret-safety) before adding any paid variable to a client configuration file.
+This section wires the server into an MCP client over local stdio. Two installation shapes are covered, clearly separated in each subsection below:
+
+- **Repository-checkout path** (build first with `npm run build`): launches the compiled entry point directly with `command: "node"` and `args: ["<absolute-path-to-checkout>/dist/server.js"]`, where `<absolute-path-to-checkout>` is the absolute path to this repository on your machine.
+- **Local-package-artifact path** (see [Local Package Artifact Installation](#local-package-artifact-installation-validated-not-published) above): launches the npm-installed command shim resolved from `<path-to-consumer-project>`, the absolute path to the **separate** project where you ran `npm install <path-to-local-...-1.0.0.tgz>` — not this repository checkout, and not a global install.
+
+Every **primary** example in this section is free mode: no `STOCKTRENDS_*` variable is set, no API key is configured, and no spend is possible. Read [Secret Safety](#secret-safety) before adding any paid variable to a client configuration file.
 
 ### A. Claude Desktop
 
@@ -103,6 +136,32 @@ The Claude Desktop configuration file location is client-version dependent; at t
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 Verify these paths against your installed Claude Desktop version's current documentation before relying on them, since client versions can change file locations and schema.
+
+**Package-installed variant (local artifact path, free mode).** Uses the npm-installed command shim instead of a checkout-relative path:
+
+```json
+{
+  "mcpServers": {
+    "stocktrends": {
+      "command": "<path-to-consumer-project>/node_modules/.bin/stocktrends-mcp-server"
+    }
+  }
+}
+```
+
+Windows equivalent (the generated `.cmd` shim):
+
+```json
+{
+  "mcpServers": {
+    "stocktrends": {
+      "command": "<path-to-consumer-project>\\node_modules\\.bin\\stocktrends-mcp-server.cmd"
+    }
+  }
+}
+```
+
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
 
 **Optional paid-exposure variant (exposure only — not execution).** This adds the paid tool *definitions* to the client's tool list; it does not authorize or perform any paid API call:
 
@@ -148,6 +207,20 @@ This registers a free-mode stdio server with no `env` entries. Equivalently, a p
 }
 ```
 
+**Package-installed variant (local artifact path, free mode, POSIX):**
+
+```sh
+claude mcp add --transport stdio stocktrends -- <path-to-consumer-project>/node_modules/.bin/stocktrends-mcp-server
+```
+
+**Package-installed variant (local artifact path, free mode, Windows):**
+
+```sh
+claude mcp add --transport stdio stocktrends -- <path-to-consumer-project>\node_modules\.bin\stocktrends-mcp-server.cmd
+```
+
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
+
 ### C. Generic MCP stdio client
 
 Any MCP client that supports local stdio servers can use this client-agnostic shape:
@@ -159,6 +232,26 @@ Any MCP client that supports local stdio servers can use this client-agnostic sh
   "env": {}
 }
 ```
+
+**Package-installed variant (local artifact path, free mode).** POSIX:
+
+```json
+{
+  "command": "<path-to-consumer-project>/node_modules/.bin/stocktrends-mcp-server",
+  "env": {}
+}
+```
+
+Windows (the generated `.cmd` shim):
+
+```json
+{
+  "command": "<path-to-consumer-project>\\node_modules\\.bin\\stocktrends-mcp-server.cmd",
+  "env": {}
+}
+```
+
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
 
 **Optional paid-exposure variant** (same rules as Claude Desktop above — exposure only, execution flag absent):
 
@@ -624,3 +717,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Offline Pack and Artifact-Content Validation Report](docs/OFFLINE_PACKAGE_ARTIFACT_CONTENT_VALIDATION_REPORT.md)
 - [B-5 POSIX Installed-Bin Correction Memo](docs/B5_POSIX_INSTALLED_BIN_CORRECTION_MEMO.md)
 - [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md)
+- [Package Documentation Refresh and Tail Validation Report](docs/PACKAGE_DOCUMENTATION_REFRESH_AND_TAIL_VALIDATION_REPORT.md)
