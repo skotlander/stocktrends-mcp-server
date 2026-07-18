@@ -720,3 +720,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Package Documentation Refresh and Tail Validation Report](docs/PACKAGE_DOCUMENTATION_REFRESH_AND_TAIL_VALIDATION_REPORT.md)
 - [Package Readiness Closure and Publication Decision Handoff](docs/PACKAGE_READINESS_CLOSURE_AND_PUBLICATION_DECISION_HANDOFF.md)
 - [Package Publication and Distribution Decision Architecture](docs/PACKAGE_PUBLICATION_AND_DISTRIBUTION_DECISION_ARCHITECTURE.md)
+- [Package Publication Platform Readiness Verification](docs/PACKAGE_PUBLICATION_PLATFORM_READINESS_VERIFICATION.md)
