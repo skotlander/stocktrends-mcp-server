@@ -30,8 +30,23 @@ const MAX_REPORTED_VIOLATIONS = 60;
 export const EXPECTED_WORKFLOW_BASENAME = "npm-stage-release.yml";
 export const CONFIRMATION_PHRASE = "STAGE_STOCKTRENDS_NPM_RELEASE";
 export const REVIEWED_PACKAGE_NAME = "@stocktrends-publications/stocktrends-mcp-server";
-export const MIN_NPM_VERSION = "11.15.0";
+// npm is pinned to an exact version (above the 11.15.0 staged-publishing floor),
+// never a caret/tilde/range/tag/latest. The workflow must install exactly this
+// version and assert `npm --version` equals it before staging.
+export const REQUIRED_NPM_VERSION = "11.18.0";
 export const REQUIRED_NODE_MAJOR = "24";
+
+// Every external action must be pinned to an immutable full 40-character commit
+// SHA -- never a branch, tag (`@v4`/`@v6`), or abbreviated SHA. Only these two
+// actions, at exactly these approved release commits, are permitted.
+export const REQUIRED_CHECKOUT_ACTION = "actions/checkout";
+export const REQUIRED_CHECKOUT_SHA = "df4cb1c069e1874edd31b4311f1884172cec0e10"; // v6.0.3
+export const REQUIRED_SETUP_NODE_ACTION = "actions/setup-node";
+export const REQUIRED_SETUP_NODE_SHA = "249970729cb0ef3589644e2896645e5dc5ba9c38"; // v6.5.0
+export const APPROVED_ACTION_SHAS = Object.freeze({
+  [REQUIRED_CHECKOUT_ACTION]: REQUIRED_CHECKOUT_SHA,
+  [REQUIRED_SETUP_NODE_ACTION]: REQUIRED_SETUP_NODE_SHA
+});
 
 // The single shell variable the exact tarball is bound to. The staging command
 // must submit this bound variable -- the same artifact that `npm pack` created
@@ -233,11 +248,202 @@ function checkNodeVersion(codeText, violations) {
   }
 }
 
-function checkNpmFloor(codeText, violations) {
-  if (!codeText.includes(MIN_NPM_VERSION)) {
+// npm must be installed at exactly REQUIRED_NPM_VERSION -- no caret, tilde,
+// range, tag, or `latest` -- and the workflow must assert `npm --version`
+// equals that pin, before `npm stage publish`.
+function checkNpmPin(codeLines, codeText, violations) {
+  const installMatches = [...codeText.matchAll(/npm\s+install\s+-g\s+npm@([^\s;&|]+)/g)];
+  const specs = installMatches.map((m) => m[1].replace(/["']/g, ""));
+
+  if (!specs.includes(REQUIRED_NPM_VERSION)) {
     violations.push(
-      `workflow must enforce an npm version floor of at least ${MIN_NPM_VERSION} before any staged-publishing command.`
+      `workflow must install npm exactly as npm@${REQUIRED_NPM_VERSION} before any staged-publishing command.`
     );
+  }
+  for (const spec of specs) {
+    if (spec !== REQUIRED_NPM_VERSION) {
+      violations.push(
+        `npm CLI must be pinned exactly to ${REQUIRED_NPM_VERSION}; a floating or different selector ${JSON.stringify(spec)} is not allowed.`
+      );
+    }
+  }
+
+  if (!/npm\s+--version/.test(codeText)) {
+    violations.push("workflow must read `npm --version` to assert the pinned npm version.");
+  }
+
+  // An exact-equality guard: an inequality test whose operand is the pinned
+  // version literally, or a shell variable assigned that exact literal.
+  const pinVars = codeLines
+    .map((line) => new RegExp(`^\\s*([A-Za-z_][A-Za-z0-9_]*)=["']?${REQUIRED_NPM_VERSION.replace(/\./g, "\\.")}["']?\\s*$`).exec(line))
+    .filter(Boolean)
+    .map((m) => m[1]);
+  const literalRe = new RegExp(REQUIRED_NPM_VERSION.replace(/\./g, "\\."));
+  const equalityIndex = codeLines.findIndex((line) => {
+    if (!/!=|-ne\b/.test(line)) return false;
+    if (literalRe.test(line)) return true;
+    return pinVars.some((v) => new RegExp(`\\$\\{?${v}\\}?`).test(line));
+  });
+  if (equalityIndex === -1) {
+    violations.push(
+      `workflow must assert \`npm --version\` equals exactly ${REQUIRED_NPM_VERSION} (an inequality guard that exits on mismatch).`
+    );
+  }
+
+  // Ordering: the pinned install and its assertion must precede staging.
+  const firstIndex = (pattern) => codeLines.findIndex((line) => pattern.test(line));
+  const installIndex = firstIndex(/npm\s+install\s+-g\s+npm@/);
+  const stageIndex = firstIndex(/\bnpm\s+stage\s+publish\b/);
+  if (installIndex !== -1 && stageIndex !== -1 && installIndex > stageIndex) {
+    violations.push(`npm must be pinned to ${REQUIRED_NPM_VERSION} before 'npm stage publish', not after.`);
+  }
+  if (equalityIndex !== -1 && stageIndex !== -1 && equalityIndex > stageIndex) {
+    violations.push("the npm version-equality assertion must run before 'npm stage publish', not after.");
+  }
+}
+
+// Collects the shell-content lines of every step: inline `run:` commands and the
+// body lines of `run: |`/`run: >` block scalars. YAML `env:` mappings and other
+// keys are excluded, so a ${{ ... }} expression is only ever inspected where it
+// would actually be expanded into a shell command.
+function collectRunShellLines(codeLines) {
+  const shellLines = [];
+  let inRunBlock = false;
+  let runIndent = -1;
+  for (const line of codeLines) {
+    if (inRunBlock) {
+      if (getIndent(line) > runIndent) {
+        shellLines.push(line);
+        continue;
+      }
+      inRunBlock = false;
+      runIndent = -1;
+    }
+    if (/^\s*(?:-\s*)?run:\s*[|>]/.test(line)) {
+      inRunBlock = true;
+      runIndent = getIndent(line);
+      continue;
+    }
+    const inlineRun = /^\s*(?:-\s*)?run:\s*(\S.*)$/.exec(line);
+    if (inlineRun) shellLines.push(inlineRun[1]);
+  }
+  return shellLines;
+}
+
+// Untrusted/dispatch-time values must never be interpolated directly into shell.
+// A ${{ inputs.* }} or ${{ github.* }} expression may appear in a YAML env:
+// mapping (safe -- it becomes an environment variable), but not inside a run:
+// shell command, where it would be expanded into executable text.
+function checkShellContextInterpolation(codeLines, violations) {
+  const shellLines = collectRunShellLines(codeLines);
+  if (shellLines.some((line) => /\$\{\{\s*inputs\./.test(line))) {
+    violations.push(
+      "run: shell commands must not interpolate ${{ inputs.* }} directly; pass the value through an env: mapping and compare the quoted environment variable."
+    );
+  }
+  if (shellLines.some((line) => /\$\{\{\s*github\./.test(line))) {
+    violations.push(
+      "run: shell commands must not interpolate ${{ github.* }} directly; use the corresponding shell environment variable (e.g. $GITHUB_REF)."
+    );
+  }
+}
+
+// Every external action must be pinned to its approved immutable full commit
+// SHA. Only actions/checkout and actions/setup-node are permitted, and the
+// security-relevant `with:` options must be set.
+function checkActionPins(codeLines, codeText, violations) {
+  const usesLines = codeLines.filter((line) => /(^|\s)uses:\s*\S/.test(line));
+  const seen = new Set();
+  const FULL_SHA = /^[0-9a-f]{40}$/;
+
+  for (const line of usesLines) {
+    const value = /uses:\s*([^\s#]+)/.exec(line)?.[1];
+    if (!value) continue;
+    const at = value.lastIndexOf("@");
+    const name = at === -1 ? value : value.slice(0, at);
+    const ref = at === -1 ? "" : value.slice(at + 1);
+
+    if (!(name in APPROVED_ACTION_SHAS)) {
+      violations.push(
+        `only ${REQUIRED_CHECKOUT_ACTION} and ${REQUIRED_SETUP_NODE_ACTION} (pinned to their approved commit SHAs) may be used; ${JSON.stringify(value)} is not allowed.`
+      );
+      continue;
+    }
+    seen.add(name);
+    const approved = APPROVED_ACTION_SHAS[name];
+    if (ref !== approved) {
+      const why = FULL_SHA.test(ref)
+        ? "a different full SHA"
+        : ref === ""
+          ? "no ref"
+          : "a mutable tag/branch or abbreviated SHA";
+      violations.push(
+        `${name} must be pinned to the approved full commit SHA ${approved}; ${JSON.stringify(ref)} is ${why}.`
+      );
+    }
+  }
+
+  for (const name of Object.keys(APPROVED_ACTION_SHAS)) {
+    if (!seen.has(name)) {
+      violations.push(`workflow must use ${name} pinned to ${APPROVED_ACTION_SHAS[name]}.`);
+    }
+  }
+
+  if (!/persist-credentials:\s*false/.test(codeText)) {
+    violations.push("actions/checkout must set `persist-credentials: false`.");
+  }
+  if (!/package-manager-cache:\s*false/.test(codeText)) {
+    violations.push("actions/setup-node must set `package-manager-cache: false`.");
+  }
+}
+
+// The workflow_dispatch input contract: both typed inputs must exist, be
+// required, and be typed string.
+function checkInputDeclarations(codeLines, violations) {
+  const idx = codeLines.findIndex((line) => /^\s*inputs:\s*$/.test(line));
+  if (idx === -1) {
+    violations.push("workflow_dispatch must declare an `inputs:` block.");
+    return;
+  }
+  const headerIndent = getIndent(codeLines[idx]);
+  const body = [];
+  for (let i = idx + 1; i < codeLines.length; i += 1) {
+    if (getIndent(codeLines[i]) <= headerIndent) break;
+    body.push(codeLines[i]);
+  }
+  if (body.length === 0) {
+    violations.push("workflow_dispatch.inputs must declare expected_version and confirm_phrase.");
+    return;
+  }
+
+  const keyIndent = Math.min(...body.map(getIndent));
+  const inputs = {};
+  let current = null;
+  for (const line of body) {
+    if (getIndent(line) === keyIndent) {
+      const m = /^\s*([A-Za-z0-9_-]+)\s*:/.exec(line);
+      if (m) {
+        current = m[1];
+        inputs[current] = {};
+      }
+    } else if (current) {
+      const m = /^\s*([A-Za-z0-9_-]+)\s*:\s*(.+?)\s*$/.exec(line);
+      if (m) inputs[current][m[1]] = m[2].replace(/^["']|["']$/g, "");
+    }
+  }
+
+  for (const name of ["expected_version", "confirm_phrase"]) {
+    const decl = inputs[name];
+    if (!decl) {
+      violations.push(`workflow_dispatch.inputs must declare ${name}.`);
+      continue;
+    }
+    if (decl.required !== "true") {
+      violations.push(`workflow_dispatch.inputs.${name}.required must be true (found ${JSON.stringify(decl.required)}).`);
+    }
+    if (decl.type !== "string") {
+      violations.push(`workflow_dispatch.inputs.${name}.type must be string (found ${JSON.stringify(decl.type)}).`);
+    }
   }
 }
 
@@ -440,8 +646,11 @@ export function analyzeReleaseWorkflow({ workflowPath }) {
   checkPermissions(codeLines, violations);
   checkRunner(codeText, violations);
   checkNodeVersion(codeText, violations);
-  checkNpmFloor(codeText, violations);
+  checkNpmPin(codeLines, codeText, violations);
   checkGates(codeText, violations);
+  checkInputDeclarations(codeLines, violations);
+  checkShellContextInterpolation(codeLines, violations);
+  checkActionPins(codeLines, codeText, violations);
   checkOrderingAndStaging(codeLines, codeText, violations);
   checkStagedTarball(codeLines, violations);
   checkForbiddenCommands(codeText, violations);

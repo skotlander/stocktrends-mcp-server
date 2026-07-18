@@ -561,6 +561,82 @@ temporary artifacts removed.
 
 ---
 
+## 22. PR #98 release-workflow security correction (three issues)
+
+A workflow-security review of the open PR #98 raised three hardening items,
+corrected here on the same branch. `.github/workflows/npm-stage-release.yml`,
+`scripts/check-release-workflow.mjs` (+`.d.mts`), `tests/releaseWorkflow.test.ts`,
+and this record were changed. No external action; the no-external-action
+boundary (§18) is unchanged; the workflow remains inert and was not run.
+
+**Issue 1 — no GitHub-context shell interpolation (corrected).** The confirmation
+input and main-branch value were interpolated directly into shell via
+`${{ inputs.confirm_phrase }}` and `${{ github.ref }}`. Corrected so no
+dispatch-time value is expanded into shell text:
+- the confirmation input is passed through the step's `env:` mapping
+  (`CONFIRM_PHRASE: ${{ inputs.confirm_phrase }}`) and the shell compares only the
+  quoted environment variable: `if [ "$CONFIRM_PHRASE" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]`;
+- the main-branch gate uses GitHub's shell environment variable:
+  `if [ "$GITHUB_REF" != "refs/heads/main" ]`;
+- the expected-version step's existing safe `env:` pattern is preserved.
+
+The validator gained `collectRunShellLines` and `checkShellContextInterpolation`,
+which fail closed when a `run:` inline command or run-block shell line directly
+contains `${{ inputs.` or `${{ github.`. Expressions in YAML `env:` mappings
+remain permitted. Tests prove: the corrected workflow passes; direct
+`${{ inputs.confirm_phrase }}` shell interpolation fails; direct
+`${{ github.ref }}` shell interpolation fails; and the same expressions in an
+`env:` mapping do not fail.
+
+**Issue 2 — immutable full-SHA action pinning (corrected).** `actions/checkout@v4`
+and `actions/setup-node@v4` (mutable tags) were replaced with exact approved
+release commits, with the security-relevant `with:` options set:
+- `actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3` with
+  `persist-credentials: false`;
+- `actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0` with
+  `node-version: '24'`, `registry-url`, and `package-manager-cache: false`.
+
+The validator gained `checkActionPins` (constants `REQUIRED_CHECKOUT_ACTION/SHA`,
+`REQUIRED_SETUP_NODE_ACTION/SHA`, `APPROVED_ACTION_SHAS`), requiring exactly the
+approved checkout and setup-node full SHAs, no other external `uses:` action,
+`persist-credentials: false`, and `package-manager-cache: false`. Tests reject:
+a mutable major tag; an abbreviated SHA; a different full SHA; a different
+action; missing `persist-credentials: false`; missing `package-manager-cache: false`.
+
+**Issue 3 — exact npm CLI pin (corrected).** `npm install -g npm@^11.15.0`
+(floating) was replaced with `npm install -g npm@11.18.0`, followed by an exact
+version-equality guard (`EXPECTED="11.18.0"; CUR="$(npm --version)"; if [ "$CUR" != "$EXPECTED" ]`).
+The `MIN_NPM_VERSION` floor constant/`checkNpmFloor` were replaced by
+`REQUIRED_NPM_VERSION = "11.18.0"` and `checkNpmPin`, which requires the exact
+install, an exact-equality assertion of `npm --version`, and both before
+`npm stage publish`, and rejects caret/tilde/range/tag/`latest`, other versions,
+and a missing equality assertion.
+
+**Input-declaration contract (added).** `checkInputDeclarations` structurally
+enforces that `expected_version` and `confirm_phrase` each exist with
+`required: true` and `type: string`; focused negative tests cover each missing
+or incorrect property.
+
+**SECURITY_MODEL:** left unchanged — its current P-4 §18 wording (stage-only
+OIDC, no long-lived publication credential/token/`NODE_AUTH_TOKEN`,
+`workflow_dispatch`-only, gated) does not overstate these controls; it is now
+further hardened, not contradicted.
+
+**Test totals after this correction:** `tests/releaseWorkflow.test.ts` **60
+cases** (was 38); full suite **`npm test` 1121 passed / 1 skipped across 20
+files**. `tests/packageMetadata.test.ts` remains **87**.
+
+**All checks re-run:** typecheck, build, `npm test` (1121/1 skip/20), the three
+`check:*` scripts, offline `npm pack` (scoped 37-file tarball, allowlist-clean),
+offline isolated install (94 packages), Windows installed-bin MCP `initialize`
+(1 tool / 10 resources / 0 prompts, no network), secret scan (clean),
+`git diff --check` (clean), all workflow `uses:` confirmed 40-char SHAs, no
+floating npm selector, no `${{ inputs. }}`/`${{ github. }}` in any shell line.
+Temporary artifacts removed. The workflow was **not run**; no GitHub Actions,
+registry, npm, live API, or x402 operation occurred.
+
+---
+
 **Reminder.** This document and its change surface configure repository metadata
 and add one inert release workflow and its validators. They query no registry,
 check no name, touch no account, configure no publisher, create no token, stage

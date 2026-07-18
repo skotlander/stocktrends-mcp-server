@@ -45,15 +45,28 @@ function validWorkflow(): string {
     "    steps:",
     "      - name: main gate",
     "        run: |",
-    '          if [ "${{ github.ref }}" != "refs/heads/main" ]; then exit 1; fi',
+    '          if [ "$GITHUB_REF" != "refs/heads/main" ]; then exit 1; fi',
     "      - name: confirm gate",
+    "        env:",
+    "          CONFIRM_PHRASE: ${{ inputs.confirm_phrase }}",
     "        run: |",
-    '          if [ "${{ inputs.confirm_phrase }}" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]; then exit 1; fi',
-    "      - uses: actions/setup-node@v4",
+    '          if [ "$CONFIRM_PHRASE" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]; then exit 1; fi',
+    "      - name: checkout",
+    "        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3",
+    "        with:",
+    "          persist-credentials: false",
+    "      - name: setup node",
+    "        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0",
     "        with:",
     "          node-version: '24'",
-    "      - name: npm floor",
-    "        run: npm install -g npm@^11.15.0",
+    "          registry-url: 'https://registry.npmjs.org/'",
+    "          package-manager-cache: false",
+    "      - name: npm pin",
+    "        run: |",
+    "          npm install -g npm@11.18.0",
+    '          EXPECTED="11.18.0"',
+    '          CUR="$(npm --version)"',
+    '          if [ "$CUR" != "$EXPECTED" ]; then exit 1; fi',
     "      - name: install",
     "        run: npm ci",
     "      - name: build",
@@ -174,11 +187,61 @@ describe("release workflow control check", () => {
       expect(violations.some((v) => v.includes("node-version must be 24"))).toBe(true);
     });
 
-    it("fails when the npm 11.15.0 floor is absent", () => {
-      const content = validWorkflow().replace("npm install -g npm@^11.15.0", "npm install -g npm@latest");
+  });
+
+  describe("npm CLI exact pin (11.18.0)", () => {
+    it("fails on a caret range install", () => {
+      const content = validWorkflow().replace("npm install -g npm@11.18.0", "npm install -g npm@^11.18.0");
       const violations = violationsForWorkflow(content);
 
-      expect(violations.some((v) => v.includes("11.15.0"))).toBe(true);
+      expect(violations.some((v) => v.includes("pinned exactly to 11.18.0"))).toBe(true);
+    });
+
+    it("fails on a tilde range install", () => {
+      const content = validWorkflow().replace("npm install -g npm@11.18.0", "npm install -g npm@~11.18.0");
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("pinned exactly to 11.18.0"))).toBe(true);
+    });
+
+    it("fails on a moving `latest` tag install", () => {
+      const content = validWorkflow().replace("npm install -g npm@11.18.0", "npm install -g npm@latest");
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("pinned exactly to 11.18.0"))).toBe(true);
+    });
+
+    it("fails on a different exact version", () => {
+      const content = validWorkflow()
+        .replace("npm install -g npm@11.18.0", "npm install -g npm@11.17.0")
+        .replace('EXPECTED="11.18.0"', 'EXPECTED="11.17.0"');
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("install npm exactly as npm@11.18.0"))).toBe(true);
+    });
+
+    it("fails when the exact version-equality assertion is absent", () => {
+      const content = validWorkflow().replace(
+        '          EXPECTED="11.18.0"\n          CUR="$(npm --version)"\n          if [ "$CUR" != "$EXPECTED" ]; then exit 1; fi',
+        '          echo "installed npm"'
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("equals exactly 11.18.0"))).toBe(true);
+    });
+
+    it("fails when the npm pin is placed after staging", () => {
+      const withoutPin = validWorkflow().replace(
+        '      - name: npm pin\n        run: |\n          npm install -g npm@11.18.0\n          EXPECTED="11.18.0"\n          CUR="$(npm --version)"\n          if [ "$CUR" != "$EXPECTED" ]; then exit 1; fi\n',
+        ""
+      );
+      const content = withoutPin.replace(
+        '        run: npm stage publish "$TARBALL" --access public',
+        '        run: |\n          npm stage publish "$TARBALL" --access public\n      - name: npm pin\n        run: |\n          npm install -g npm@11.18.0\n          EXPECTED="11.18.0"\n          CUR="$(npm --version)"\n          if [ "$CUR" != "$EXPECTED" ]; then exit 1; fi'
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("before 'npm stage publish'"))).toBe(true);
     });
   });
 
@@ -253,42 +316,27 @@ describe("release workflow control check", () => {
     });
 
     it("fails when staging is ordered before the build", () => {
-      const content = [
-        "name: bad order",
-        "on:",
-        "  workflow_dispatch:",
-        "    inputs:",
-        "      expected_version:",
-        "        required: true",
-        "      confirm_phrase:",
-        "        required: true",
-        "permissions:",
-        "  contents: read",
-        "  id-token: write",
-        "jobs:",
-        "  stage:",
-        "    runs-on: ubuntu-24.04",
-        "    steps:",
-        '      - run: if [ "${{ github.ref }}" != "refs/heads/main" ]; then exit 1; fi',
-        '      - run: if [ "${{ inputs.confirm_phrase }}" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]; then exit 1; fi',
-        "      - uses: actions/setup-node@v4",
-        "        with:",
-        "          node-version: '24'",
-        "      - run: npm install -g npm@^11.15.0",
-        "      - run: npm ci",
-        '      - run: echo "@stocktrends-publications/stocktrends-mcp-server ${{ inputs.expected_version }}"',
-        "      - run: |",
-        "          npm pack",
-        '          TARBALL="$(ls -1 ./*.tgz | head -n1)"',
-        '          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"',
-        '      - run: sha256sum "$TARBALL"',
-        '      - run: tar -tzf "$TARBALL" > /dev/null',
-        '      - run: npm stage publish "$TARBALL" --access public',
-        "      - run: npm run build",
-        "      - run: npm test",
-        "      - run: npm run check:runtime-deps",
-        "      - run: npm run check:package-metadata"
-      ].join("\n");
+      // Secure primitives throughout; only the build/test/validation ordering is
+      // wrong (placed after staging), so the ordering violation is isolated.
+      const content = validWorkflow()
+        .replace("      - name: build\n        run: npm run build\n", "")
+        .replace("      - name: test\n        run: npm test\n", "")
+        .replace("      - name: deps\n        run: npm run check:runtime-deps\n", "")
+        .replace("      - name: metadata\n        run: npm run check:package-metadata\n", "")
+        .replace(
+          '        run: npm stage publish "$TARBALL" --access public',
+          [
+            '        run: npm stage publish "$TARBALL" --access public',
+            "      - name: build",
+            "        run: npm run build",
+            "      - name: test",
+            "        run: npm test",
+            "      - name: deps",
+            "        run: npm run check:runtime-deps",
+            "      - name: metadata",
+            "        run: npm run check:package-metadata"
+          ].join("\n")
+        );
       const violations = violationsForWorkflow(content);
 
       expect(violations.some((v) => v.includes("before 'npm stage publish'"))).toBe(true);
@@ -362,6 +410,174 @@ describe("release workflow control check", () => {
       const violations = violationsForWorkflow(content);
 
       expect(violations.some((v) => v.includes("must be exported to $GITHUB_ENV"))).toBe(true);
+    });
+  });
+
+  describe("shell context interpolation (Issue 1)", () => {
+    it("passes when inputs and github context are used only in env: mappings", () => {
+      // The valid workflow already reads confirm_phrase and expected_version via
+      // env: mappings and uses $GITHUB_REF in shell -- no direct interpolation.
+      expect(violationsForWorkflow(validWorkflow())).toEqual([]);
+    });
+
+    it("fails on direct ${{ inputs.confirm_phrase }} interpolation in a shell command", () => {
+      const content = validWorkflow().replace(
+        '          if [ "$CONFIRM_PHRASE" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]; then exit 1; fi',
+        '          if [ "${{ inputs.confirm_phrase }}" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]; then exit 1; fi'
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("${{ inputs.* }}"))).toBe(true);
+    });
+
+    it("fails on direct ${{ github.ref }} interpolation in a shell command", () => {
+      const content = validWorkflow().replace(
+        '          if [ "$GITHUB_REF" != "refs/heads/main" ]; then exit 1; fi',
+        '          if [ "${{ github.ref }}" != "refs/heads/main" ]; then exit 1; fi'
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("${{ github.* }}"))).toBe(true);
+    });
+
+    it("does not flag ${{ inputs.* }} when it appears only in an env: mapping", () => {
+      // Move confirm_phrase into an env mapping on the main-gate step too; still
+      // never interpolated into shell. Must remain clean.
+      const content = validWorkflow().replace(
+        "      - name: main gate\n        run: |",
+        "      - name: main gate\n        env:\n          REF_NOTE: ${{ github.ref }}\n        run: |"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations).toEqual([]);
+    });
+  });
+
+  describe("action pinning to immutable full SHAs (Issue 2)", () => {
+    it("fails on a mutable major tag for checkout", () => {
+      const content = validWorkflow().replace(
+        "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3",
+        "actions/checkout@v6"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("actions/checkout must be pinned"))).toBe(true);
+    });
+
+    it("fails on a mutable major tag for setup-node", () => {
+      const content = validWorkflow().replace(
+        "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0",
+        "actions/setup-node@v6"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("actions/setup-node must be pinned"))).toBe(true);
+    });
+
+    it("fails on an abbreviated SHA", () => {
+      const content = validWorkflow().replace(
+        "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3",
+        "actions/checkout@df4cb1c"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("actions/checkout must be pinned"))).toBe(true);
+    });
+
+    it("fails on a different full SHA", () => {
+      const content = validWorkflow().replace(
+        "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3",
+        "actions/checkout@0000000000000000000000000000000000000000"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("a different full SHA"))).toBe(true);
+    });
+
+    it("fails on an unapproved external action", () => {
+      const content = validWorkflow().replace(
+        "      - name: install\n        run: npm ci",
+        "      - name: extra\n        uses: some/other-action@1111111111111111111111111111111111111111\n      - name: install\n        run: npm ci"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("is not allowed"))).toBe(true);
+    });
+
+    it("fails when persist-credentials: false is missing", () => {
+      const content = validWorkflow().replace("          persist-credentials: false\n", "");
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("persist-credentials: false"))).toBe(true);
+    });
+
+    it("fails when package-manager-cache: false is missing", () => {
+      const content = validWorkflow().replace("          package-manager-cache: false\n", "");
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("package-manager-cache: false"))).toBe(true);
+    });
+  });
+
+  describe("workflow_dispatch input declarations", () => {
+    it("fails when expected_version is missing", () => {
+      const content = validWorkflow().replace(
+        "      expected_version:\n        required: true\n        type: string\n",
+        ""
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("inputs must declare expected_version"))).toBe(true);
+    });
+
+    it("fails when expected_version.required is not true", () => {
+      const content = validWorkflow().replace(
+        "      expected_version:\n        required: true\n        type: string\n",
+        "      expected_version:\n        required: false\n        type: string\n"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("expected_version.required must be true"))).toBe(true);
+    });
+
+    it("fails when expected_version.type is not string", () => {
+      const content = validWorkflow().replace(
+        "      expected_version:\n        required: true\n        type: string\n",
+        "      expected_version:\n        required: true\n        type: boolean\n"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("expected_version.type must be string"))).toBe(true);
+    });
+
+    it("fails when confirm_phrase is missing", () => {
+      const content = validWorkflow().replace(
+        "      confirm_phrase:\n        required: true\n        type: string\n",
+        ""
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("inputs must declare confirm_phrase"))).toBe(true);
+    });
+
+    it("fails when confirm_phrase.required is not true", () => {
+      const content = validWorkflow().replace(
+        "      confirm_phrase:\n        required: true\n        type: string\n",
+        "      confirm_phrase:\n        required: false\n        type: string\n"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("confirm_phrase.required must be true"))).toBe(true);
+    });
+
+    it("fails when confirm_phrase.type is not string", () => {
+      const content = validWorkflow().replace(
+        "      confirm_phrase:\n        required: true\n        type: string\n",
+        "      confirm_phrase:\n        required: true\n        type: number\n"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("confirm_phrase.type must be string"))).toBe(true);
     });
   });
 

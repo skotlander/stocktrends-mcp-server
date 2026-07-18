@@ -73,39 +73,49 @@ jobs:
   stage-release:
     runs-on: ubuntu-24.04
     steps:
+      # Gates read untrusted/dispatch-time values only through the shell
+      # environment (GitHub's own $GITHUB_REF, and the input mapped via env:),
+      # never by interpolating ${{ ... }} directly into the shell script. That
+      # keeps a dispatch-supplied value from being expanded into executable
+      # shell text.
       - name: Fail closed unless dispatched from the main branch
         run: |
-          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            echo "Refusing to stage: this workflow may run only from refs/heads/main (got ${{ github.ref }})."
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Refusing to stage: this workflow may run only from refs/heads/main."
             exit 1
           fi
 
       - name: Fail closed unless the exact confirmation phrase was supplied
+        env:
+          CONFIRM_PHRASE: ${{ inputs.confirm_phrase }}
         run: |
-          if [ "${{ inputs.confirm_phrase }}" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]; then
+          if [ "$CONFIRM_PHRASE" != "STAGE_STOCKTRENDS_NPM_RELEASE" ]; then
             echo "Refusing to stage: confirmation phrase did not match exactly."
             exit 1
           fi
 
       - name: Checkout (read-only)
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Set up Node 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org/'
+          package-manager-cache: false
 
-      - name: Ensure npm is at least 11.15.0 (staged-publishing floor)
+      - name: Pin npm to exactly 11.18.0 (above the staged-publishing floor)
         run: |
-          npm install -g npm@^11.15.0
-          MIN="11.15.0"
+          npm install -g npm@11.18.0
+          EXPECTED="11.18.0"
           CUR="$(npm --version)"
-          if [ "$(printf '%s\n%s\n' "$MIN" "$CUR" | sort -V | head -n1)" != "$MIN" ]; then
-            echo "Refusing to stage: npm $CUR is below the required $MIN floor."
+          if [ "$CUR" != "$EXPECTED" ]; then
+            echo "Refusing to stage: npm $CUR is not the pinned $EXPECTED."
             exit 1
           fi
-          echo "npm $CUR satisfies the $MIN floor."
+          echo "npm is pinned at $CUR."
 
       - name: Install dependencies deterministically
         run: npm ci
