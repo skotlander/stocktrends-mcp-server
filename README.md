@@ -719,3 +719,4 @@ Pricing uses three fresh family-scoped static mirrors (`market_regime_latest` `0
 - [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md)
 - [Package Documentation Refresh and Tail Validation Report](docs/PACKAGE_DOCUMENTATION_REFRESH_AND_TAIL_VALIDATION_REPORT.md)
 - [Package Readiness Closure and Publication Decision Handoff](docs/PACKAGE_READINESS_CLOSURE_AND_PUBLICATION_DECISION_HANDOFF.md)
+- [Package Publication and Distribution Decision Architecture](docs/PACKAGE_PUBLICATION_AND_DISTRIBUTION_DECISION_ARCHITECTURE.md)
