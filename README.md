@@ -48,19 +48,31 @@ npm install
 npm run build
 ```
 
-This `git clone` + `npm install` + `npm run build` sequence, followed by local stdio execution of the compiled `dist/server.js`, remains fully supported and is the primary install channel for this repository. A second, distinct install path — a locally built and validated npm package artifact (a local `.tgz`, not a registry install) — has also been validated cross-platform; see [Local Package Artifact Installation](#local-package-artifact-installation-validated-not-published) below and the [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md). **Neither path means this package is published.** There is no npm registry publication and no hosted MCP endpoint. A validated local artifact is not registry availability — a consumer must possess or build the reviewed local `.tgz` themselves; packaging has been validated, and publication remains a separate, later, explicitly authorized decision (see the [Package Artifact and Installation Validation Architecture](docs/PACKAGE_ARTIFACT_INSTALLATION_VALIDATION_ARCHITECTURE.md)).
+This `git clone` + `npm install` + `npm run build` sequence, followed by local stdio execution of the compiled `dist/server.js`, remains fully supported and is the primary install channel for this repository. This package is also **publicly available from the npm registry** as `@stocktrends-publications/stocktrends-mcp-server` — see [Public npm Installation](#public-npm-installation) directly below. A third, distinct install path — a locally built npm package artifact (a local `.tgz`, not a registry install) — has also been validated cross-platform; see [Local Package Artifact Installation](#local-package-artifact-installation-build-it-yourself-alternative) below and the [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md).
 
 No environment variables or `.env` file are required for this path. Do not set `STOCKTRENDS_ENABLE_PAID_TOOLS`, `STOCKTRENDS_API_KEY`, or `STOCKTRENDS_ENABLE_PAID_EXECUTION` while testing default/free mode.
 
 Optional: `npm start` starts the local stdio server process directly and is mainly useful as a manual smoke check (it will sit waiting for JSON-RPC input on stdin). Stop it with Ctrl+C before launching the server via MCP Inspector below.
 
-### Local Package Artifact Installation (validated, not published)
+### Public npm Installation
 
-In addition to the repository-checkout path above, this repository's package has been built, packed, and validated locally as an installable npm package artifact — on Windows and WSL2 Ubuntu (see the [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md)). This path is for consumers who already have, or can build, the reviewed local package artifact. **It is not an npm registry install.**
+This package is publicly published to the npm registry as `@stocktrends-publications/stocktrends-mcp-server`. Anyone can install it by name, credential-free, without cloning this repository:
+
+```sh
+npm install @stocktrends-publications/stocktrends-mcp-server
+```
+
+For a reproducible install pinned to an exact release, append `@<version>` (for example `@1.0.0`) to the command above; omit the version to receive the latest published release. Once installed, the package provides an npm-managed command shim (not a checkout-relative `dist/server.js` path) — see [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client) below for configuration examples covering both a package-installed shim and a checkout-relative path.
+
+The `1.0.0` release was verified byte-for-byte (SHA-256) against its frozen, offline-validated release-candidate artifact before publication, and anonymous installation by name plus a Windows MCP `initialize`/list-only handshake were validated against the published package (see [`docs/SECURITY_MODEL.md` §18](docs/SECURITY_MODEL.md) and the [MCP Registry Readiness Implementation Notes](docs/MCP_REGISTRY_READINESS_IMPLEMENTATION_NOTES.md)). Version `1.0.1` prepares this package's official MCP Registry identity (`com.stocktrends/market-intelligence`, declared in [`server.json`](server.json)); **MCP Registry publication itself is a separate, later, explicitly authorized step and is not claimed as complete by this README.**
+
+### Local Package Artifact Installation (build-it-yourself alternative)
+
+In addition to the public npm install above, this repository's package can also be built and packed locally as an installable npm artifact — on Windows and WSL2 Ubuntu (see the [Cross-Platform Package Install / Stdio Validation Report](docs/CROSS_PLATFORM_PACKAGE_INSTALL_STDIO_VALIDATION_REPORT.md)). This path is useful for testing an unreleased local build against the published package's identity; it is not required for normal installation.
 
 - The artifact is **not retained in this repository** — no `.tgz` is committed, and none ships with a checkout.
-- The artifact is **not published to any npm registry.** `package.json` is now configured with its intended public identity — the scoped name `@stocktrends-publications/stocktrends-mcp-server` and an explicit public `publishConfig` (`access: public`, the public npm registry) — but **the package has not been created, reserved, or published**, and no publication workflow has been run. The `"private": true` accidental-publication guard was deliberately removed as the reviewed configuration step that arms a *future* release; its removal does not make the package available now (see the [Package Publication Configuration Implementation Notes](docs/PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md)).
-- To use this path, a consumer must build the artifact themselves from a reviewed checkout, or obtain the reviewed local `.tgz` through a channel outside this repository (for example, directly from the maintainer).
+- `package.json` carries the same public identity the published npm package uses: the scoped name `@stocktrends-publications/stocktrends-mcp-server`, the MCP Registry identity `mcpName` `com.stocktrends/market-intelligence`, and an explicit public `publishConfig` (`access: public`, the public npm registry) — see the [Package Publication Configuration Implementation Notes](docs/PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md) and the [MCP Registry Readiness Implementation Notes](docs/MCP_REGISTRY_READINESS_IMPLEMENTATION_NOTES.md).
+- To use this path, build the artifact yourself from a reviewed checkout.
 
 To build the local artifact yourself from a checkout:
 
@@ -72,13 +84,13 @@ npm run build
 npm pack
 ```
 
-This produces `stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz` in the current directory — the reviewed closed artifact allowlist is `dist/**/*.js`, `dist/**/*.d.ts`, `README.md`, and `LICENSE` (see the [Package Metadata and Closed Artifact Allowlist Implementation](docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md)). Install it into a **separate** consumer project (not this checkout):
+This produces `stocktrends-publications-stocktrends-mcp-server-1.0.1.tgz` in the current directory — the reviewed closed artifact allowlist is `dist/**/*.js`, `dist/**/*.d.ts`, `README.md`, and `LICENSE` (see the [Package Metadata and Closed Artifact Allowlist Implementation](docs/PACKAGE_METADATA_AND_ARTIFACT_ALLOWLIST_IMPLEMENTATION.md)). Install it into a **separate** consumer project (not this checkout):
 
 ```sh
-npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz>
+npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.1.tgz>
 ```
 
-Do **not** run `npm install @stocktrends-publications/stocktrends-mcp-server` by itself — that instructs npm to resolve the scoped name against the registry, and no registry publication of this package exists yet. Public installation by name (and any `npx`/Claude Code install command) remains unavailable until a separate, explicitly authorized publication and its validation have completed.
+This local-artifact path and the [Public npm Installation](#public-npm-installation) path above install the same reviewed package identity through two different channels; prefer the public npm install unless you specifically need to test an unreleased local build.
 
 Once installed, the package provides an npm-managed command shim rather than a checkout-relative `dist/server.js` path. On POSIX systems (Linux, macOS, WSL) this is a symlink at `node_modules/.bin/stocktrends-mcp-server`; on Windows it is a generated shim at `node_modules\.bin\stocktrends-mcp-server.cmd`. **Do not assume the bin is installed globally** — resolve it from the consumer project's own `node_modules/.bin`. See [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client) below for package-installed client configuration examples alongside the checkout examples.
 
@@ -109,7 +121,7 @@ Free/default mode needs no API key, so nothing secret is involved in this quicks
 This section wires the server into an MCP client over local stdio. Two installation shapes are covered, clearly separated in each subsection below:
 
 - **Repository-checkout path** (build first with `npm run build`): launches the compiled entry point directly with `command: "node"` and `args: ["<absolute-path-to-checkout>/dist/server.js"]`, where `<absolute-path-to-checkout>` is the absolute path to this repository on your machine.
-- **Local-package-artifact path** (see [Local Package Artifact Installation](#local-package-artifact-installation-validated-not-published) above): launches the npm-installed command shim resolved from `<path-to-consumer-project>`, the absolute path to the **separate** project where you ran `npm install <path-to-local-...-1.0.0.tgz>` — not this repository checkout, and not a global install.
+- **Local-package-artifact path** (see [Local Package Artifact Installation](#local-package-artifact-installation-build-it-yourself-alternative) above): launches the npm-installed command shim resolved from `<path-to-consumer-project>`, the absolute path to the **separate** project where you ran `npm install <path-to-local-...-1.0.1.tgz>` (or `npm install @stocktrends-publications/stocktrends-mcp-server` — see [Public npm Installation](#public-npm-installation)) — not this repository checkout, and not a global install.
 
 Every **primary** example in this section is free mode: no `STOCKTRENDS_*` variable is set, no API key is configured, and no spend is possible. Read [Secret Safety](#secret-safety) before adding any paid variable to a client configuration file.
 
@@ -161,7 +173,7 @@ Windows equivalent (the generated `.cmd` shim):
 }
 ```
 
-`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.1.tgz>` (or `npm install @stocktrends-publications/stocktrends-mcp-server`) — never this repository checkout, and never a global install path.
 
 **Optional paid-exposure variant (exposure only — not execution).** This adds the paid tool *definitions* to the client's tool list; it does not authorize or perform any paid API call:
 
@@ -219,7 +231,7 @@ claude mcp add --transport stdio stocktrends -- <path-to-consumer-project>/node_
 claude mcp add --transport stdio stocktrends -- <path-to-consumer-project>\node_modules\.bin\stocktrends-mcp-server.cmd
 ```
 
-`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.1.tgz>` (or `npm install @stocktrends-publications/stocktrends-mcp-server`) — never this repository checkout, and never a global install path.
 
 ### C. Generic MCP stdio client
 
@@ -251,7 +263,7 @@ Windows (the generated `.cmd` shim):
 }
 ```
 
-`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.0.tgz>` — never this repository checkout, and never a global install path.
+`<path-to-consumer-project>` is the absolute path to the separate project where you ran `npm install <path-to-local-stocktrends-publications-stocktrends-mcp-server-1.0.1.tgz>` (or `npm install @stocktrends-publications/stocktrends-mcp-server`) — never this repository checkout, and never a global install path.
 
 **Optional paid-exposure variant** (same rules as Claude Desktop above — exposure only, execution flag absent):
 

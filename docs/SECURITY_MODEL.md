@@ -767,24 +767,28 @@ Minimum controls for this surface:
   `initialize` handshake, not merely a zero exit code, before treating the
   installed artifact as functional.
 - **Configured public identity, with the accidental-publication guard removed
-  under governed control (P-4).** `package.json` is now configured for the
-  future public scoped identity
-  `@stocktrends-publications/stocktrends-mcp-server` and carries an explicit
+  under governed control (P-4).** `package.json` carries the public scoped
+  identity `@stocktrends-publications/stocktrends-mcp-server` and an explicit
   public npm `publishConfig` (`access: public`, registry
   `https://registry.npmjs.org/`). The former `"private": true`
   accidental-publication guard has been **deliberately removed through the
   governed P-4 publication-configuration implementation**
   ([`PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md`](PACKAGE_PUBLICATION_CONFIGURATION_IMPLEMENTATION_NOTES.md)),
-  not as a side effect. Accidental or unauthorized publication is now controlled
-  instead by a layered set of fail-closed controls, each enforced by the
+  not as a side effect. Accidental or unauthorized *further* publication is
+  controlled by a layered set of fail-closed controls, each enforced by the
   authoritative validators (`npm run check:package-metadata`,
-  `npm run check:release-workflow`) and their focused test suites:
+  `npm run check:mcp-registry-metadata`, `npm run check:release-workflow`) and
+  their focused test suites:
   - exact scoped-identity validation (`name` exact, plus a scope guard
     rejecting any other package scope);
   - exact GitHub repository-identity validation (`repository` must identify
     exactly `skotlander/stocktrends-mcp-server`);
   - exact public registry/access validation (`publishConfig` must be exactly
     `access: public` + the public npm registry);
+  - exact MCP Registry ownership-identity validation (`package.json` `mcpName`
+    and repository-root `server.json` `name` must both be exactly
+    `com.stocktrends/market-intelligence` and must agree with each other and
+    with the npm package identifier and version — see §19);
   - forbidden lifecycle-script validation (no `preinstall`/`install`/
     `postinstall`/`prepare`/`prepack`/`postpack`/`prepublish`/`prepublishOnly`/
     `publish`/`postpublish`);
@@ -798,17 +802,35 @@ Minimum controls for this surface:
     hashed tarball only — no direct `npm publish`, no `npm stage approve`);
   - the absence of any long-lived publication credential, npm token, or
     `NODE_AUTH_TOKEN`;
-  - separate owner authorization for the bootstrap publication, workflow
-    dispatch, staged approval, and public-installation validation.
-- **Configuration is not publication.** This repository configuration does
-  **not** mean the package has been created, reserved, staged, published, or
-  made publicly installable. `npm publish`, `npm stage publish`, `npm view`,
-  `npm search`, `npm info`, and any npm account or trusted-publisher operation
-  remain out of scope for every validation pass described here; the bootstrap
-  publication, workflow dispatch, staged approval, and public-install
-  validation each remain a separate owner authorization that does not exist
-  today. No `npm trust`, package creation, staging, publication, or public
-  installation has occurred.
+  - separate owner authorization for every subsequent staged release, workflow
+    dispatch, staged approval, and MCP Registry submission.
+- **`1.0.0` bootstrap publication and public-install validation completed.**
+  The one-time, owner-controlled, 2FA-protected manual `npm publish` of the
+  exact reviewed scoped package (`1.0.0`) has occurred: the package is
+  publicly available on the npm registry as
+  `@stocktrends-publications/stocktrends-mcp-server`. The anonymous registry
+  tarball was verified as an exact SHA-256 match against the frozen,
+  offline-validated release-candidate artifact; anonymous installation by
+  package name (no local checkout, no `.tgz`) succeeded; and the resulting
+  Windows npm-managed command shim completed an MCP `initialize` handshake and
+  a list-only check — default surface exactly one tool
+  (`stocktrends_estimate_workflow_cost`) and exactly ten resources, prompts
+  capability undefined, empty stderr. No tool was invoked and no resource was
+  read during that validation; no network request beyond the registry install
+  itself occurred; no `STOCKTRENDS_*` variable reached the child process; x402
+  remained default-off throughout. This is repository-configuration and
+  package-registry state, not MCP Registry (`com.stocktrends/...`)
+  registration — see the next bullet and §19.
+- **MCP Registry registration has not yet occurred.** Publishing an npm
+  package under a scoped npm identity is a separate action from registering
+  that package's `server.json` with the official MCP Registry under the
+  `com.stocktrends/market-intelligence` namespace. `1.0.1` adds only the
+  Registry-readiness metadata (`package.json` `mcpName`, repository-root
+  `server.json`, and their validators — §19); it does **not** perform domain
+  authentication, does **not** submit `server.json` to the Registry, and does
+  **not** create any Registry record. `npm view`, `npm search`, `npm info`,
+  `mcp-publisher`, and any npm account, trusted-publisher, or MCP Registry
+  operation remain out of scope for every validation pass described here.
 - **Private source repository; no automatic provenance expected.** The source
   GitHub repository remains private, and automatic npm provenance is not
   expected while that remains true. Trusted publishing itself is still usable
@@ -818,3 +840,47 @@ Minimum controls for this surface:
   artifact directory, and temporary consumer created during package
   validation is deleted at the end of that validation; none is committed to
   the repository.
+
+## 19. MCP Registry Ownership-Identity Readiness
+
+This section addresses the MCP Registry ownership-verification identity, a
+narrower surface than §18's npm package distribution surface. It records the
+`1.0.1` Registry-readiness change implemented per
+[`MCP_REGISTRY_READINESS_IMPLEMENTATION_NOTES.md`](MCP_REGISTRY_READINESS_IMPLEMENTATION_NOTES.md).
+It updates and does not relax §18.
+
+- **Reviewed identity.** The MCP Registry server name is
+  `com.stocktrends/market-intelligence`. `package.json` declares this as
+  `mcpName`; the repository-root `server.json` declares it as `name` and
+  carries the matching `title`, `description`, `repository`, `version`, and a
+  single `packages` entry identifying the published npm package
+  (`@stocktrends-publications/stocktrends-mcp-server`, transport `stdio`).
+- **No mandatory credential for the default surface.** The default MCP
+  package requires no API key or other environment variable to initialize,
+  list its one default tool, or list its ten resources. Accordingly,
+  `server.json` declares no `environmentVariables`, no payment/x402
+  configuration, and no remote transport — only the exact reviewed `stdio`
+  npm package entry.
+- **Offline, fail-closed validation.** `npm run check:mcp-registry-metadata`
+  (`scripts/check-mcp-registry-metadata.mjs`) statically validates
+  `server.json` against the reviewed contract and cross-checks agreement with
+  `package.json` (`mcpName`, `version`, `name`/npm identifier, GitHub
+  repository identity) and `package-lock.json` (root version). It reads only
+  local files; it runs no npm, `mcp-publisher`, registry, or network
+  operation. It is wired into `.github/workflows/npm-stage-release.yml` after
+  dependency installation and before tarball creation, alongside
+  `check:package-metadata` and `check:release-workflow`.
+- **`server.json` is Registry metadata, not a package-artifact file.**
+  `server.json` lives at the repository root for Registry submission. It is
+  **not** included in `package.json`'s closed `files` allowlist and is
+  therefore **not** packaged into the npm tarball; the tarball's closed
+  allowlist and file count (§18) are unchanged by its addition.
+- **Registration remains a separate, later, owner-authorized action.** Adding
+  and validating `server.json` configures repository metadata only. It does
+  **not** perform domain authentication for `stocktrends.com`, does **not**
+  generate or use a Registry authentication private key, does **not** create a
+  DNS or `/.well-known/mcp-registry-auth` record, does **not** install or run
+  `mcp-publisher`, and does **not** submit anything to the MCP Registry. The
+  next gates — domain authentication, `server.json` submission, and Registry
+  record verification — are separate, later, explicitly authorized actions
+  (see the implementation notes' next-gates list).

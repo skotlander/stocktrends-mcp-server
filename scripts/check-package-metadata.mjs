@@ -33,7 +33,12 @@ export class MalformedManifestError extends Error {}
 // enforced both as the exact name and as a scope-prefix guard below.
 export const REVIEWED_SCOPE = "@stocktrends-publications";
 export const REVIEWED_NAME = "@stocktrends-publications/stocktrends-mcp-server";
-export const REVIEWED_VERSION = "1.0.0";
+export const REVIEWED_VERSION = "1.0.1";
+// The MCP Registry ownership-verification identity (Registry-readiness
+// work). Exact-string-checked below alongside the other reviewed identity
+// fields, so a missing, malformed, wrong-namespace, wrong-path, or
+// non-string value each fails closed the same way a name/version drift does.
+export const REVIEWED_MCP_NAME = "com.stocktrends/market-intelligence";
 export const REVIEWED_DESCRIPTION =
   "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.";
 export const REVIEWED_AUTHOR = "Stocktrends Publications";
@@ -86,6 +91,7 @@ const SOURCE_MAP_PROBES = Object.freeze(["dist/server.js.map", "dist/tools/index
 const EXACT_STRING_FIELDS = Object.freeze([
   ["name", REVIEWED_NAME],
   ["version", REVIEWED_VERSION],
+  ["mcpName", REVIEWED_MCP_NAME],
   ["description", REVIEWED_DESCRIPTION],
   ["author", REVIEWED_AUTHOR],
   ["license", REVIEWED_LICENSE],

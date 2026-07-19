@@ -3,6 +3,7 @@ export declare class MalformedManifestError extends Error {}
 export declare const REVIEWED_SCOPE: string;
 export declare const REVIEWED_NAME: string;
 export declare const REVIEWED_VERSION: string;
+export declare const REVIEWED_MCP_NAME: string;
 export declare const REVIEWED_DESCRIPTION: string;
 export declare const REVIEWED_AUTHOR: string;
 export declare const REVIEWED_LICENSE: string;

@@ -77,6 +77,8 @@ function validWorkflow(): string {
     "        run: npm run check:runtime-deps",
     "      - name: metadata",
     "        run: npm run check:package-metadata",
+    "      - name: registry metadata",
+    "        run: npm run check:mcp-registry-metadata",
     "      - name: verify identity",
     "        env:",
     "          EXPECTED_VERSION: ${{ inputs.expected_version }}",
@@ -313,6 +315,44 @@ describe("release workflow control check", () => {
       const violations = violationsForWorkflow(content);
 
       expect(violations.some((v) => v.includes("SHA-256"))).toBe(true);
+    });
+
+    it("fails when MCP Registry metadata validation is missing", () => {
+      const content = validWorkflow().replace(
+        "      - name: registry metadata\n        run: npm run check:mcp-registry-metadata\n",
+        ""
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("MCP Registry metadata validation"))).toBe(true);
+    });
+
+    it("fails when MCP Registry metadata validation runs after npm pack", () => {
+      const withoutStep = validWorkflow().replace(
+        "      - name: registry metadata\n        run: npm run check:mcp-registry-metadata\n",
+        ""
+      );
+      const content = withoutStep.replace(
+        '          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"\n',
+        '          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"\n      - name: registry metadata\n        run: npm run check:mcp-registry-metadata\n'
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("before tarball creation"))).toBe(true);
+    });
+
+    it("fails when MCP Registry metadata validation runs before dependency installation", () => {
+      const withoutStep = validWorkflow().replace(
+        "      - name: registry metadata\n        run: npm run check:mcp-registry-metadata\n",
+        ""
+      );
+      const content = withoutStep.replace(
+        "      - name: install\n        run: npm ci\n",
+        "      - name: registry metadata\n        run: npm run check:mcp-registry-metadata\n      - name: install\n        run: npm ci\n"
+      );
+      const violations = violationsForWorkflow(content);
+
+      expect(violations.some((v) => v.includes("after dependency installation"))).toBe(true);
     });
 
     it("fails when staging is ordered before the build", () => {
