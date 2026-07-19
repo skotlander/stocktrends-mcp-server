@@ -132,6 +132,9 @@ jobs:
       - name: Validate package metadata and lockfile identity
         run: npm run check:package-metadata
 
+      - name: Validate MCP Registry metadata agreement
+        run: npm run check:mcp-registry-metadata
+
       - name: Validate this release workflow's own publication controls
         run: npm run check:release-workflow
 

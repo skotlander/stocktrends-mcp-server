@@ -18,7 +18,7 @@ import { registerPaidStimTools } from "./tools/stimTools.js";
 import { registerX402PublicTools } from "./tools/x402Tools.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
-export const SERVER_VERSION = "1.0.0";
+export const SERVER_VERSION = "1.0.1";
 
 export interface StockTrendsServerRuntime {
   server: McpServer;

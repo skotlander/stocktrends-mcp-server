@@ -490,6 +490,7 @@ function checkOrderingAndStaging(codeLines, codeText, violations) {
     { label: "tests (`npm test`)", index: firstIndex(/\bnpm\s+(?:run\s+)?test\b/) },
     { label: "package-metadata validation", index: firstIndex(/check:package-metadata/) },
     { label: "runtime-dependency validation", index: firstIndex(/check:runtime-deps/) },
+    { label: "MCP Registry metadata validation", index: firstIndex(/check:mcp-registry-metadata/) },
     { label: "tarball creation (`npm pack`)", index: firstIndex(/\bnpm\s+pack\b/) },
     { label: "SHA-256 digest", index: firstIndex(/sha256/i) }
   ];
@@ -500,6 +501,20 @@ function checkOrderingAndStaging(codeLines, codeText, violations) {
     } else if (stageIndex !== -1 && marker.index > stageIndex) {
       violations.push(`workflow must run ${marker.label} before 'npm stage publish', not after.`);
     }
+  }
+
+  // The Registry metadata validator must run after dependency installation and
+  // strictly before the tarball is created, not merely somewhere before
+  // staging -- an MCP Registry metadata drift should be caught before a
+  // tarball is even built, not discovered only at the staging gate.
+  const ciIndex = firstIndex(/\bnpm\s+ci\b/);
+  const registryMetadataIndex = firstIndex(/check:mcp-registry-metadata/);
+  const packIndex = firstIndex(/\bnpm\s+pack\b/);
+  if (ciIndex !== -1 && registryMetadataIndex !== -1 && registryMetadataIndex < ciIndex) {
+    violations.push("workflow must run MCP Registry metadata validation after dependency installation (`npm ci`), not before.");
+  }
+  if (registryMetadataIndex !== -1 && packIndex !== -1 && registryMetadataIndex > packIndex) {
+    violations.push("workflow must run MCP Registry metadata validation before tarball creation (`npm pack`), not after.");
   }
 
   if (stageIndex !== -1 && !/--access\s+public/.test(codeText)) {

@@ -1,6 +1,7 @@
 {
   "name": "@stocktrends-publications/stocktrends-mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "mcpName": "com.stocktrends/market-intelligence",
   "description": "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.",
   "type": "module",
   "main": "dist/server.js",
@@ -33,6 +34,7 @@
     "typecheck": "tsc --noEmit",
     "check:runtime-deps": "node scripts/check-runtime-dependency-contract.mjs",
     "check:package-metadata": "node scripts/check-package-metadata.mjs",
+    "check:mcp-registry-metadata": "node scripts/check-mcp-registry-metadata.mjs",
     "check:release-workflow": "node scripts/check-release-workflow.mjs"
   },
   "keywords": [

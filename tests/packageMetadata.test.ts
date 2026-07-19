@@ -30,7 +30,8 @@ afterEach(() => {
 function reviewedManifest(): Record<string, unknown> {
   return {
     name: "@stocktrends-publications/stocktrends-mcp-server",
-    version: "1.0.0",
+    version: "1.0.1",
+    mcpName: "com.stocktrends/market-intelligence",
     description:
       "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.",
     type: "module",
@@ -63,13 +64,13 @@ function reviewedManifest(): Record<string, unknown> {
 function reviewedLockfile(): Record<string, unknown> {
   return {
     name: "@stocktrends-publications/stocktrends-mcp-server",
-    version: "1.0.0",
+    version: "1.0.1",
     lockfileVersion: 3,
     requires: true,
     packages: {
       "": {
         name: "@stocktrends-publications/stocktrends-mcp-server",
-        version: "1.0.0",
+        version: "1.0.1",
         license: "MIT",
         dependencies: { "@modelcontextprotocol/sdk": "^1.29.0", zod: "^4.4.3" },
         bin: { "stocktrends-mcp-server": "dist/server.js" },
@@ -257,7 +258,7 @@ describe("package metadata contract check", () => {
 
     it("fails on version drift", () => {
       const violations = violationsFor((manifest) => {
-        manifest.version = "1.0.1";
+        manifest.version = "1.0.2";
       });
 
       expect(violations).toHaveLength(1);
@@ -351,6 +352,53 @@ describe("package metadata contract check", () => {
 
       expect(violations).toHaveLength(1);
       expect(violations[0]).toContain("engines must be exactly");
+    });
+  });
+
+  describe("MCP Registry ownership identity (mcpName)", () => {
+    it("fails when mcpName is missing", () => {
+      const violations = violationsFor((manifest) => {
+        delete manifest.mcpName;
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("mcpName must be exactly");
+    });
+
+    it("fails when mcpName is malformed (trailing garbage)", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.mcpName = "com.stocktrends/market-intelligence/extra";
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("mcpName must be exactly");
+    });
+
+    it("fails on another namespace", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.mcpName = "com.example/market-intelligence";
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("mcpName must be exactly");
+    });
+
+    it("fails on another path under the reviewed namespace", () => {
+      const violations = violationsFor((manifest) => {
+        manifest.mcpName = "com.stocktrends/other-server";
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("mcpName must be exactly");
+    });
+
+    it("fails when mcpName is a non-string value", () => {
+      const violations = violationsFor((manifest) => {
+        (manifest as Record<string, unknown>).mcpName = 42;
+      });
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0]).toContain("mcpName must be exactly");
     });
   });
 
@@ -698,8 +746,8 @@ describe("package metadata contract check", () => {
 
     it("fails when the lockfile root version drifts", () => {
       const violations = lockViolationsFor((lock) => {
-        lock.version = "1.0.1";
-        (lock.packages as Record<string, Record<string, unknown>>)[""].version = "1.0.1";
+        lock.version = "1.0.2";
+        (lock.packages as Record<string, Record<string, unknown>>)[""].version = "1.0.2";
       });
 
       expect(violations.some((violation) => violation.includes("top-level version must be exactly"))).toBe(true);

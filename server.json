@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.stocktrends/market-intelligence",
+  "title": "Stock Trends Market Intelligence",
+  "description": "Equity trend, relative-strength, expected-return, market-context, and research resources for agents.",
+  "repository": {
+    "url": "https://github.com/skotlander/stocktrends-mcp-server",
+    "source": "github"
+  },
+  "version": "1.0.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@stocktrends-publications/stocktrends-mcp-server",
+      "version": "1.0.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
