@@ -54,7 +54,7 @@ authorized.
 ## 3. Branch and base commit
 
 - Checkout: the normal attached checkout at
-  `C:\Users\skort\Projects\stocktrends-mcp-server`. Worktree mode **off**.
+  `<repository-root>`. Worktree mode **off**.
 - Branch: `feat/mcp-registry-readiness-1.0.1`, created from `main`.
 - Base commit: `b80926b` ("Implement package publication configuration
   (#98)").

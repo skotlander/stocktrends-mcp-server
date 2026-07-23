@@ -338,7 +338,7 @@ implementation/phase4-paid-stim-foundation-no-execution
 
 ---
 
-### Appendix A — Confirmed ST-IM facts (verified read-only against `C:\Users\skort\Projects\stocktrends_api`)
+### Appendix A — Confirmed ST-IM facts (verified read-only against `<private-stocktrends-api>`)
 
 Verified directly in this task (not only inherited):
 

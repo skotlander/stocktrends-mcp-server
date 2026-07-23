@@ -50,7 +50,7 @@ its own separate, exact, later authorization.
 ## 1. Working-copy posture (confirmed before any edit)
 
 - Checkout: the normal attached checkout at
-  `C:\Users\skort\Projects\stocktrends-mcp-server`. Worktree mode **off**; no
+  `<repository-root>`. Worktree mode **off**; no
   worktree branch or directory used or created (no `.claude/worktrees`,
   `.codex/worktrees`, or any other worktree).
 - Branch: `docs/package-publication-implementation-decision`, created from

@@ -758,7 +758,7 @@ Task type:
 
 Architecture/contract confirmation only.
 
-Do not implement runtime code. Do not modify `src/`. Do not modify `tests/`. Do not modify `package.json`. Do not install packages. Do not add MCP tools. Do not add MCP prompts. Do not call paid endpoints. Do not use API keys. Do not inspect secrets. Do not test x402 payments. Do not call the database. Do not touch `stocktrends-api-control`. Do not make live API calls unless explicitly asked later.
+Do not implement runtime code. Do not modify `src/`. Do not modify `tests/`. Do not modify `package.json`. Do not install packages. Do not add MCP tools. Do not add MCP prompts. Do not call paid endpoints. Do not use API keys. Do not inspect secrets. Do not test x402 payments. Do not call the database. Do not touch the private API control plane. Do not make live API calls unless explicitly asked later.
 
 Binding documents to read first:
 

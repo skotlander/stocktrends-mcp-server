@@ -44,7 +44,7 @@ direct client probe, or another route. No later network action occurred.
 
 | Check | Result |
 | --- | --- |
-| Checkout | PASS — normal attached checkout at `C:\Users\skort\Projects\stocktrends-mcp-server`; no detached or auxiliary worktree was used |
+| Checkout | PASS — normal attached checkout at `<repository-root>`; no detached or auxiliary worktree was used |
 | Branch | PASS — `docs/phase5f-x402-final-envelope-live-revalidation` |
 | Initial working tree | PASS — clean |
 | Local ancestry | PASS — local `HEAD` and local `main` were identical at `d0aa3c28adb99df0c049e6d4d30698efe3becc4c` |

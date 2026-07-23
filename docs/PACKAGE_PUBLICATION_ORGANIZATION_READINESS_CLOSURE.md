@@ -32,7 +32,7 @@ in P-2B §13 and P-1 §11 (P-D5 through P-D17) remains open.
 ## 1. Working-copy posture (confirmed before any edit)
 
 - Checkout: the normal attached checkout at
-  `C:\Users\skort\Projects\stocktrends-mcp-server`. Worktree mode off; no
+  `<repository-root>`. Worktree mode off; no
   worktree used or created.
 - Branch: `docs/package-publication-organization-readiness-closure`.
 - HEAD at start of this work: `3a00f2f` ("Record blocked npm account and name

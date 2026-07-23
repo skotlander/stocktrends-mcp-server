@@ -51,7 +51,7 @@ paid routes.
 
 | Check | Result |
 | --- | --- |
-| Git toplevel | `C:/Users/skort/Projects/stocktrends-mcp-server` |
+| Git toplevel | `<repository-root>` |
 | Branch | `claude/pr67-x402-mock-validation-report` |
 | Branch is not `main` | yes |
 | HEAD/base commit | `c98f80a Add mock-only x402 challenge relay groundwork (#66)` |

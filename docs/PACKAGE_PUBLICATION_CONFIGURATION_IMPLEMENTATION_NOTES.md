@@ -26,7 +26,7 @@ exact authorization (§17).
 ## 1. Branch and base commit
 
 - Checkout: the normal attached checkout at
-  `C:\Users\skort\Projects\stocktrends-mcp-server`. Worktree mode **off**; no
+  `<repository-root>`. Worktree mode **off**; no
   `.claude/worktrees`, `.codex/worktrees`, or any other worktree was created or
   used for this work.
 - Branch: `feat/package-publication-configuration`, created from `main`.

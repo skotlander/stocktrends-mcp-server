@@ -37,7 +37,7 @@ output step occurred.
 
 | Check | Result |
 | --- | --- |
-| Git toplevel | `C:/Users/skort/Projects/stocktrends-mcp-server` |
+| Git toplevel | `<repository-root>` |
 | Branch | `claude/pr64-x402-contract-verification-report` |
 | Branch is not `main` | yes |
 | Pre-verification HEAD/base | `8210a333f8f354a76552e30e096ff0c4fcbde6d2` (`8210a33 Add Phase 5F x402 contract verification plan (#63)`) |

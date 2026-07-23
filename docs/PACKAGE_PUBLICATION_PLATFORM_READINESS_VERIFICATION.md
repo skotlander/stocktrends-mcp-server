@@ -62,7 +62,7 @@ unauthorized, and reserved to a later, separately authorized P-2B (§14–§16).
 ## 2. Working-copy posture (confirmed before editing)
 
 - Checkout: the normal attached checkout at
-  `C:\Users\skort\Projects\stocktrends-mcp-server` (no worktree used, none
+  `<repository-root>` (no worktree used, none
   created).
 - Branch: `docs/package-publication-platform-readiness`.
 - HEAD at start of this work: `db19b67` ("Define package publication and

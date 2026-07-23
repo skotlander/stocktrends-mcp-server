@@ -45,7 +45,7 @@ network request occurred.
 
 | Check | Result |
 | --- | --- |
-| Repository root | Normal checkout at `C:/Users/skort/Projects/stocktrends-mcp-server` |
+| Repository root | Normal checkout (no worktree) |
 | Branch | `docs/phase5f-x402-live-challenge-revalidation` |
 | Starting worktree | Clean |
 | Detached/worktree posture | Active checkout was non-detached with `.git` as both Git dir and common dir; no detached or `.claude/worktrees` checkout was used |

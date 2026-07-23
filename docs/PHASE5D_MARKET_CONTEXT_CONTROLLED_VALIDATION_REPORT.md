@@ -134,7 +134,7 @@ Run on `f97ad18`, working tree clean before edits:
 
 | Check | Result |
 | --- | --- |
-| `git rev-parse --show-toplevel` | `C:/Users/skort/Projects/stocktrends-mcp-server` |
+| `git rev-parse --show-toplevel` | `<repository-root>` |
 | `git branch --show-current` | `claude/pr53-market-context-validation-report` (not `main`) |
 | `git status --short --branch` | clean; HEAD includes `f97ad18 Add market context controlled validation plan (#52)` |
 | Checkout contents | `README.md`, `package.json`, `src/`, `tests/`, `docs/` all present |

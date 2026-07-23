@@ -4,15 +4,15 @@ This audit prepares the first MCP surface for the Stock Trends API. It is docume
 
 ## Source Notes
 
-- API contract evidence was inspected read-only from `C:\Users\skort\Projects\stocktrends_api`, the local reference for the front-facing Stock Trends API implementation.
-- `C:\Users\skort\Projects\stocktrends-api-control` is the API control plane. It is not relevant to the MCP v1 front-facing API contract and is not a source of route canonicality for this audit.
+- API contract evidence was inspected read-only from the private Stock Trends API backend, the local reference for the front-facing Stock Trends API implementation.
+- The private API control plane is not relevant to the MCP v1 front-facing API contract and is not a source of route canonicality for this audit.
 - The MCP server must be designed against the external/public Stock Trends API surface, not against the control plane, database, internal admin workflows, or deployment machinery.
 - Public live paid endpoints were not called. x402 payment behavior was not tested.
 - Public/paid status below is based on route descriptions, public-path allowlists, pricing classifier code, and tests in the API repository.
 
 ## Route Canonicality Terms
 
-- Confirmed observed API route: a route observed in the front-facing `stocktrends_api` implementation, OpenAPI configuration, route tests, or public discovery metadata. These are the canonical HTTP paths the MCP adapter should call unless the API changes.
+- Confirmed observed API route: a route observed in the front-facing Stock Trends API implementation, OpenAPI configuration, route tests, or public discovery metadata. These are the canonical HTTP paths the MCP adapter should call unless the API changes.
 - Requested or planned endpoint alias: an endpoint name requested for coverage planning or product discoverability that may not exist as a front-facing API route yet. Aliases are not required for MCP v1 unless the front-facing API exposes them for product reasons.
 - MCP tool name: a stable MCP-facing wrapper name. It may be semantic and agent-readable even when it wraps a confirmed observed API route with a different REST shape.
 - Open question: a route, naming, or exposure decision that must be confirmed before implementation.

@@ -6,7 +6,7 @@ This log records accepted architecture decisions that constrain the Stock Trends
 
 Status: accepted
 
-Decision: `C:\Users\skort\Projects\stocktrends_api` is the inspected local reference for the front-facing Stock Trends API implementation. `C:\Users\skort\Projects\stocktrends-api-control` is the API control plane and is out of scope for MCP v1 route contract design. MCP v1 must be designed against the external/front-facing API surface, not the control plane, database, or internal admin workflows.
+Decision: the private Stock Trends API backend is the inspected local reference for the front-facing Stock Trends API implementation. The private API control plane is out of scope for MCP v1 route contract design. MCP v1 must be designed against the external/front-facing API surface, not the control plane, database, or internal admin workflows.
 
 Rationale: The MCP server adapts the customer-facing API. Control-plane or database behavior can create hidden coupling and route assumptions that external MCP clients cannot rely on.
 
