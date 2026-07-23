@@ -54,8 +54,8 @@ It did not modify runtime code, tests, packages, configuration, fixtures, snapsh
 
 | Repository | Checkout | Revision inspected | State used |
 |---|---|---|---|
-| `stocktrends-mcp-server` | `C:\Users\skort\Projects\stocktrends-mcp-server` | `78409c721e33cdfdf56d9b4646c5f44bb391c229` | branch `docs/phase5f-x402-value-policy-investigation`; local `main` and local `origin/main` refs resolved to the same revision without fetching |
-| `stocktrends_api` | `C:\Users\skort\Projects\stocktrends_api` | `6b9ee57fa4216754bfe0d9892d83a48c01d57fef` | clean detached checkout; local `main` resolved to the same revision |
+| `stocktrends-mcp-server` | `<repository-root>` | `78409c721e33cdfdf56d9b4646c5f44bb391c229` | branch `docs/phase5f-x402-value-policy-investigation`; local `main` and local `origin/main` refs resolved to the same revision without fetching |
+| `stocktrends_api` | `<private-stocktrends-api>` | `6b9ee57fa4216754bfe0d9892d83a48c01d57fef` | clean detached checkout; local `main` resolved to the same revision |
 
 The MCP local history inspected for the requested PR interval was:
 

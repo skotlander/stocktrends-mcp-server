@@ -56,7 +56,7 @@ MCP repo files inspected:
 - `docs/PHASE3_PAID_AUTH_FOUNDATION_VALIDATION_REPORT.md`
 - `docs/PHASE4_FIRST_PAID_TOOL_CONTRACT_MEMO.md`
 
-Front-facing API repo files inspected read-only from `C:\Users\skort\Projects\stocktrends_api`:
+Front-facing API repo files inspected read-only from `<private-stocktrends-api>`:
 
 - `README.md`
 - `examples/README.md`
@@ -107,7 +107,7 @@ Explicitly not inspected or not performed:
 - No migrations were run.
 - No servers were started.
 - No packages were installed.
-- `stocktrends-api-control` was not inspected.
+- The private API control plane was not inspected.
 - No sibling repository was modified.
 
 ## 4. ST-IM latest contract
@@ -129,11 +129,11 @@ Status: confirmed for route/auth/parameters/response class; blocked for executab
 
 Relevant source references:
 
-- API route: `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:11`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:78`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:95`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:97`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:113`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:156`.
-- v1 mount and router registration: `C:\Users\skort\Projects\stocktrends_api\main.py:403`, `C:\Users\skort\Projects\stocktrends_api\main.py:424`.
-- Auth headers/OpenAPI: `C:\Users\skort\Projects\stocktrends_api\middleware\api_key.py:36`, `C:\Users\skort\Projects\stocktrends_api\middleware\api_key.py:37`, `C:\Users\skort\Projects\stocktrends_api\middleware\api_key.py:41`, `C:\Users\skort\Projects\stocktrends_api\main.py:179`, `C:\Users\skort\Projects\stocktrends_api\main.py:185`.
-- Paid policy: `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:334`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:335`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:337`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:338`.
-- Discovery/tests: `C:\Users\skort\Projects\stocktrends_api\discovery\endpoint_metadata.py:575`, `C:\Users\skort\Projects\stocktrends_api\discovery\endpoint_metadata.py:581`, `C:\Users\skort\Projects\stocktrends_api\tests\test_ai_tools.py:245`, `C:\Users\skort\Projects\stocktrends_api\tests\test_ai_tools.py:754`.
+- API route: `<private-stocktrends-api>/routers/stim.py:11`, `<private-stocktrends-api>/routers/stim.py:78`, `<private-stocktrends-api>/routers/stim.py:95`, `<private-stocktrends-api>/routers/stim.py:97`, `<private-stocktrends-api>/routers/stim.py:113`, `<private-stocktrends-api>/routers/stim.py:156`.
+- v1 mount and router registration: `<private-stocktrends-api>/main.py:403`, `<private-stocktrends-api>/main.py:424`.
+- Auth headers/OpenAPI: `<private-stocktrends-api>/middleware/api_key.py:36`, `<private-stocktrends-api>/middleware/api_key.py:37`, `<private-stocktrends-api>/middleware/api_key.py:41`, `<private-stocktrends-api>/main.py:179`, `<private-stocktrends-api>/main.py:185`.
+- Paid policy: `<private-stocktrends-api>/payments/policy_provider.py:334`, `<private-stocktrends-api>/payments/policy_provider.py:335`, `<private-stocktrends-api>/payments/policy_provider.py:337`, `<private-stocktrends-api>/payments/policy_provider.py:338`.
+- Discovery/tests: `<private-stocktrends-api>/discovery/endpoint_metadata.py:575`, `<private-stocktrends-api>/discovery/endpoint_metadata.py:581`, `<private-stocktrends-api>/tests/test_ai_tools.py:245`, `<private-stocktrends-api>/tests/test_ai_tools.py:754`.
 
 ## 5. ST-IM history contract
 
@@ -155,9 +155,9 @@ Status: confirmed for route/auth/parameters/response class; blocked for executab
 
 Relevant source references:
 
-- API route: `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:171`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:186`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:188`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:193`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:194`, `C:\Users\skort\Projects\stocktrends_api\routers\stim.py:302`.
-- Paid policy: `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:341`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:342`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:344`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:345`.
-- Discovery/tests: `C:\Users\skort\Projects\stocktrends_api\discovery\endpoint_metadata.py:623`, `C:\Users\skort\Projects\stocktrends_api\discovery\endpoint_metadata.py:629`, `C:\Users\skort\Projects\stocktrends_api\tests\test_discovery_entrypoints.py:164`, `C:\Users\skort\Projects\stocktrends_api\tests\test_ai_tools.py:346`.
+- API route: `<private-stocktrends-api>/routers/stim.py:171`, `<private-stocktrends-api>/routers/stim.py:186`, `<private-stocktrends-api>/routers/stim.py:188`, `<private-stocktrends-api>/routers/stim.py:193`, `<private-stocktrends-api>/routers/stim.py:194`, `<private-stocktrends-api>/routers/stim.py:302`.
+- Paid policy: `<private-stocktrends-api>/payments/policy_provider.py:341`, `<private-stocktrends-api>/payments/policy_provider.py:342`, `<private-stocktrends-api>/payments/policy_provider.py:344`, `<private-stocktrends-api>/payments/policy_provider.py:345`.
+- Discovery/tests: `<private-stocktrends-api>/discovery/endpoint_metadata.py:623`, `<private-stocktrends-api>/discovery/endpoint_metadata.py:629`, `<private-stocktrends-api>/tests/test_discovery_entrypoints.py:164`, `<private-stocktrends-api>/tests/test_ai_tools.py:346`.
 
 ## 6. Indicators latest/history contract
 
@@ -173,7 +173,7 @@ Status: confirmed; should remain second after ST-IM unless pricing/preflight fou
 | Paid/public status | Paid/protected; pricing rule `indicators_latest_paid`. | Paid/protected; pricing rule `indicators_history_paid`. |
 | Should remain second after ST-IM? | Yes. Indicators are confirmed and useful, but the Phase 4 selection principle still prefers ST-IM latest/history as the first distinctive paid data pair once preflight is safe. |
 
-Relevant source references: `C:\Users\skort\Projects\stocktrends_api\routers\indicators.py:11`, `C:\Users\skort\Projects\stocktrends_api\routers\indicators.py:63`, `C:\Users\skort\Projects\stocktrends_api\routers\indicators.py:64`, `C:\Users\skort\Projects\stocktrends_api\routers\indicators.py:66`, `C:\Users\skort\Projects\stocktrends_api\routers\indicators.py:69`, `C:\Users\skort\Projects\stocktrends_api\routers\indicators.py:149`, `C:\Users\skort\Projects\stocktrends_api\routers\indicators.py:150`, `C:\Users\skort\Projects\stocktrends_api\routers\indicators.py:158`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:349`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:356`.
+Relevant source references: `<private-stocktrends-api>/routers/indicators.py:11`, `<private-stocktrends-api>/routers/indicators.py:63`, `<private-stocktrends-api>/routers/indicators.py:64`, `<private-stocktrends-api>/routers/indicators.py:66`, `<private-stocktrends-api>/routers/indicators.py:69`, `<private-stocktrends-api>/routers/indicators.py:149`, `<private-stocktrends-api>/routers/indicators.py:150`, `<private-stocktrends-api>/routers/indicators.py:158`, `<private-stocktrends-api>/payments/policy_provider.py:349`, `<private-stocktrends-api>/payments/policy_provider.py:356`.
 
 ## 7. Selections latest contract
 
@@ -188,7 +188,7 @@ Status: confirmed route contract; deferred for first paid MCP implementation.
 | Paid/public status | Paid/protected; pricing rule `selections_latest_paid`. |
 | Why deferred | The endpoint returns the latest base ST-IM selection universe, not necessarily the strict published STIM Select list. It has high misuse/broad-sweep risk, a large default/max limit, and should wait until selection history plus base-vs-published semantics are designed for MCP. |
 
-Relevant source references: `C:\Users\skort\Projects\stocktrends_api\routers\selections.py:657`, `C:\Users\skort\Projects\stocktrends_api\routers\selections.py:672`, `C:\Users\skort\Projects\stocktrends_api\routers\selections.py:674`, `C:\Users\skort\Projects\stocktrends_api\routers\selections.py:675`, `C:\Users\skort\Projects\stocktrends_api\routers\selections.py:676`, `C:\Users\skort\Projects\stocktrends_api\routers\selections.py:787`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:379`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:380`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:383`.
+Relevant source references: `<private-stocktrends-api>/routers/selections.py:657`, `<private-stocktrends-api>/routers/selections.py:672`, `<private-stocktrends-api>/routers/selections.py:674`, `<private-stocktrends-api>/routers/selections.py:675`, `<private-stocktrends-api>/routers/selections.py:676`, `<private-stocktrends-api>/routers/selections.py:787`, `<private-stocktrends-api>/payments/policy_provider.py:379`, `<private-stocktrends-api>/payments/policy_provider.py:380`, `<private-stocktrends-api>/payments/policy_provider.py:383`.
 
 ## 8. Guidance/research artifact contract
 
@@ -204,7 +204,7 @@ Status: confirmed route/class contract; deferred for later authenticated artifac
 | Tool or authenticated resource later? | Defer. These may be tools if explicit paid execution/cost gates are required, or authenticated resources only after separate review of resource semantics, caching, and paid access. They must not be public resources. |
 | Should by-id come before latest? | Prefer discovery/by-id before or alongside latest. Latest-only artifact access can overfit to the newest artifact and hide provenance; by-id retrieval gives deterministic artifact access from manifest/discovery data. |
 
-Relevant source references: `C:\Users\skort\Projects\stocktrends_api\routers\intelligence.py:90`, `C:\Users\skort\Projects\stocktrends_api\routers\intelligence.py:106`, `C:\Users\skort\Projects\stocktrends_api\routers\intelligence.py:121`, `C:\Users\skort\Projects\stocktrends_api\routers\intelligence.py:143`, `C:\Users\skort\Projects\stocktrends_api\routers\intelligence.py:158`, `C:\Users\skort\Projects\stocktrends_api\routers\intelligence.py:180`, `C:\Users\skort\Projects\stocktrends_api\services\intelligence_artifact_store.py:76`, `C:\Users\skort\Projects\stocktrends_api\contracts\intelligence\public_artifact_envelope.v1.schema.json:2`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:454`, `C:\Users\skort\Projects\stocktrends_api\payments\policy_provider.py:475`.
+Relevant source references: `<private-stocktrends-api>/routers/intelligence.py:90`, `<private-stocktrends-api>/routers/intelligence.py:106`, `<private-stocktrends-api>/routers/intelligence.py:121`, `<private-stocktrends-api>/routers/intelligence.py:143`, `<private-stocktrends-api>/routers/intelligence.py:158`, `<private-stocktrends-api>/routers/intelligence.py:180`, `<private-stocktrends-api>/services/intelligence_artifact_store.py:76`, `<private-stocktrends-api>/contracts/intelligence/public_artifact_envelope.v1.schema.json:2`, `<private-stocktrends-api>/payments/policy_provider.py:454`, `<private-stocktrends-api>/payments/policy_provider.py:475`.
 
 ## 9. API key auth contract
 
@@ -220,7 +220,7 @@ Status: confirmed enough for future subscription API-key execution; MCP should p
 | 403 behavior | Inactive/revoked key, inactive subscription/plan, or disallowed plan returns `403`; ST-IM plan denial is explicitly handled as forbidden/not permitted. |
 | Can API key auth be used without x402? | Yes. Valid paid-auth requests classify as subscription and do not require x402. x402 is an alternate agent-pay rail, not mandatory for subscription callers. |
 
-Relevant source references: `C:\Users\skort\Projects\stocktrends_api\middleware\api_key.py:36`, `C:\Users\skort\Projects\stocktrends_api\middleware\api_key.py:37`, `C:\Users\skort\Projects\stocktrends_api\middleware\api_key.py:41`, `C:\Users\skort\Projects\stocktrends_api\middleware\api_key.py:329`, `C:\Users\skort\Projects\stocktrends_api\middleware\api_key.py:356`, `C:\Users\skort\Projects\stocktrends_api\main.py:179`, `C:\Users\skort\Projects\stocktrends_api\main.py:185`, `C:\Users\skort\Projects\stocktrends_api\static\llms.txt:354`, `C:\Users\skort\Projects\stocktrends_api\static\llms.txt:356`, `C:\Users\skort\Projects\stocktrends_api\tests\test_classifier_anon_rail.py:195`, `C:\Users\skort\Projects\stocktrends_api\tests\test_classifier_anon_rail.py:209`.
+Relevant source references: `<private-stocktrends-api>/middleware/api_key.py:36`, `<private-stocktrends-api>/middleware/api_key.py:37`, `<private-stocktrends-api>/middleware/api_key.py:41`, `<private-stocktrends-api>/middleware/api_key.py:329`, `<private-stocktrends-api>/middleware/api_key.py:356`, `<private-stocktrends-api>/main.py:179`, `<private-stocktrends-api>/main.py:185`, `<private-stocktrends-api>/static/llms.txt:354`, `<private-stocktrends-api>/static/llms.txt:356`, `<private-stocktrends-api>/tests/test_classifier_anon_rail.py:195`, `<private-stocktrends-api>/tests/test_classifier_anon_rail.py:209`.
 
 ## 10. Pricing/preflight contract
 
@@ -235,7 +235,7 @@ Status: partially confirmed, but not sufficient for paid MCP execution.
 | Insufficient balance/payment required behavior | For subscription/API-key paths, missing/invalid/disallowed credentials return `401`/`403`. For agent-pay/x402 paths, unpaid requests can return `402` with payment-required metadata. MCP must not sign, pay, or retry x402 in the first paid-tool implementation. |
 | Is x402 required for some/all paid calls? | x402 is supported for agent-pay/per-request access and may be the response path for anonymous agent-pay attempts. It is not required for valid subscription API-key access. |
 
-Relevant source references: `C:\Users\skort\Projects\stocktrends_api\routers\pricing.py:264`, `C:\Users\skort\Projects\stocktrends_api\routers\pricing.py:277`, `C:\Users\skort\Projects\stocktrends_api\routers\pricing.py:292`, `C:\Users\skort\Projects\stocktrends_api\routers\pricing.py:315`, `C:\Users\skort\Projects\stocktrends_api\routers\pricing.py:316`, `C:\Users\skort\Projects\stocktrends_api\routers\pricing.py:333`, `C:\Users\skort\Projects\stocktrends_api\routers\workflows.py:599`, `C:\Users\skort\Projects\stocktrends_api\routers\workflows.py:606`, `C:\Users\skort\Projects\stocktrends_api\routers\workflows.py:618`, `C:\Users\skort\Projects\stocktrends_api\routers\workflows.py:733`, `C:\Users\skort\Projects\stocktrends_api\routers\workflows.py:791`, `C:\Users\skort\Projects\stocktrends_api\tests\test_route_access_classification.py:195`, `C:\Users\skort\Projects\stocktrends_api\tests\test_route_access_classification.py:202`, `C:\Users\skort\Projects\stocktrends_api\tests\test_route_access_classification.py:205`.
+Relevant source references: `<private-stocktrends-api>/routers/pricing.py:264`, `<private-stocktrends-api>/routers/pricing.py:277`, `<private-stocktrends-api>/routers/pricing.py:292`, `<private-stocktrends-api>/routers/pricing.py:315`, `<private-stocktrends-api>/routers/pricing.py:316`, `<private-stocktrends-api>/routers/pricing.py:333`, `<private-stocktrends-api>/routers/workflows.py:599`, `<private-stocktrends-api>/routers/workflows.py:606`, `<private-stocktrends-api>/routers/workflows.py:618`, `<private-stocktrends-api>/routers/workflows.py:733`, `<private-stocktrends-api>/routers/workflows.py:791`, `<private-stocktrends-api>/tests/test_route_access_classification.py:195`, `<private-stocktrends-api>/tests/test_route_access_classification.py:202`, `<private-stocktrends-api>/tests/test_route_access_classification.py:205`.
 
 ## 11. Endpoint allowlist recommendation
 
@@ -401,7 +401,7 @@ Hard constraints:
 - Do not add OAuth.
 - Do not add remote MCP transport.
 - Do not call a database.
-- Do not touch `stocktrends-api-control`.
+- Do not touch the private API control plane.
 - Do not install packages unless explicitly authorized.
 - Do not commit unless explicitly asked.
 

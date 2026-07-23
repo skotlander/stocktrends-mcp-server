@@ -42,8 +42,8 @@ challenge value, verify settlement, or forward proof.
 
 For this memo:
 
-1. `C:\Users\skort\Projects\stocktrends_api\payments\x402.py` and
-   `C:\Users\skort\Projects\stocktrends_api\payments\enforcement.py` are the
+1. `<private-stocktrends-api>/payments/x402.py` and
+   `<private-stocktrends-api>/payments/enforcement.py` are the
    primary authority for the constructed x402 requirements, challenge body,
    encoded header value, and no-signature enforcement result.
 2. `mpp.py`, `mpp_client.py`, and `policy_provider.py` are secondary evidence

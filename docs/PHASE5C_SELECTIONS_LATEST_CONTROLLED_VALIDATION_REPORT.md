@@ -51,7 +51,7 @@ Run on `e8163f5`, working tree clean before edits:
 
 | Check | Result |
 | --- | --- |
-| `git rev-parse --show-toplevel` | `C:/Users/skort/Projects/stocktrends-mcp-server` |
+| `git rev-parse --show-toplevel` | `<repository-root>` |
 | `git branch --show-current` | `claude/pr47-selections-validation-report` (not `main`) |
 | `git status --short --branch` | clean; HEAD includes `e8163f5 Add selections latest controlled validation plan (#46)` |
 | Checkout contents | `README.md`, `package.json`, `src/`, `tests/`, `docs/` all present |

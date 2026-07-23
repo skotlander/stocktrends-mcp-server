@@ -39,7 +39,7 @@ the same ten-tool total; the x402 mock allowlist contains nine paid GET routes.
 
 | Check | Result |
 | --- | --- |
-| Git toplevel | `C:/Users/skort/Projects/stocktrends-mcp-server` |
+| Git toplevel | `<repository-root>` |
 | Branch | `claude/pr70-x402-public-mock-validation-report` |
 | Branch is not `main` | yes |
 | HEAD/base commit | `3d99566 Add mock-only public x402 challenge wiring (#69)` |

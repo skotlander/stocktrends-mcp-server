@@ -391,7 +391,7 @@ implementation/phase4-paid-stim-live-execution-subscription
 
 ---
 
-### Appendix A — ST-IM facts confirmed read-only against `C:\Users\skort\Projects\stocktrends_api` (2026-07-08)
+### Appendix A — ST-IM facts confirmed read-only against `<private-stocktrends-api>` (2026-07-08)
 
 Verified directly in this task (not only inherited):
 

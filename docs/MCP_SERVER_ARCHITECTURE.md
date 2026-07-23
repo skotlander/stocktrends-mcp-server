@@ -8,8 +8,8 @@ The MCP server is a protocol adapter. It must forward requests to the Stock Tren
 
 Repository authority for this architecture:
 
-- `C:\Users\skort\Projects\stocktrends_api` is the inspected local reference for the front-facing Stock Trends API implementation.
-- `C:\Users\skort\Projects\stocktrends-api-control` is the API control plane and is not relevant to the MCP v1 front-facing API contract.
+- The private Stock Trends API backend is the inspected local reference for the front-facing Stock Trends API implementation.
+- The private API control plane is not relevant to the MCP v1 front-facing API contract.
 - The MCP server must be designed against the external/public API surface, not against the control plane, database, internal admin workflows, or deployment machinery.
 
 Accepted architecture decisions are recorded in `docs/ARCHITECTURE_DECISIONS.md`.

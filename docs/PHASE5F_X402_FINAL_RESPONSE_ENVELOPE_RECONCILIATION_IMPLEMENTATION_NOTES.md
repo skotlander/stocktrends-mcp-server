@@ -20,7 +20,7 @@ PR #78 established from current local source that:
 - `payment_required.accepts` remains the executable x402 requirement; and
 - the source-confirmed incompatibilities do not prove which exact field caused the PR #77 live rejection.
 
-The API source inspected for this implementation was local revision `6b9ee57fa4216754bfe0d9892d83a48c01d57fef` in `C:\Users\skort\Projects\stocktrends_api`. No remote repository or deployment source was queried.
+The API source inspected for this implementation was local revision `6b9ee57fa4216754bfe0d9892d83a48c01d57fef` in `<private-stocktrends-api>`. No remote repository or deployment source was queried.
 
 ## 3. Outer rail metadata authority boundary
 

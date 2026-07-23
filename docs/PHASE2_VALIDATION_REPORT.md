@@ -112,7 +112,7 @@ Manual validation used MCP Inspector v0.22.0 against the built Phase 2 server ov
 Server path used:
 
 ```text
-C:/Users/skort/.codex/worktrees/eeaa/stocktrends-mcp-server/dist/server.js
+dist/server.js
 ```
 
 On Windows, the server path needed forward slashes in the Inspector configuration. An initial Inspector session showed only 5 resources because it was still attached to an old Inspector/server process. Stopping the old process, rebuilding, and reconnecting to the correct Phase 2 `dist/server.js` resolved the issue.

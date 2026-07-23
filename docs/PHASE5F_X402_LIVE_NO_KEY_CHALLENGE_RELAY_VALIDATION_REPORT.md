@@ -51,7 +51,7 @@ sweeping.
 
 | Check | Result |
 | --- | --- |
-| Git toplevel | `C:/Users/skort/Projects/stocktrends-mcp-server` |
+| Git toplevel | `<repository-root>` |
 | Branch | `claude/pr73-x402-live-no-key-validation-report` |
 | Branch is not `main` | yes |
 | HEAD before validation | `5b44662d736586c0fe7e39fdc41393c1f396fd00` (`5b44662 Add default-off live no-key x402 challenge relay (#72)`) |
