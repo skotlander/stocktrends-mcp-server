@@ -474,11 +474,11 @@ Before a release, run the manual secret-safety scan in the [Phase 5A Operator Sa
 
 ## Current Status
 
-This repository implements a conservative local stdio MCP server for public-resource access, one public/free workflow cost-estimate planning tool, an internal auth/spend-control/pricing-preflight foundation, and the paired paid ST-IM tools with gated live subscription/API-key execution.
+This repository powers the deployed credential-free, free-only public Remote MCP at `https://mcp.stocktrends.com/mcp` over Streamable HTTP: exactly ten resources, one free workflow cost-estimate planning tool, and zero prompts. Local stdio remains the default for local process startup and supports the free/default surface, separately gated subscription/API-key paid tools, and optional default-off x402 challenge inspection/relay only (no payment, proof forwarding, payment header, paid data, or spend).
 
 Included:
 
-- Local stdio transport only.
+- Live public Streamable HTTP Remote MCP and separately supported local stdio transport (the default for local process startup).
 - Public Stock Trends API resources and public/free planning tool.
 - Fetch-on-request behavior; no startup API fetch is required.
 - One public/free MCP planning tool: `stocktrends_estimate_workflow_cost`.
@@ -551,7 +551,11 @@ All variables are optional; defaults keep the server in free mode. The **Affects
 | Variable | Affects | Default | Behavior & secret-safety notes |
 | --- | --- | --- | --- |
 | `STOCKTRENDS_API_BASE_URL` | All modes | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. Not a secret. |
-| `STOCKTRENDS_MCP_TRANSPORT` | All modes | `stdio` | Only `stdio` is supported. Not a secret. |
+| `STOCKTRENDS_MCP_TRANSPORT` | All modes | `stdio` | Accepted values are `stdio` and `streamable-http`; `stdio` is the local-startup default. `streamable-http` activates credential-free HTTP configuration and fail-closed checks that reject current paid, API-key, and x402 settings. Not a secret. |
+| `STOCKTRENDS_MCP_HTTP_BIND_ADDRESS` | Streamable HTTP only | `127.0.0.1` | Non-empty hostname or IP address without whitespace. A non-loopback binding requires `STOCKTRENDS_MCP_HTTP_ALLOWED_HOSTS`. Not a secret. |
+| `STOCKTRENDS_MCP_HTTP_PORT` | Streamable HTTP only | `3000` | Integer from 1 through 65535. Not a secret. |
+| `STOCKTRENDS_MCP_HTTP_ALLOWED_HOSTS` | Streamable HTTP only | None | Optional comma-separated, non-wildcard hostname allowlist; required for a non-loopback bind address. Not a secret. |
+| `STOCKTRENDS_MCP_HTTP_ALLOWED_ORIGINS` | Streamable HTTP only | None | Optional comma-separated, non-wildcard allowlist used for Origin validation; when unset, the HTTP server uses the host allowlist if configured, otherwise loopback-origin validation. Not a secret. |
 | `STOCKTRENDS_MCP_LOG_LEVEL` | All modes | `warn` | Normal logs go to stderr, never stdout. Not a secret. |
 | `STOCKTRENDS_ENABLE_PAID_TOOLS` | Paid tool exposure | `false` | Exposure flag. When `true` with a configured API key, exposes the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, the base selections tool *definition*, and the four market-context tool *definitions* (total tools become 10; the internal instrument resolver adds no public tool). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. Not a secret. |
 | `STOCKTRENDS_API_KEY` | Paid exposure + execution | None | **Secret — use a placeholder (`<your-api-key>`) in all docs, examples, screenshots, and shared artifacts; never commit or paste a real value.** Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as the `X-API-Key` header to the approved origin + allowlisted paid ST-IM, indicators, base `selections/latest`, and market-context endpoints after every gate passes (no `Authorization: Bearer` fallback). Never sent for public resources (including `stocktrends://leadership/definitions`), the cost-estimate planning tool, the pricing catalog, or the credential-free instrument resolver; never logged or exposed in errors/denials/returned data. |
