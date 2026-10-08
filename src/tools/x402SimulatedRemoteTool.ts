@@ -19,11 +19,14 @@ export interface SimulatedX402RemoteOptions {
   transport: SimulatedX402RemoteTransport;
   now?: () => number;
   challengeTtlMs?: number;
+  /** Explicitly supplied only by tests that need state across HTTP requests. */
+  state?: SimulatedX402RemoteState;
 }
 
 const API_RESOURCE = "https://api.stocktrends.com/v1/stim/latest";
 const DEFAULT_CHALLENGE_TTL_MS = 60_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
+const MAX_PAYMENT_HEADER_BYTES = 64 * 1024;
 
 const inputSchema = z.object({
   symbol_exchange: z.string().trim().regex(/^[A-Z0-9][A-Z0-9.-]{0,31}_[NQABTI]$/)
@@ -36,6 +39,15 @@ interface ChallengeRecord {
   consumed: boolean;
 }
 
+export interface SimulatedX402RemoteState {
+  readonly challenges: Map<string, ChallengeRecord>;
+  readonly consumedPaymentPayloads: Set<string>;
+}
+
+export function createSimulatedX402RemoteState(): SimulatedX402RemoteState {
+  return { challenges: new Map<string, ChallengeRecord>(), consumedPaymentPayloads: new Set<string>() };
+}
+
 interface PaymentRequired {
   x402Version: 2;
   error: string;
@@ -46,7 +58,9 @@ interface PaymentRequired {
 
 /** Registers exactly one semantic tool, only on an injected test server. */
 export function registerSimulatedRemoteX402StimTool(server: McpServer, options: SimulatedX402RemoteOptions): void {
-  const state = new Map<string, ChallengeRecord>();
+  const state = options.state ?? createSimulatedX402RemoteState();
+  // Simulation-only process-local replay guard. It intentionally makes no
+  // cross-process or durable idempotency claim.
   const now = options.now ?? Date.now;
   const ttl = options.challengeTtlMs ?? DEFAULT_CHALLENGE_TTL_MS;
 
@@ -62,9 +76,10 @@ export function registerSimulatedRemoteX402StimTool(server: McpServer, options: 
     async (input, ctx) => {
       const payment = ctx.mcpReq._meta?.["x402/payment"];
       const key = bindingKey(input.symbol_exchange);
-      const current = state.get(key);
+      const current = state.challenges.get(key);
 
       if (payment === undefined) {
+        if (current && !current.consumed && current.expiresAt > now()) return paymentRequiredResult(current.requirements);
         let response: Response;
         try {
           response = await options.transport.request({ url: apiUrl(input.symbol_exchange), method: "GET", symbolExchange: input.symbol_exchange });
@@ -72,7 +87,7 @@ export function registerSimulatedRemoteX402StimTool(server: McpServer, options: 
         if (response.status !== 402) return errorResult("x402_unexpected_unpaid_response");
         const requirements = await parseRequirements(response);
         if (!requirements) return errorResult("x402_invalid_payment_requirements");
-        state.set(key, { symbolExchange: input.symbol_exchange, requirements, expiresAt: now() + ttl, consumed: false });
+        state.challenges.set(key, { symbolExchange: input.symbol_exchange, requirements, expiresAt: now() + ttl, consumed: false });
         return paymentRequiredResult(requirements);
       }
 
@@ -80,9 +95,12 @@ export function registerSimulatedRemoteX402StimTool(server: McpServer, options: 
       if (current.consumed) return errorResult("x402_payment_replay");
       const proof = validatePaymentPayload(payment, current.requirements);
       if (!proof) return errorResult("x402_invalid_payment_payload");
+      const proofFingerprint = stableJson(proof);
+      if (state.consumedPaymentPayloads.has(proofFingerprint)) return errorResult("x402_payment_replay");
 
       // Consume before sending the proof: no automatic retry can spend it twice.
       current.consumed = true;
+      state.consumedPaymentPayloads.add(proofFingerprint);
       let response: Response;
       try {
         response = await options.transport.request({ url: apiUrl(input.symbol_exchange), method: "GET", symbolExchange: input.symbol_exchange, paymentSignature: encodePaymentSignature(proof) });
@@ -115,9 +133,12 @@ function bindingKey(symbolExchange: string): string {
 
 async function parseRequirements(response: Response): Promise<PaymentRequired | null> {
   const body = await readJsonBounded(response);
-  const value = body?.paymentRequired ?? body;
+  const value = body?.payment_required;
+  const header = decodePaymentRequiredHeader(response.headers.get("payment-required"));
+  if (!isRecord(value) || !header || stableJson(value) !== stableJson(header)) return null;
   if (!isRecord(value) || value.x402Version !== 2 || !isRecord(value.resource) || value.resource.url !== API_RESOURCE || !Array.isArray(value.accepts) || !value.accepts.length) return null;
   if (!value.accepts.every(isRecord)) return null;
+  if (!value.accepts.every((accepted) => isRecord(accepted.extra) && stableJson(accepted.extra.resource) === stableJson(value.resource))) return null;
   return value as unknown as PaymentRequired;
 }
 
@@ -131,6 +152,14 @@ function validatePaymentPayload(value: unknown, requirements: PaymentRequired): 
 function encodePaymentSignature(payment: Record<string, unknown>): string {
   // The API accepts base64-encoded JSON PaymentPayload in PAYMENT-SIGNATURE.
   return Buffer.from(JSON.stringify(payment), "utf8").toString("base64");
+}
+
+function decodePaymentRequiredHeader(value: string | null): Record<string, unknown> | null {
+  if (!value || value.length > MAX_PAYMENT_HEADER_BYTES || !/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length % 4 !== 0) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64").toString("utf8"));
+    return isRecord(parsed) ? parsed : null;
+  } catch { return null; }
 }
 
 function parseSettlement(value: string | null): Record<string, unknown> | null {
