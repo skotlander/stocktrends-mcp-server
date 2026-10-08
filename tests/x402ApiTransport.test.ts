@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createStockTrendsMcpServer } from "../src/server.js";
 import { ProductionX402ApiTransport, X402ApiTransportFailure, X402_STIM_LATEST_RESOURCE } from "../src/x402ApiTransport.js";
 
@@ -15,6 +15,8 @@ function challenge(): Response {
     headers: { "content-type": "application/json", "payment-required": encodedRequirements }
   });
 }
+
+afterEach(() => vi.useRealTimers());
 
 describe("production-shaped x402 API transport", () => {
   it("sends exactly one anonymous, fixed-target challenge request without credential or payment fallback", async () => {
@@ -77,5 +79,26 @@ describe("production-shaped x402 API transport", () => {
       init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
     }) });
     await expect(transport.requestAnonymousChallenge({ endpointPath: "/v1/stim/latest", method: "GET", symbolExchange: "AAPL_Q" })).rejects.toMatchObject({ code: "x402_transport_timeout" });
+  });
+
+  it("keeps the timeout active while a valid 402 response body stalls, without retrying", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const transport = new ProductionX402ApiTransport({ timeoutMs: 10, fetchFn: async (_url, init) => {
+      calls++;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"payment_required":'));
+          init?.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
+        }
+      });
+      return new Response(body, { status: 402, headers: { "content-type": "application/json", "payment-required": encodedRequirements } });
+    } });
+    const result = transport.requestAnonymousChallenge({ endpointPath: "/v1/stim/latest", method: "GET", symbolExchange: "AAPL_Q" });
+    const timeoutExpectation = expect(result).rejects.toMatchObject({ code: "x402_transport_timeout" });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10);
+    await timeoutExpectation;
+    expect(calls).toBe(1);
   });
 });

@@ -77,38 +77,42 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
         redirect: "manual",
         signal: controller.signal
       });
+      if (response.redirected || (response.status >= 300 && response.status < 400)) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_redirect_rejected");
+      }
+      if (response.status !== 402) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_unexpected_status");
+      }
+      if (!isJson(response)) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_malformed_response");
+      }
+      const paymentRequiredHeader = response.headers.get("payment-required");
+      if (!isBoundedBase64(paymentRequiredHeader, MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES)) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_malformed_response");
+      }
+      const headerValue = decodeJsonObject(paymentRequiredHeader);
+      const body = await readBoundedJsonObject(response);
+      // Fetch implementations report aborts from body readers differently. The
+      // controller is deliberately still alive here, so normalize every such
+      // body-stage timeout to the same fail-closed timeout taxonomy.
+      if (controller.signal.aborted) throw new X402ApiTransportFailure("x402_transport_timeout");
+      if (!headerValue || !body || !isSameJson(headerValue, body.payment_required) || !isApprovedRequirements(headerValue)) {
+        throw new X402ApiTransportFailure("x402_transport_malformed_response");
+      }
+      // Values are returned exactly as API-authored JSON values; no pricing,
+      // resource, network, recipient, or expiry field is synthesized or changed.
+      return { status: 402, paymentRequiredHeader, body };
     } catch (error) {
+      if (error instanceof X402ApiTransportFailure) throw error;
       if (controller.signal.aborted || isAbortError(error)) throw new X402ApiTransportFailure("x402_transport_timeout");
       throw new X402ApiTransportFailure("x402_transport_unavailable");
     } finally {
       clearTimeout(timeout);
     }
-
-    if (response.redirected || (response.status >= 300 && response.status < 400)) {
-      await cancelBody(response);
-      throw new X402ApiTransportFailure("x402_transport_redirect_rejected");
-    }
-    if (response.status !== 402) {
-      await cancelBody(response);
-      throw new X402ApiTransportFailure("x402_transport_unexpected_status");
-    }
-    if (!isJson(response)) {
-      await cancelBody(response);
-      throw new X402ApiTransportFailure("x402_transport_malformed_response");
-    }
-    const paymentRequiredHeader = response.headers.get("payment-required");
-    if (!isBoundedBase64(paymentRequiredHeader, MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES)) {
-      await cancelBody(response);
-      throw new X402ApiTransportFailure("x402_transport_malformed_response");
-    }
-    const headerValue = decodeJsonObject(paymentRequiredHeader);
-    const body = await readBoundedJsonObject(response);
-    if (!headerValue || !body || !isSameJson(headerValue, body.payment_required) || !isApprovedRequirements(headerValue)) {
-      throw new X402ApiTransportFailure("x402_transport_malformed_response");
-    }
-    // Values are returned exactly as API-authored JSON values; no pricing,
-    // resource, network, recipient, or expiry field is synthesized or changed.
-    return { status: 402, paymentRequiredHeader, body };
   }
 
   async requestWithPayment(_request: X402PaymentBearingRequest): Promise<never> {
