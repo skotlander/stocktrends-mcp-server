@@ -208,7 +208,8 @@ Before any runtime code is merged:
 - [ ] Confirm x402 proof forwarding, payment, signing, wallet custody, and
       settlement verification remain deferred; default-off challenge inspection
       remains within its separately reviewed no-key boundary.
-- [ ] Complete a separate review before any remote HTTP/SSE transport.
+- [ ] Complete a separate security review before any remote paid or
+      authenticated MCP transport or execution.
 
 ## 15. Paid ST-IM and Indicators Live Execution (Subscription/API-Key)
 

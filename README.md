@@ -503,7 +503,8 @@ Excluded:
   payment headers, and OAuth. Live x402 support in this build is challenge-only,
   no-key, no-proof, no-payment, no-spend, and shape-metadata-only.
 - `Authorization: Bearer` fallback.
-- Remote HTTP/SSE/Streamable HTTP hosting.
+- Remote paid or authenticated MCP hosting/execution, including customer API-key
+  forwarding and payment execution.
 - Database or control-plane access.
 - Dynamic MCP registration from `/v1/ai/tools` or `/v1/workflows`.
 - Intelligence Agent recomputation, generated guidance, generated research, or a parallel reasoning layer.
@@ -599,7 +600,11 @@ The server registers one public/free MCP planning tool:
 | --- | --- | --- |
 | `stocktrends_estimate_workflow_cost` | `GET /v1/cost-estimate` | Estimate workflow-level cost for budgeting/planning before paid execution. |
 
-This tool sends no API key or auth header, does not call paid endpoints, does not call `/v1/pricing/catalog`, does not authorize paid execution or payment, and does not implement x402, wallet, OAuth, remote MCP, database, or control-plane behavior.
+This tool sends no API key or auth header, does not call paid endpoints or
+`/v1/pricing/catalog`, does not authorize paid execution or payment, and
+implements no x402 payment, wallet, OAuth, database, or control-plane behavior.
+It is the one free planning tool exposed by the public Remote MCP and is also
+available in local default/free mode.
 
 ## Conditional Paid ST-IM Tools (subscription/API-key execution)
 
