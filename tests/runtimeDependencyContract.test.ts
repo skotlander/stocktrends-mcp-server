@@ -122,7 +122,7 @@ describe("runtime dependency contract check", () => {
   });
 
   it("normalizes scoped package subpaths to the package root", () => {
-    expect(normalizeSpecifier("@modelcontextprotocol/sdk/server/mcp.js")).toBe("@modelcontextprotocol/sdk");
+    expect(normalizeSpecifier("@modelcontextprotocol/server/stdio")).toBe("@modelcontextprotocol/server");
   });
 
   it("normalizes unscoped package subpaths to the package root", () => {
@@ -201,7 +201,7 @@ describe("runtime dependency contract check", () => {
 
     const result = analyzeRuntimeDependencyContract({ distDir, packageJsonPath });
 
-    expect(result.discoveredPackages).toEqual(["@modelcontextprotocol/sdk", "zod"]);
+    expect(result.discoveredPackages).toEqual(["@modelcontextprotocol/node", "@modelcontextprotocol/server", "zod"]);
     expect(result.undeclaredPackages).toEqual([]);
   });
 });

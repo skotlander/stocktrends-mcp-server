@@ -147,7 +147,7 @@ Phase 1 should ship no MCP prompts. Prompts may be reconsidered later only if th
 
 Start with local stdio. This keeps the first implementation inside the user's local MCP host process, avoids exposing an unaudited network listener, and lets credentials remain local to the user's environment.
 
-Remote HTTP/SSE should be deferred until after a security review covers authentication, authorization, tenant separation, CORS, rate limiting, request replay, logging, and spend controls. A remote MCP server would become an internet-facing broker for paid API calls and should be treated as a separate product surface.
+Remote paid HTTP/SSE remains deferred until authentication, authorization, tenant separation, rate limiting, replay, logging, and spend controls are designed. The implemented first remote foundation is narrower: stateless Streamable HTTP serves only credential-free discovery resources and workflow-cost planning, creates a fresh semantic server per request, and rejects paid/x402 configuration before listening.
 
 ## 10. Authentication Strategy
 

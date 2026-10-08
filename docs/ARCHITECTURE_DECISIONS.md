@@ -52,6 +52,12 @@ Rationale: Phase 1 should prove safe local MCP resource exposure before introduc
 
 Affected docs/implementation implications: Phase 1 acceptance criteria must assert that no paid, auth, x402, wallet, remote, prompt, database, control-plane, or reasoning surface is registered or exposed.
 
+## Streamable HTTP public-foundation decision
+
+Decision: preserve stdio as the default transport and add explicit, stateless Streamable HTTP at `/mcp` using the MCP SDK v2 per-request factory. The remote surface is limited to ten credential-free resources, one workflow-cost planning tool, and zero prompts. It refuses current API-key, paid, x402, challenge, live-challenge, and proof-forwarding configuration before listener creation.
+
+Rationale: this permits remote discovery/planning without sharing paid-state counters, duplicate-call suppression, pricing reconciliation, credentials, or payment state between callers. A production hosted endpoint, remote authentication, remote paid execution, MPP, and transaction-complete x402 remain separate decisions.
+
 ## ADR-006: Phase 1 Tools Policy
 
 Status: accepted

@@ -160,7 +160,7 @@ Controls:
 
 ## 12. Future Remote MCP Risks
 
-Remote HTTP/SSE MCP transport should not ship until reviewed as a separate security surface.
+Remote paid HTTP/SSE MCP transport must not ship until reviewed as a separate security surface. The implemented public Streamable HTTP foundation is limited to credential-free discovery/planning, validates Host and Origin before MCP dispatch, uses SDK bounded body reads, defaults to loopback, and fails startup before listening if this revision's API-key, paid, x402 relay/challenge/live, or proof-forwarding configuration is active. It does not provide a production endpoint, CORS, remote authentication, remote paid execution, payment forwarding, MPP, or transaction-complete x402.
 
 Required future topics:
 

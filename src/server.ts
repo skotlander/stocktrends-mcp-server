@@ -2,8 +2,8 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { McpServer } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { parseConfig, type Env, type StockTrendsMcpConfig } from "./config.js";
 import { createLogger, safeErrorMessage } from "./logging.js";
 import { createPaidUsageTracker } from "./paidPolicy.js";
@@ -16,6 +16,7 @@ import { registerPaidMarketContextTools } from "./tools/marketContextTools.js";
 import { registerPaidSelectionsTools } from "./tools/selectionsTools.js";
 import { registerPaidStimTools } from "./tools/stimTools.js";
 import { registerX402PublicTools } from "./tools/x402Tools.js";
+import { startStreamableHttpServer } from "./httpServer.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
 export const SERVER_VERSION = "1.0.1";
@@ -137,6 +138,8 @@ export async function startStdioServer(env: Env = process.env): Promise<void> {
   await runtime.server.connect(new StdioServerTransport());
 }
 
+export { startStreamableHttpServer };
+
 // Testing seam: the default implementations of the three path primitives
 // isDirectExecution needs. Tests inject a partial override (e.g. a
 // realpathNative that throws only for one specific input) to exercise
@@ -180,7 +183,9 @@ export function isDirectExecution(
 }
 
 if (isDirectExecution()) {
-  startStdioServer().catch((error) => {
+  const transport = process.env.STOCKTRENDS_MCP_TRANSPORT?.trim().toLowerCase() ?? "stdio";
+  const startup = transport === "streamable-http" ? startStreamableHttpServer() : startStdioServer();
+  startup.catch((error) => {
     const logger = createLogger({ logLevel: "error" });
     logger.error(safeErrorMessage(error));
     process.exitCode = 1;

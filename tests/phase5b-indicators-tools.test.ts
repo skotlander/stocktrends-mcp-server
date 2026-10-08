@@ -714,7 +714,7 @@ function costEstimateBody(): Record<string, unknown> {
   };
 }
 
-function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/sdk/client/index.js").Client["callTool"]>>): Record<string, any> {
+function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/client").Client["callTool"]>>): Record<string, any> {
   if (!("structuredContent" in result) || !result.structuredContent) {
     throw new Error(`Expected structured tool content, got ${JSON.stringify(result)}`);
   }
@@ -722,7 +722,7 @@ function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/sdk
   return result.structuredContent as Record<string, any>;
 }
 
-function text(result: Awaited<ReturnType<import("@modelcontextprotocol/sdk/client/index.js").Client["callTool"]>>): string {
+function text(result: Awaited<ReturnType<import("@modelcontextprotocol/client").Client["callTool"]>>): string {
   const content = (result as { content?: Array<{ type: string; text?: string }> }).content ?? [];
   return content.map((entry) => entry.text ?? "").join("\n");
 }

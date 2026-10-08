@@ -176,12 +176,9 @@ describe("config", () => {
     ).toThrow(StockTrendsMcpError);
   });
 
-  it("rejects unsupported transports", () => {
-    expect(() =>
-      parseConfig({
-        STOCKTRENDS_MCP_TRANSPORT: "streamable-http"
-      })
-    ).toThrow(StockTrendsMcpError);
+  it("accepts streamable HTTP and rejects unsupported transports", () => {
+    expect(parseConfig({ STOCKTRENDS_MCP_TRANSPORT: "streamable-http" }).transport).toBe("streamable-http");
+    expect(() => parseConfig({ STOCKTRENDS_MCP_TRANSPORT: "sse" })).toThrow(StockTrendsMcpError);
   });
 
   it("rejects arbitrary API origins", () => {

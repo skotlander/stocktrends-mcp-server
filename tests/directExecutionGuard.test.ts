@@ -212,7 +212,7 @@ describe("isDirectExecution", () => {
     expect(isDirectExecution("file:///irrelevant-because-injected", noncanonicalEntry, shimDeps)).toBe(true);
   });
 
-  it("has exactly one conditional autostart call site invoking startStdioServer(), guarded by exactly one direct-execution conditional", () => {
+  it("has one direct-execution guard that selects stdio by default and Streamable HTTP explicitly", () => {
     const serverSource = readFileSync(serverSourcePath, "utf8");
 
     // Matches the zero-argument call site `startStdioServer()`. This never
@@ -226,11 +226,8 @@ describe("isDirectExecution", () => {
     const guardConditionals = serverSource.match(/if\s*\(\s*isDirectExecution\(\)\s*\)/g) ?? [];
     expect(guardConditionals).toHaveLength(1);
 
-    // The single call site sits immediately inside the single guard's
-    // opening brace -- since there is exactly one call site in total (proven
-    // above) and it is here, no unconditional top-level call exists
-    // anywhere else in the module.
-    expect(/if\s*\(\s*isDirectExecution\(\)\s*\)\s*\{\s*startStdioServer\(\)/.test(serverSource)).toBe(true);
+    expect(/if\s*\(\s*isDirectExecution\(\)\s*\)\s*\{[\s\S]*transport === "streamable-http"/.test(serverSource)).toBe(true);
+    expect(/transport === "streamable-http" \? startStreamableHttpServer\(\) : startStdioServer\(\)/.test(serverSource)).toBe(true);
   });
 
   it.skipIf(!symlinkSupported)(
