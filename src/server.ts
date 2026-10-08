@@ -16,6 +16,7 @@ import { registerPaidMarketContextTools } from "./tools/marketContextTools.js";
 import { registerPaidSelectionsTools } from "./tools/selectionsTools.js";
 import { registerPaidStimTools } from "./tools/stimTools.js";
 import { registerX402PublicTools } from "./tools/x402Tools.js";
+import { registerSimulatedRemoteX402StimTool, type SimulatedX402RemoteOptions } from "./tools/x402SimulatedRemoteTool.js";
 import { startStreamableHttpServer } from "./httpServer.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
@@ -31,6 +32,8 @@ export interface CreateServerOptions {
   env?: Env;
   config?: StockTrendsMcpConfig;
   fetchFn?: FetchLike;
+  /** Test-only injection seam. Never supplied by environment or startup code. */
+  simulatedRemoteX402?: SimulatedX402RemoteOptions;
 }
 
 export function createStockTrendsMcpServer(options: CreateServerOptions = {}): StockTrendsServerRuntime {
@@ -57,7 +60,7 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // the execution flag, authoritative static pricing/preflight, a passing
   // credential-free catalog reconciliation, and nonzero local caps additionally
   // pass; otherwise every invocation fails closed.
-  registerPaidStimTools(server, client, config, paidUsage, paidReconciliation);
+  if (!options.simulatedRemoteX402) registerPaidStimTools(server, client, config, paidUsage, paidReconciliation);
   // Paired paid indicators tools. Same exposure gate as the ST-IM pair (paid
   // mode enabled with an API key). A raw symbol is resolved credential-free to a
   // single canonical identity before any paid boundary; ambiguity fails closed
@@ -65,7 +68,7 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // reconciliation state (reconciled per family), and execution behavior is
   // governed by the same gates as every other paid family (see the final total
   // below).
-  registerPaidIndicatorsTools(server, client, config, paidUsage, paidReconciliation);
+  if (!options.simulatedRemoteX402) registerPaidIndicatorsTools(server, client, config, paidUsage, paidReconciliation);
   // Base ST-IM selection-universe tool (`stocktrends_get_selections_latest`).
   // Same exposure gate as the ST-IM / indicators pairs (paid mode enabled with
   // an API key). Execution is governed by the same gates plus list-shaped
@@ -74,7 +77,7 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // repeated-identical-call loop denial). It shares the same in-memory caps and
   // per-server reconciliation state (reconciled per family, base `selections`
   // only; see the final total below).
-  registerPaidSelectionsTools(server, client, config, paidUsage, paidReconciliation);
+  if (!options.simulatedRemoteX402) registerPaidSelectionsTools(server, client, config, paidUsage, paidReconciliation);
   // Phase 5D market-context tools (`stocktrends_get_market_regime_latest`,
   // `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`,
   // `stocktrends_get_leadership_summary_latest`). Same exposure gate as every
@@ -87,13 +90,19 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
   // in-memory caps and per-server reconciliation state (reconciled per family:
   // market, breadth, leadership). The credential-free leadership-definitions
   // public resource is registered with the other public resources above.
-  registerPaidMarketContextTools(server, client, config, paidUsage, paidReconciliation);
+  if (!options.simulatedRemoteX402) registerPaidMarketContextTools(server, client, config, paidUsage, paidReconciliation);
   // Explicit x402 relay posture reuses the same nine paid semantic tool names
   // and their existing strict schemas. Mixed API-key/x402 configuration is
   // rejected before API-key parsing, so these registrations can never overlap
   // with the API-key paid registrations above. Mock mode remains local-only;
   // the distinct live flag selects the capped, no-key, one-GET challenge path.
-  registerX402PublicTools(server, client, config);
+  if (options.simulatedRemoteX402) {
+    // This isolated harness intentionally replaces every paid registration with
+    // one simulated tool. It cannot be enabled by runtime configuration.
+    registerSimulatedRemoteX402StimTool(server, options.simulatedRemoteX402);
+  } else {
+    registerX402PublicTools(server, client, config);
+  }
 
   return {
     server,
