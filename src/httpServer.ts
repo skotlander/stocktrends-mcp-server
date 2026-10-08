@@ -12,6 +12,7 @@ import { assertStreamableHttpConfigSafe, parseConfig } from "./config.js";
 import { createLogger, safeErrorMessage } from "./logging.js";
 import { createStockTrendsMcpServer } from "./server.js";
 import type { FetchLike } from "./stocktrendsClient.js";
+import type { SimulatedX402RemoteOptions } from "./tools/x402SimulatedRemoteTool.js";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 const HTTP_HEADERS_TIMEOUT_MS = 10_000;
@@ -23,6 +24,8 @@ export interface StreamableHttpServerOptions {
   env?: Env;
   config?: StockTrendsMcpConfig;
   fetchFn?: FetchLike;
+  /** Test-only programmatic seam; no environment variable can supply this. */
+  simulatedRemoteX402?: SimulatedX402RemoteOptions;
 }
 
 export interface RunningStreamableHttpServer {
@@ -40,7 +43,7 @@ export function createStreamableHttpMcpHandler(options: StreamableHttpServerOpti
 
   const logger = createLogger({ logLevel: config.logLevel });
   return createMcpHandler(
-    () => createStockTrendsMcpServer({ config, fetchFn: options.fetchFn }).server,
+    () => createStockTrendsMcpServer({ config, fetchFn: options.fetchFn, simulatedRemoteX402: options.simulatedRemoteX402 }).server,
     {
       maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
       onerror: (error) => logger.error(safeErrorMessage(error))
