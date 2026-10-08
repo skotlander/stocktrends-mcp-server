@@ -1,4 +1,5 @@
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { STIM_HTTP_METHOD, STIM_LATEST_ENDPOINT_PATH, STIM_LATEST_TOOL_NAME } from "./stimTools.js";
 
@@ -27,6 +28,7 @@ const API_RESOURCE = "https://api.stocktrends.com/v1/stim/latest";
 const DEFAULT_CHALLENGE_TTL_MS = 60_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_PAYMENT_HEADER_BYTES = 64 * 1024;
+const MAX_PAYMENT_PAYLOAD_BYTES = 64 * 1024;
 
 const inputSchema = z.object({
   symbol_exchange: z.string().trim().regex(/^[A-Z0-9][A-Z0-9.-]{0,31}_[NQABTI]$/)
@@ -37,15 +39,21 @@ interface ChallengeRecord {
   requirements: PaymentRequired;
   expiresAt: number;
   consumed: boolean;
+  consumedAt?: number;
 }
 
 export interface SimulatedX402RemoteState {
   readonly challenges: Map<string, ChallengeRecord>;
-  readonly consumedPaymentPayloads: Set<string>;
+  /**
+   * SHA-256 digests only; payment authorization material is never retained.
+   * A structurally plausible forged proof can consume this anonymous, shared
+   * test state. This is not a production replay or caller-isolation guarantee.
+   */
+  readonly consumedPaymentDigests: Map<string, number>;
 }
 
 export function createSimulatedX402RemoteState(): SimulatedX402RemoteState {
-  return { challenges: new Map<string, ChallengeRecord>(), consumedPaymentPayloads: new Set<string>() };
+  return { challenges: new Map<string, ChallengeRecord>(), consumedPaymentDigests: new Map<string, number>() };
 }
 
 interface PaymentRequired {
@@ -74,6 +82,7 @@ export function registerSimulatedRemoteX402StimTool(server: McpServer, options: 
       _meta: { access: "paid", endpointPath: STIM_LATEST_ENDPOINT_PATH, method: STIM_HTTP_METHOD, x402Relay: "simulated_test_only" }
     },
     async (input, ctx) => {
+      cleanupState(state, now());
       const payment = ctx.mcpReq._meta?.["x402/payment"];
       const key = bindingKey(input.symbol_exchange);
       const current = state.challenges.get(key);
@@ -92,30 +101,31 @@ export function registerSimulatedRemoteX402StimTool(server: McpServer, options: 
       }
 
       if (!current || current.expiresAt <= now()) return errorResult("x402_challenge_missing_or_expired");
-      if (current.consumed) return errorResult("x402_payment_replay");
+      if (current.consumed) return paymentFailureResult(current.requirements, "Payment authorization has already been used; do not retry payment automatically.");
       const proof = validatePaymentPayload(payment, current.requirements);
-      if (!proof) return errorResult("x402_invalid_payment_payload");
-      const proofFingerprint = stableJson(proof);
-      if (state.consumedPaymentPayloads.has(proofFingerprint)) return errorResult("x402_payment_replay");
+      if (!proof) return paymentFailureResult(current.requirements, "Payment authorization rejected before forwarding.");
+      const proofDigest = digestPaymentPayload(proof);
+      if (state.consumedPaymentDigests.has(proofDigest)) return paymentFailureResult(current.requirements, "Payment authorization has already been used; do not retry payment automatically.");
 
       // Consume before sending the proof: no automatic retry can spend it twice.
       current.consumed = true;
-      state.consumedPaymentPayloads.add(proofFingerprint);
+      current.consumedAt = now();
+      state.consumedPaymentDigests.set(proofDigest, current.expiresAt);
       let response: Response;
       try {
         response = await options.transport.request({ url: apiUrl(input.symbol_exchange), method: "GET", symbolExchange: input.symbol_exchange, paymentSignature: encodePaymentSignature(proof) });
-      } catch { return errorResult("x402_api_transport_failed"); }
-      if (response.status === 402) return errorResult("x402_api_rejected_payment");
-      if (response.redirected || response.status >= 300) return errorResult("x402_api_redirect_or_unexpected_status");
-      if (!response.ok) return errorResult("x402_api_payment_execution_failed");
+      } catch { return paymentFailureResult(current.requirements, "Payment outcome unknown after forwarding; do not retry payment automatically."); }
+      if (response.status === 402) return paymentFailureResult(current.requirements, "Payment authorization rejected by API.");
+      if (response.redirected || response.status >= 300 || !response.ok) return paymentFailureResult(current.requirements, "Payment outcome unknown after forwarding; do not retry payment automatically.");
       const settlement = parseSettlement(response.headers.get("payment-response"));
-      if (!settlement) return errorResult("x402_settlement_response_invalid");
+      if (settlement?.kind === "explicit_failure") return paymentFailureResult(current.requirements, "Payment settlement failed.");
+      if (!settlement || settlement.kind !== "success") return paymentFailureResult(current.requirements, "Payment outcome unknown after forwarding; do not retry payment automatically.");
       const data = await readJsonBounded(response);
-      if (!data) return errorResult("x402_paid_response_invalid");
+      if (!data) return paymentFailureResult(current.requirements, "Payment settlement may have occurred but paid output was unavailable; do not retry payment automatically.");
       return {
         structuredContent: data,
         content: [{ type: "text", text: JSON.stringify(data) }],
-        _meta: { "x402/payment-response": settlement }
+        _meta: { "x402/payment-response": settlement.value }
       };
     }
   );
@@ -143,10 +153,15 @@ async function parseRequirements(response: Response): Promise<PaymentRequired | 
 }
 
 function validatePaymentPayload(value: unknown, requirements: PaymentRequired): Record<string, unknown> | null {
-  if (!isRecord(value) || value.x402Version !== 2 || !isRecord(value.resource) || value.resource.url !== API_RESOURCE || !isRecord(value.accepted) || !isRecord(value.payload)) return null;
+  if (!hasBoundedJsonSize(value, MAX_PAYMENT_PAYLOAD_BYTES) || !isRecord(value) || value.x402Version !== 2 || !isRecord(value.resource) || value.resource.url !== API_RESOURCE || !isRecord(value.accepted) || !isRecord(value.payload)) return null;
   if (stableJson(value.resource) !== stableJson(requirements.resource)) return null;
   if (!requirements.accepts.some((accepted) => stableJson(accepted) === stableJson(value.accepted))) return null;
+  if (typeof value.payload.signature !== "string" || !value.payload.signature.trim() || !isRecord(value.payload.authorization) || !Object.values(value.payload.authorization).some((part) => typeof part === "string" && Boolean(part.trim()))) return null;
   return value as Record<string, unknown>;
+}
+
+function digestPaymentPayload(payment: Record<string, unknown>): string {
+  return createHash("sha256").update(stableJson(payment), "utf8").digest("hex");
 }
 
 function encodePaymentSignature(payment: Record<string, unknown>): string {
@@ -162,11 +177,18 @@ function decodePaymentRequiredHeader(value: string | null): Record<string, unkno
   } catch { return null; }
 }
 
-function parseSettlement(value: string | null): Record<string, unknown> | null {
+function parseSettlement(value: string | null): { kind: "success"; value: Record<string, unknown> } | { kind: "explicit_failure" } | null {
   if (!value || value.length > MAX_RESPONSE_BYTES) return null;
   try {
     const decoded = JSON.parse(Buffer.from(value, "base64").toString("utf8"));
-    return isRecord(decoded) && decoded.success === true ? decoded : null;
+    if (!isRecord(decoded)) return null;
+    const txConfirmed = (typeof decoded.txHash === "string" && Boolean(decoded.txHash.trim())) || (typeof decoded.transaction === "string" && Boolean(decoded.transaction.trim()));
+    const positivelySettled = decoded.success === true || decoded.settled === true || txConfirmed;
+    const explicitlyFailed = decoded.success === false || decoded.settled === false;
+    if (positivelySettled && explicitlyFailed) return null;
+    if (explicitlyFailed) return { kind: "explicit_failure" };
+    if (positivelySettled) return { kind: "success", value: { ...decoded, success: true } };
+    return { kind: "explicit_failure" };
   } catch { return null; }
 }
 
@@ -197,6 +219,11 @@ function paymentRequiredResult(requirements: PaymentRequired): CallToolResult {
   return { isError: true, structuredContent: requirements, content: [{ type: "text", text: JSON.stringify(requirements) }] };
 }
 
+function paymentFailureResult(requirements: PaymentRequired, reason: string): CallToolResult {
+  const output = { ...requirements, error: reason.slice(0, 256) };
+  return { isError: true, structuredContent: output, content: [{ type: "text", text: JSON.stringify(output) }] };
+}
+
 function errorResult(code: string): CallToolResult {
   return { isError: true, structuredContent: { error: code }, content: [{ type: "text", text: JSON.stringify({ error: code }) }] };
 }
@@ -209,4 +236,24 @@ function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
+}
+
+function cleanupState(state: SimulatedX402RemoteState, currentTime: number): void {
+  for (const [key, challenge] of state.challenges) if (challenge.expiresAt <= currentTime) state.challenges.delete(key);
+  for (const [digest, expiresAt] of state.consumedPaymentDigests) if (expiresAt <= currentTime) state.consumedPaymentDigests.delete(digest);
+}
+
+function hasBoundedJsonSize(value: unknown, maxBytes: number): boolean {
+  let size = 0;
+  const count = (text: string) => (size += new TextEncoder().encode(text).byteLength) <= maxBytes;
+  const visit = (entry: unknown, depth: number): boolean => {
+    if (depth > 32) return false;
+    if (entry === null || typeof entry === "boolean") return count(String(entry));
+    if (typeof entry === "number") return Number.isFinite(entry) && count(String(entry));
+    if (typeof entry === "string") return count(entry) && count("\"\"");
+    if (Array.isArray(entry)) return count("[]") && entry.every((item) => visit(item, depth + 1));
+    if (!isRecord(entry)) return false;
+    return count("{}") && Object.entries(entry).every(([key, item]) => count(key) && count("\":") && visit(item, depth + 1));
+  };
+  return visit(value, 0);
 }

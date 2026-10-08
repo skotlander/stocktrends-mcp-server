@@ -2,16 +2,16 @@ import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { createStockTrendsMcpServer } from "../src/server.js";
-import type { SimulatedX402RemoteTransport } from "../src/tools/x402SimulatedRemoteTool.js";
+import { createSimulatedX402RemoteState, type SimulatedX402RemoteState, type SimulatedX402RemoteTransport } from "../src/tools/x402SimulatedRemoteTool.js";
 
 const resource = { url: "https://api.stocktrends.com/v1/stim/latest", description: "Latest ST-IM", mimeType: "application/json", serviceName: "Stock Trends API", tags: ["stim"], iconUrl: "https://api.stocktrends.com/icon.png" };
 const accepted = { scheme: "exact", network: "eip155:84532", amount: "100", asset: "USDC", payTo: "0xrecipient", maxTimeoutSeconds: 300, extra: { name: "USDC", version: "2", resource } };
 const requirements = { x402Version: 2, resource, accepts: [accepted], extensions: { bazaar: { version: "1" } } };
 const payment = { x402Version: 2, resource, accepted, payload: { signature: "synthetic-proof", authorization: { nonce: "synthetic-nonce" } } };
 
-async function connect(transport: SimulatedX402RemoteTransport, now?: () => number, challengeTtlMs?: number) {
+async function connect(transport: SimulatedX402RemoteTransport, now?: () => number, challengeTtlMs?: number, state?: SimulatedX402RemoteState) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const runtime = createStockTrendsMcpServer({ simulatedRemoteX402: { transport, now, challengeTtlMs } });
+  const runtime = createStockTrendsMcpServer({ simulatedRemoteX402: { transport, now, challengeTtlMs, state } });
   const client = new Client({ name: "x402-simulation", version: "1.0" });
   await runtime.server.connect(serverTransport);
   await client.connect(clientTransport);
@@ -36,6 +36,8 @@ function challengeResponse(bodyRequirements: unknown = requirements, headerRequi
     { "payment-required": Buffer.from(JSON.stringify(headerRequirements), "utf8").toString("base64") }
   );
 }
+
+function paymentFailure(reason: string) { return { ...requirements, error: reason }; }
 
 describe("simulated Remote MCP x402 ST-IM bridge", () => {
   it("discovers one paid tool and completes an injected, simulated x402 transaction", async () => {
@@ -77,21 +79,65 @@ describe("simulated Remote MCP x402 ST-IM bridge", () => {
   });
 
   it.each([
-    ["malformed", { nope: true }, "x402_invalid_payment_payload"],
-    ["wrong resource", { ...payment, resource: { ...resource, url: "https://api.stocktrends.com/v1/stim/history" } }, "x402_invalid_payment_payload"],
-    ["wrong accepted requirements", { ...payment, accepted: { ...accepted, amount: "101" } }, "x402_invalid_payment_payload"]
-  ])("fails closed for %s payment metadata", async (_name, invalid, expected) => {
+    ["malformed", { nope: true }],
+    ["wrong resource", { ...payment, resource: { ...resource, url: "https://api.stocktrends.com/v1/stim/history" } }],
+    ["wrong accepted requirements", { ...payment, accepted: { ...accepted, amount: "101" } }]
+  ])("returns a recognizable payment failure for %s payment metadata", async (_name, invalid) => {
     let calls = 0;
     const client = await connect({ async request() { calls++; return challengeResponse(); } });
     await call(client, "AAPL_Q");
     const result = await call(client, "AAPL_Q", invalid);
-    expect(result.structuredContent).toEqual({ error: expected });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual(paymentFailure("Payment authorization rejected before forwarding."));
+    expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
     expect(calls).toBe(1);
   });
 
   it("rejects payment metadata when no matching challenge was issued", async () => {
     const client = await connect({ async request() { throw new Error("must not be called"); } });
     expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual({ error: "x402_challenge_missing_or_expired" });
+  });
+
+  it("does not consume or forward an obviously malformed proof before a valid retry", async () => {
+    let paidCalls = 0;
+    const client = await connect({
+      async request(request) {
+        if (!request.paymentSignature) return challengeResponse();
+        paidCalls++;
+        return json({ paid: true }, 200, { "payment-response": encodedSettlement() });
+      }
+    });
+    await call(client, "AAPL_Q");
+    expect((await call(client, "AAPL_Q", {})).structuredContent).toEqual(paymentFailure("Payment authorization rejected before forwarding."));
+    expect(paidCalls).toBe(0);
+    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual({ paid: true });
+    expect(paidCalls).toBe(1);
+  });
+
+  it("rejects oversized incoming payment metadata before digesting, consuming, or forwarding it", async () => {
+    let calls = 0;
+    const client = await connect({ async request() { calls++; return challengeResponse(); } });
+    await call(client, "AAPL_Q");
+    const oversized = { ...payment, payload: { signature: "x".repeat(70_000), authorization: { nonce: "synthetic-nonce" } } };
+    expect((await call(client, "AAPL_Q", oversized)).structuredContent).toEqual(paymentFailure("Payment authorization rejected before forwarding."));
+    expect(calls).toBe(1);
+  });
+
+  it("retains only expiring proof digests and removes expired simulated state", async () => {
+    let time = 1_000;
+    const state = createSimulatedX402RemoteState();
+    const client = await connect({
+      async request(request) { return request.paymentSignature ? json({ paid: true }, 200, { "payment-response": encodedSettlement() }) : challengeResponse(); }
+    }, () => time, 10, state);
+    await call(client, "AAPL_Q");
+    await call(client, "AAPL_Q", payment);
+    expect([...state.consumedPaymentDigests.keys()]).toHaveLength(1);
+    expect([...state.consumedPaymentDigests.keys()][0]).toMatch(/^[a-f0-9]{64}$/);
+    expect([...state.consumedPaymentDigests.keys()][0]).not.toContain("synthetic-proof");
+    time += 11;
+    await call(client, "MSFT_Q");
+    expect(state.consumedPaymentDigests.size).toBe(0);
+    expect([...state.challenges.values()].map((challenge) => challenge.symbolExchange)).toEqual(["MSFT_Q"]);
   });
 
   it("binds a proof to canonical tool arguments, expires it, and consumes it before forwarding", async () => {
@@ -109,20 +155,38 @@ describe("simulated Remote MCP x402 ST-IM bridge", () => {
     expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual({ error: "x402_challenge_missing_or_expired" });
     await call(client, "AAPL_Q");
     await call(client, "AAPL_Q", payment);
-    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual({ error: "x402_payment_replay" });
+    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual(paymentFailure("Payment authorization has already been used; do not retry payment automatically."));
     expect(paidCalls).toBe(1);
   });
 
   it.each([
-    ["api rejects proof", () => challengeResponse(), "x402_api_rejected_payment"],
-    ["missing settlement", () => json({ paid: true }, 200), "x402_settlement_response_invalid"],
-    ["settlement failure", () => json({ paid: true }, 200, { "payment-response": encodedSettlement({ success: false }) }), "x402_settlement_response_invalid"],
-    ["oversized paid output", () => json({ payload: "x".repeat(70_000) }, 200, { "payment-response": encodedSettlement() }), "x402_paid_response_invalid"],
-    ["redirect", () => new Response("", { status: 302, headers: { location: "https://bad.example" } }), "x402_api_redirect_or_unexpected_status"]
+    ["api rejects proof", () => challengeResponse(), "Payment authorization rejected by API."],
+    ["missing settlement", () => json({ paid: true }, 200), "Payment outcome unknown after forwarding; do not retry payment automatically."],
+    ["settlement failure", () => json({ paid: true }, 200, { "payment-response": encodedSettlement({ success: false }) }), "Payment settlement failed."],
+    ["oversized paid output", () => json({ payload: "x".repeat(70_000) }, 200, { "payment-response": encodedSettlement() }), "Payment settlement may have occurred but paid output was unavailable; do not retry payment automatically."],
+    ["redirect", () => new Response("", { status: 302, headers: { location: "https://bad.example" } }), "Payment outcome unknown after forwarding; do not retry payment automatically."]
   ])("does not release paid output for %s", async (_name, paidResponse, expected) => {
     const client = await connect({ async request(request) { return request.paymentSignature ? paidResponse() : challengeResponse(); } });
     await call(client, "AAPL_Q");
-    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual({ error: expected });
+    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual(paymentFailure(expected));
+  });
+
+  it.each([
+    ["settled", { settled: true, transaction: "simulated-tx" }],
+    ["transaction", { transaction: "simulated-tx" }],
+    ["txHash", { txHash: "0xsimulated" }]
+  ])("normalizes API-confirmed %s settlement success into MCP SettlementResponse", async (_name, settlement) => {
+    const client = await connect({ async request(request) { return request.paymentSignature ? json({ paid: true }, 200, { "payment-response": encodedSettlement(settlement) }) : challengeResponse(); } });
+    await call(client, "AAPL_Q");
+    const result = await call(client, "AAPL_Q", payment);
+    expect(result.structuredContent).toEqual({ paid: true });
+    expect(result._meta["x402/payment-response"]).toEqual({ ...settlement, success: true });
+  });
+
+  it("fails closed on contradictory settlement indicators without suggesting a new payment", async () => {
+    const client = await connect({ async request(request) { return request.paymentSignature ? json({ paid: true }, 200, { "payment-response": encodedSettlement({ success: false, transaction: "simulated-tx" }) }) : challengeResponse(); } });
+    await call(client, "AAPL_Q");
+    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual(paymentFailure("Payment outcome unknown after forwarding; do not retry payment automatically."));
   });
 
   it("fails closed once on a simulated timeout and never attempts an API-key fallback or retry", async () => {
@@ -135,7 +199,7 @@ describe("simulated Remote MCP x402 ST-IM bridge", () => {
       }
     });
     await call(client, "AAPL_Q");
-    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual({ error: "x402_api_transport_failed" });
+    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual(paymentFailure("Payment outcome unknown after forwarding; do not retry payment automatically."));
     expect(calls).toBe(2);
   });
 
@@ -148,7 +212,7 @@ describe("simulated Remote MCP x402 ST-IM bridge", () => {
     const [aapl, msft] = await Promise.all([call(client, "AAPL_Q", payment), call(client, "MSFT_Q", msftPayment)]);
     expect(aapl.structuredContent).toEqual({ symbol: "AAPL_Q" });
     expect(msft.structuredContent).toEqual({ symbol: "MSFT_Q" });
-    expect((await call(client, "MSFT_Q", payment)).structuredContent).toEqual({ error: "x402_payment_replay" });
+    expect((await call(client, "MSFT_Q", payment)).structuredContent).toEqual(paymentFailure("Payment authorization has already been used; do not retry payment automatically."));
   });
 
   it("does not replace an active same-symbol challenge or claim client isolation", async () => {
@@ -158,7 +222,7 @@ describe("simulated Remote MCP x402 ST-IM bridge", () => {
     await call(client, "AAPL_Q");
     expect(calls).toBe(1);
     await call(client, "AAPL_Q", payment);
-    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual({ error: "x402_payment_replay" });
+    expect((await call(client, "AAPL_Q", payment)).structuredContent).toEqual(paymentFailure("Payment authorization has already been used; do not retry payment automatically."));
   });
 
   it.each([
