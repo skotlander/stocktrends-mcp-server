@@ -176,7 +176,7 @@ describe("streamable HTTP transport", () => {
     ["x402 live challenge", { STOCKTRENDS_ENABLE_X402_RELAY: "true", STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true", STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: "true" }]
   ])("fails closed before listening for programmatic %s configuration", async (_name, env) => {
     const config = programmaticRemoteConfig(env);
-    await expect(startStreamableHttpServer({ config })).rejects.toMatchObject({ code: "remote_transport_incompatible_config" });
+    await expect(startStreamableHttpServer({ config })).rejects.toMatchObject({ errorCode: "remote_transport_incompatible_config" });
   });
 
   it("reports health/readiness and becomes unavailable during graceful shutdown", async () => {
