@@ -117,16 +117,39 @@ function parseHttpAllowlist(value: string | undefined, variableName: string): re
 
 // This is deliberately limited to the credential/payment execution controls
 // that exist in this revision. Future controls must be added here explicitly.
+export function assertStreamableHttpConfigSafe(config: StockTrendsMcpConfig): void {
+  const paidConfigured =
+    config.paidTools.requested ||
+    config.paidTools.apiKeyConfigured ||
+    Boolean(config.paidTools.apiKey?.trim()) ||
+    config.paidTools.executionEnabled;
+  const x402Configured =
+    config.x402Relay.relayEnabled ||
+    config.x402Relay.challengeExecutionEnabled ||
+    config.x402Relay.liveChallengeEnabled ||
+    config.x402Relay.proofForwardingEnabled;
+
+  if (paidConfigured || x402Configured) {
+    throw new StockTrendsMcpError("remote_transport_incompatible_config", {
+      detail: "streamable-http permits only credential-free public resources and workflow planning; disable current paid, API-key, and x402 configuration before startup."
+    });
+  }
+}
+
+// Environment checks retain the current flags that intentionally are not all
+// represented by a free-only parsed configuration. Programmatic callers must
+// independently pass assertStreamableHttpConfigSafe at the HTTP boundary.
 export function assertStreamableHttpSafe(env: Env, config: StockTrendsMcpConfig): void {
+  assertStreamableHttpConfigSafe(config);
+
   const apiKeyConfigured = Boolean(env.STOCKTRENDS_API_KEY?.trim());
   const paidExecutionRequested = isLiteralTrue(env.STOCKTRENDS_ENABLE_PAID_EXECUTION);
   const x402Configured =
-    config.x402Relay.relayEnabled ||
     isLiteralTrue(env.STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION) ||
     isLiteralTrue(env.STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY) ||
     isLiteralTrue(env.STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING);
 
-  if (apiKeyConfigured || config.paidTools.requested || paidExecutionRequested || x402Configured) {
+  if (apiKeyConfigured || paidExecutionRequested || x402Configured) {
     throw new StockTrendsMcpError("remote_transport_incompatible_config", {
       detail: "streamable-http permits only credential-free public resources and workflow planning; disable current paid, API-key, and x402 configuration before startup."
     });

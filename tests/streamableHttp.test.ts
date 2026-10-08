@@ -19,6 +19,11 @@ function remoteConfig(env: Record<string, string | undefined> = {}) {
   return { ...config, http: { ...config.http!, port: 0 } };
 }
 
+function programmaticRemoteConfig(env: Record<string, string | undefined>) {
+  const localConfig = parseConfig(env);
+  return { ...localConfig, transport: "streamable-http" as const, http: remoteConfig().http };
+}
+
 async function start(fetchFn: FetchLike = async () => jsonResponse({ ok: true })) {
   const server = await startStreamableHttpServer({ config: remoteConfig(), fetchFn });
   running.push(server);
@@ -160,6 +165,18 @@ describe("streamable HTTP transport", () => {
 
   it("fails startup before listening when given a non-HTTP configuration", async () => {
     await expect(startStreamableHttpServer({ config: parseConfig({}) })).rejects.toThrow("Streamable HTTP startup requires validated streamable-http configuration");
+  });
+
+  it.each([
+    ["paid tools", { STOCKTRENDS_ENABLE_PAID_TOOLS: "true" }],
+    ["API key", { STOCKTRENDS_ENABLE_PAID_TOOLS: "true", STOCKTRENDS_API_KEY: "programmatic-test-key" }],
+    ["paid execution", { STOCKTRENDS_ENABLE_PAID_TOOLS: "true", STOCKTRENDS_API_KEY: "programmatic-test-key", STOCKTRENDS_ENABLE_PAID_EXECUTION: "true" }],
+    ["x402 relay", { STOCKTRENDS_ENABLE_X402_RELAY: "true" }],
+    ["x402 challenge execution", { STOCKTRENDS_ENABLE_X402_RELAY: "true", STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true" }],
+    ["x402 live challenge", { STOCKTRENDS_ENABLE_X402_RELAY: "true", STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION: "true", STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY: "true" }]
+  ])("fails closed before listening for programmatic %s configuration", async (_name, env) => {
+    const config = programmaticRemoteConfig(env);
+    await expect(startStreamableHttpServer({ config })).rejects.toMatchObject({ code: "remote_transport_incompatible_config" });
   });
 
   it("reports health/readiness and becomes unavailable during graceful shutdown", async () => {

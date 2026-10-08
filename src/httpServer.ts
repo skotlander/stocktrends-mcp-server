@@ -8,7 +8,7 @@ import {
   toNodeHandler
 } from "@modelcontextprotocol/node";
 import type { Env, StockTrendsMcpConfig } from "./config.js";
-import { parseConfig } from "./config.js";
+import { assertStreamableHttpConfigSafe, parseConfig } from "./config.js";
 import { createLogger, safeErrorMessage } from "./logging.js";
 import { createStockTrendsMcpServer } from "./server.js";
 import type { FetchLike } from "./stocktrendsClient.js";
@@ -36,6 +36,7 @@ export function createStreamableHttpMcpHandler(options: StreamableHttpServerOpti
   if (config.transport !== "streamable-http") {
     throw new Error("Streamable HTTP handler requires STOCKTRENDS_MCP_TRANSPORT=streamable-http.");
   }
+  assertStreamableHttpConfigSafe(config);
 
   const logger = createLogger({ logLevel: config.logLevel });
   return createMcpHandler(
