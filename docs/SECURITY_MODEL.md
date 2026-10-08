@@ -12,7 +12,7 @@ Primary threats:
 - Prompt injection through API-returned text, artifact payloads, or user-supplied symbols and artifact ids.
 - Confused-deputy behavior where a local MCP client uses the adapter's credentials for a task the user did not authorize.
 - Schema drift between MCP tools and the Stock Trends API.
-- Remote transport exposure before authentication, authorization, rate limiting, and tenant isolation are designed.
+- Remote paid or authenticated transport exposure before authentication, authorization, rate limiting, and tenant isolation are designed.
 
 Non-threats for v1 only because they are out of scope:
 
@@ -56,8 +56,9 @@ Still deferred and not approved:
   seed phrases, settlement verification, and failed-payment handling.
 - Automatic payment retries or fallback from challenge inspection into paid
   execution.
-- Live x402/payment validation, production payment tests, remote MCP transport,
-  package/directory publication, and marketplace claims.
+- Live x402/payment validation, production payment tests, remote paid or
+  authenticated MCP transport, package/directory publication, and marketplace
+  claims.
 - Any final, fulfilled, settled, completed, or transaction-complete x402 claim;
   the existing relay groundwork establishes challenge inspection only.
 - Any broader challenge-value relay, replay policy, or payment authorization
@@ -158,9 +159,11 @@ Controls:
 - Never expose credentials through resources or prompts.
 - Keep the process single-user and local in v1.
 
-## 12. Future Remote MCP Risks
+## 12. Public Remote MCP and Future Remote-Paid Risks
 
-Remote paid HTTP/SSE MCP transport must not ship until reviewed as a separate security surface. The implemented public Streamable HTTP foundation is limited to credential-free discovery/planning, validates Host and Origin before MCP dispatch, uses SDK bounded body reads, defaults to loopback, and fails startup before listening if this revision's API-key, paid, x402 relay/challenge/live, or proof-forwarding configuration is active. It does not provide a production endpoint, CORS, remote authentication, remote paid execution, payment forwarding, MPP, or transaction-complete x402.
+The deployed public Remote MCP is Streamable HTTP at `https://mcp.stocktrends.com/mcp`. It is credential-free and free-only: exactly ten public resources, `stocktrends_estimate_workflow_cost` as its one planning tool, and zero prompts. It validates Host and Origin before MCP dispatch, uses SDK bounded body reads, and fails startup before listening if this revision's API-key, paid, x402 relay/challenge/live, or proof-forwarding configuration is active. This is a fail-closed boundary: the public remote surface does not provide CORS, remote authentication, tenant isolation, remote paid execution, customer API-key forwarding, payment forwarding, MPP, or transaction-complete x402.
+
+Remote paid or authenticated HTTP/SSE/Streamable HTTP transport remains a separate security surface and must not ship until it is reviewed. Secret storage, distributed paid limits, OAuth, remote payment execution, and tenant isolation remain future concerns; their absence is intentional and must not be bypassed by the public free-only endpoint.
 
 Required future topics:
 

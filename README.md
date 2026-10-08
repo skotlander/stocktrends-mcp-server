@@ -1,16 +1,26 @@
 # Stock Trends MCP Server
 
-Local Model Context Protocol (MCP) adapter for public Stock Trends API resources.
+Stock Trends Model Context Protocol (MCP) server for the live public Remote MCP and separately available local stdio clients.
 
 ## Architecture Boundary (What This Server Is)
 
-This repository is a thin local stdio adapter over the front-facing Stock Trends API. It has no independent analytical authority of its own.
+This repository is a thin MCP adapter over the front-facing Stock Trends API. It powers the live public Remote MCP and supports local stdio; it has no independent analytical authority of its own.
 
-## Streamable HTTP transport foundation
+## Public Remote MCP
 
-Node.js **20+** is required. Local stdio remains the default and fully supported transport. Source now also supports explicit `STOCKTRENDS_MCP_TRANSPORT=streamable-http`, serving MCP at `/mcp` and operational checks at `/healthz` and `/readyz`; it binds to `127.0.0.1:3000` by default. This is source support only: no public hosted endpoint or Registry remote URL exists.
+Connect a remote MCP client to the credential-free, free-only Streamable HTTP endpoint:
 
-The HTTP surface is deliberately credential-free: exactly the ten public resources and `stocktrends_estimate_workflow_cost`, with no prompts. Startup refuses a configured API key, paid-tools/execution settings, or current x402 relay/challenge/live/proof-forwarding settings. Local stdio retains its existing separately gated paid and x402 behavior. MPP and remote paid execution are not implemented.
+```
+https://mcp.stocktrends.com/mcp
+```
+
+Developer connection guidance is available at [developer.stocktrends.com/mcp](https://developer.stocktrends.com/mcp). The deployed remote surface exposes exactly ten public resources, one free planning tool (`stocktrends_estimate_workflow_cost`), and zero prompts. It does not expose paid market-data tools, customer API-key forwarding, paid execution, x402 payment execution, OAuth subscriber login, MPP, or Market Epoch MCP tools.
+
+## Local stdio and Streamable HTTP configuration
+
+Node.js **20+** is required for local use. Local stdio remains the default transport for local process startup and is fully supported. Source also supports explicit `STOCKTRENDS_MCP_TRANSPORT=streamable-http`, serving MCP at `/mcp` and operational checks at `/healthz` and `/readyz`; its local listener binds to `127.0.0.1:3000` by default. The deployed public endpoint above is distinct from this local configuration. No MCP Registry remote URL is claimed.
+
+The Streamable HTTP surface is deliberately credential-free: exactly the ten public resources and `stocktrends_estimate_workflow_cost`, with no prompts. Startup refuses a configured API key, paid-tools/execution settings, or current x402 relay/challenge/live/proof-forwarding settings. Local stdio retains separately gated subscription/API-key paid REST calls. Its optional, default-off x402 mode is challenge metadata inspection/relay only: it neither makes a payment nor forwards payment proof or payment headers, returns paid API data, or spends. MPP and remote paid execution are not implemented.
 
 Authority flows in one direction only:
 
@@ -31,7 +41,7 @@ The MCP adapter:
 
 Public resources and the default/free mode described below are credential-free: no API key, subscription, or payment credential is required to install, inspect, or use them. The conditional paid ST-IM execution path is a separate, explicitly gated surface that is disabled by default (see [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution)). An additional default-off x402 posture can expose the same paid semantic tool names. Relay plus challenge flags preserve the local mock-only behavior; a distinct third live flag may enable a capped, one-request no-key challenge path. Neither x402 mode accepts or forwards proof, sends a payment header, returns paid data, pays, or spends.
 
-**New here?** Start with the [Default / Free Mode Quickstart](#default--free-mode-quickstart) below to install and run the server credential-free, then [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client) to wire it into an MCP client, and read [Paid Mode Configuration](#paid-mode-configuration) and the [Security Model](docs/SECURITY_MODEL.md) before setting any paid variable.
+**New here?** For the public Remote MCP, use the endpoint and Developer Portal above. To run a local server, start with the [Default / Free Mode Quickstart](#default--free-mode-quickstart), then [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client). Read [Paid Mode Configuration](#paid-mode-configuration) and the [Security Model](docs/SECURITY_MODEL.md) before setting any paid variable.
 
 ## Default / Free Mode Quickstart
 

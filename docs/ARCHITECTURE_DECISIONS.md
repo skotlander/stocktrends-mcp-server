@@ -56,7 +56,7 @@ Affected docs/implementation implications: Phase 1 acceptance criteria must asse
 
 Decision: preserve stdio as the default transport and add explicit, stateless Streamable HTTP at `/mcp` using the MCP SDK v2 per-request factory. The remote surface is limited to ten credential-free resources, one workflow-cost planning tool, and zero prompts. It refuses current API-key, paid, x402, challenge, live-challenge, and proof-forwarding configuration before listener creation.
 
-Rationale: this permits remote discovery/planning without sharing paid-state counters, duplicate-call suppression, pricing reconciliation, credentials, or payment state between callers. A production hosted endpoint, remote authentication, remote paid execution, MPP, and transaction-complete x402 remain separate decisions.
+Rationale: this permits remote discovery/planning without sharing paid-state counters, duplicate-call suppression, pricing reconciliation, credentials, or payment state between callers. The credential-free public endpoint is deployed at `https://mcp.stocktrends.com/mcp`; remote authentication, remote paid execution, MPP-over-MCP, and transaction-complete x402 remain separate, unimplemented decisions.
 
 ## ADR-006: Phase 1 Tools Policy
 
