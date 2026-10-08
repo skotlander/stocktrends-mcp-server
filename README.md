@@ -1,16 +1,26 @@
 # Stock Trends MCP Server
 
-Local Model Context Protocol (MCP) adapter for public Stock Trends API resources.
+Stock Trends Model Context Protocol (MCP) server for the live public Remote MCP and separately available local stdio clients.
 
 ## Architecture Boundary (What This Server Is)
 
-This repository is a thin local stdio adapter over the front-facing Stock Trends API. It has no independent analytical authority of its own.
+This repository is a thin MCP adapter over the front-facing Stock Trends API. It powers the live public Remote MCP and supports local stdio; it has no independent analytical authority of its own.
 
-## Streamable HTTP transport foundation
+## Public Remote MCP
 
-Node.js **20+** is required. Local stdio remains the default and fully supported transport. Source now also supports explicit `STOCKTRENDS_MCP_TRANSPORT=streamable-http`, serving MCP at `/mcp` and operational checks at `/healthz` and `/readyz`; it binds to `127.0.0.1:3000` by default. This is source support only: no public hosted endpoint or Registry remote URL exists.
+Connect a remote MCP client to the credential-free, free-only Streamable HTTP endpoint:
 
-The HTTP surface is deliberately credential-free: exactly the ten public resources and `stocktrends_estimate_workflow_cost`, with no prompts. Startup refuses a configured API key, paid-tools/execution settings, or current x402 relay/challenge/live/proof-forwarding settings. Local stdio retains its existing separately gated paid and x402 behavior. MPP and remote paid execution are not implemented.
+```
+https://mcp.stocktrends.com/mcp
+```
+
+Developer connection guidance is available at [developer.stocktrends.com/mcp](https://developer.stocktrends.com/mcp). The deployed remote surface exposes exactly ten public resources, one free planning tool (`stocktrends_estimate_workflow_cost`), and zero prompts. It does not expose paid market-data tools, customer API-key forwarding, paid execution, x402 payment execution, OAuth subscriber login, MPP, or Market Epoch MCP tools.
+
+## Local stdio and Streamable HTTP configuration
+
+Node.js **20+** is required for local use. Local stdio remains the default transport for local process startup and is fully supported. Source also supports explicit `STOCKTRENDS_MCP_TRANSPORT=streamable-http`, serving MCP at `/mcp` and operational checks at `/healthz` and `/readyz`; its local listener binds to `127.0.0.1:3000` by default. The deployed public endpoint above is distinct from this local configuration. No MCP Registry remote URL is claimed.
+
+The Streamable HTTP surface is deliberately credential-free: exactly the ten public resources and `stocktrends_estimate_workflow_cost`, with no prompts. Startup refuses a configured API key, paid-tools/execution settings, or current x402 relay/challenge/live/proof-forwarding settings. Local stdio retains separately gated subscription/API-key paid REST calls. Its optional, default-off x402 mode is challenge metadata inspection/relay only: it neither makes a payment nor forwards payment proof or payment headers, returns paid API data, or spends. MPP and remote paid execution are not implemented.
 
 Authority flows in one direction only:
 
@@ -31,7 +41,7 @@ The MCP adapter:
 
 Public resources and the default/free mode described below are credential-free: no API key, subscription, or payment credential is required to install, inspect, or use them. The conditional paid ST-IM execution path is a separate, explicitly gated surface that is disabled by default (see [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution)). An additional default-off x402 posture can expose the same paid semantic tool names. Relay plus challenge flags preserve the local mock-only behavior; a distinct third live flag may enable a capped, one-request no-key challenge path. Neither x402 mode accepts or forwards proof, sends a payment header, returns paid data, pays, or spends.
 
-**New here?** Start with the [Default / Free Mode Quickstart](#default--free-mode-quickstart) below to install and run the server credential-free, then [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client) to wire it into an MCP client, and read [Paid Mode Configuration](#paid-mode-configuration) and the [Security Model](docs/SECURITY_MODEL.md) before setting any paid variable.
+**New here?** For the public Remote MCP, use the endpoint and Developer Portal above. To run a local server, start with the [Default / Free Mode Quickstart](#default--free-mode-quickstart), then [Connect a local stdio MCP client](#connect-a-local-stdio-mcp-client). Read [Paid Mode Configuration](#paid-mode-configuration) and the [Security Model](docs/SECURITY_MODEL.md) before setting any paid variable.
 
 ## Default / Free Mode Quickstart
 
@@ -464,11 +474,11 @@ Before a release, run the manual secret-safety scan in the [Phase 5A Operator Sa
 
 ## Current Status
 
-This repository implements a conservative local stdio MCP server for public-resource access, one public/free workflow cost-estimate planning tool, an internal auth/spend-control/pricing-preflight foundation, and the paired paid ST-IM tools with gated live subscription/API-key execution.
+This repository powers the deployed credential-free, free-only public Remote MCP at `https://mcp.stocktrends.com/mcp` over Streamable HTTP: exactly ten resources, one free workflow cost-estimate planning tool, and zero prompts. Local stdio remains the default for local process startup and supports the free/default surface, separately gated subscription/API-key paid tools, and optional default-off x402 challenge inspection/relay only (no payment, proof forwarding, payment header, paid data, or spend).
 
 Included:
 
-- Local stdio transport only.
+- Live public Streamable HTTP Remote MCP and separately supported local stdio transport (the default for local process startup).
 - Public Stock Trends API resources and public/free planning tool.
 - Fetch-on-request behavior; no startup API fetch is required.
 - One public/free MCP planning tool: `stocktrends_estimate_workflow_cost`.
@@ -493,7 +503,8 @@ Excluded:
   payment headers, and OAuth. Live x402 support in this build is challenge-only,
   no-key, no-proof, no-payment, no-spend, and shape-metadata-only.
 - `Authorization: Bearer` fallback.
-- Remote HTTP/SSE/Streamable HTTP hosting.
+- Remote paid or authenticated MCP hosting/execution, including customer API-key
+  forwarding and payment execution.
 - Database or control-plane access.
 - Dynamic MCP registration from `/v1/ai/tools` or `/v1/workflows`.
 - Intelligence Agent recomputation, generated guidance, generated research, or a parallel reasoning layer.
@@ -540,7 +551,11 @@ All variables are optional; defaults keep the server in free mode. The **Affects
 | Variable | Affects | Default | Behavior & secret-safety notes |
 | --- | --- | --- | --- |
 | `STOCKTRENDS_API_BASE_URL` | All modes | `https://api.stocktrends.com` | Must be an approved Stock Trends HTTPS origin. Not a secret. |
-| `STOCKTRENDS_MCP_TRANSPORT` | All modes | `stdio` | Only `stdio` is supported. Not a secret. |
+| `STOCKTRENDS_MCP_TRANSPORT` | All modes | `stdio` | Accepted values are `stdio` and `streamable-http`; `stdio` is the local-startup default. `streamable-http` activates credential-free HTTP configuration and fail-closed checks that reject current paid, API-key, and x402 settings. Not a secret. |
+| `STOCKTRENDS_MCP_HTTP_BIND_ADDRESS` | Streamable HTTP only | `127.0.0.1` | Non-empty hostname or IP address without whitespace. A non-loopback binding requires `STOCKTRENDS_MCP_HTTP_ALLOWED_HOSTS`. Not a secret. |
+| `STOCKTRENDS_MCP_HTTP_PORT` | Streamable HTTP only | `3000` | Integer from 1 through 65535. Not a secret. |
+| `STOCKTRENDS_MCP_HTTP_ALLOWED_HOSTS` | Streamable HTTP only | None | Optional comma-separated, non-wildcard hostname allowlist; required for a non-loopback bind address. Not a secret. |
+| `STOCKTRENDS_MCP_HTTP_ALLOWED_ORIGINS` | Streamable HTTP only | None | Optional comma-separated, non-wildcard allowlist used for Origin validation; when unset, the HTTP server uses the host allowlist if configured, otherwise loopback-origin validation. Not a secret. |
 | `STOCKTRENDS_MCP_LOG_LEVEL` | All modes | `warn` | Normal logs go to stderr, never stdout. Not a secret. |
 | `STOCKTRENDS_ENABLE_PAID_TOOLS` | Paid tool exposure | `false` | Exposure flag. When `true` with a configured API key, exposes the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, the base selections tool *definition*, and the four market-context tool *definitions* (total tools become 10; the internal instrument resolver adds no public tool). Never executes on its own — execution additionally requires `STOCKTRENDS_ENABLE_PAID_EXECUTION`. Not a secret. |
 | `STOCKTRENDS_API_KEY` | Paid exposure + execution | None | **Secret — use a placeholder (`<your-api-key>`) in all docs, examples, screenshots, and shared artifacts; never commit or paste a real value.** Read only when `STOCKTRENDS_ENABLE_PAID_TOOLS=true`; kept process-local. Sent **only** as the `X-API-Key` header to the approved origin + allowlisted paid ST-IM, indicators, base `selections/latest`, and market-context endpoints after every gate passes (no `Authorization: Bearer` fallback). Never sent for public resources (including `stocktrends://leadership/definitions`), the cost-estimate planning tool, the pricing catalog, or the credential-free instrument resolver; never logged or exposed in errors/denials/returned data. |
@@ -589,7 +604,11 @@ The server registers one public/free MCP planning tool:
 | --- | --- | --- |
 | `stocktrends_estimate_workflow_cost` | `GET /v1/cost-estimate` | Estimate workflow-level cost for budgeting/planning before paid execution. |
 
-This tool sends no API key or auth header, does not call paid endpoints, does not call `/v1/pricing/catalog`, does not authorize paid execution or payment, and does not implement x402, wallet, OAuth, remote MCP, database, or control-plane behavior.
+This tool sends no API key or auth header, does not call paid endpoints or
+`/v1/pricing/catalog`, does not authorize paid execution or payment, and
+implements no x402 payment, wallet, OAuth, database, or control-plane behavior.
+It is the one free planning tool exposed by the public Remote MCP and is also
+available in local default/free mode.
 
 ## Conditional Paid ST-IM Tools (subscription/API-key execution)
 
