@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { request } from "node:http";
+import { createConnection } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { parseConfig } from "../src/config.js";
 import { StockTrendsMcpError } from "../src/errors.js";
@@ -42,6 +43,22 @@ function rawGet(port: number, headers: Record<string, string>): Promise<number> 
     });
     req.on("error", reject);
     req.end();
+  });
+}
+
+function rawRequest(port: number, target: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    const chunks: Buffer[] = [];
+    socket.on("connect", () => socket.end(`GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`));
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.on("error", reject);
+    socket.on("end", () => {
+      const response = Buffer.concat(chunks).toString("utf8");
+      const separator = response.indexOf("\r\n\r\n");
+      const status = Number(/^HTTP\/1\.1 (\d{3})/.exec(response)?.[1] ?? 0);
+      resolve({ status, body: separator >= 0 ? response.slice(separator + 4) : "" });
+    });
   });
 }
 
@@ -117,6 +134,27 @@ describe("streamable HTTP transport", () => {
     expect(hostileHost).toBe(403);
     expect(hostileOrigin.status).toBe(403);
     expect(noOrigin.status).toBe(200);
+  });
+
+  it("safely rejects malformed request targets without destabilizing the listener", async () => {
+    const server = await start();
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      for (const target of ["//", "http://"]) {
+        const response = await rawRequest(server.port, target);
+        expect(response.status).toBe(400);
+        expect(response.body).toContain(JSON.stringify({ error: "invalid_request_target" }));
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      expect(server.server.listening).toBe(true);
+      expect((await fetch(`http://127.0.0.1:${server.port}/healthz`)).status).toBe(200);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
   });
 
   it("handles malformed MCP input and body limits without constructing an upstream request", async () => {

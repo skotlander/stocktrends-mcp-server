@@ -74,7 +74,14 @@ export async function startStreamableHttpServer(options: StreamableHttpServerOpt
   const server = createServer(async (request, response) => {
     if (!validateHost(request, response) || !validateOrigin(request, response)) return;
 
-    const pathname = request.url ? new URL(request.url, "http://localhost").pathname : "/";
+    let pathname: string;
+    try {
+      pathname = request.url ? new URL(request.url, "http://localhost").pathname : "/";
+    } catch {
+      response.writeHead(400, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify({ error: "invalid_request_target" }));
+      return;
+    }
     if (pathname === "/healthz") {
       return respondHealth(request, response, 200, "ok");
     }
