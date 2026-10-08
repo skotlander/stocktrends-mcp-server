@@ -11,8 +11,15 @@ export const DEFAULT_API_BASE_URL = "https://api.stocktrends.com";
 export const DEFAULT_LOG_LEVEL = "warn";
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
-export type StockTrendsMcpTransport = "stdio";
+export type StockTrendsMcpTransport = "stdio" | "streamable-http";
 export type StockTrendsMcpLogLevel = "debug" | "info" | "warn" | "error" | "silent";
+
+export interface StreamableHttpConfig {
+  bindAddress: string;
+  port: number;
+  allowedHosts?: readonly string[];
+  allowedOrigins?: readonly string[];
+}
 
 export interface StockTrendsMcpConfig {
   apiBaseUrl: URL;
@@ -21,6 +28,7 @@ export interface StockTrendsMcpConfig {
   requestTimeoutMs: number;
   paidTools: PaidToolsConfig;
   x402Relay: X402RelayConfig;
+  http?: StreamableHttpConfig;
 }
 
 export type Env = Record<string, string | undefined>;
@@ -35,7 +43,7 @@ export function parseConfig(env: Env = process.env): StockTrendsMcpConfig {
   const x402Relay = parseX402RelayConfig(env, { paidToolsRequested });
   const paidTools = parsePaidToolsConfig(env, paidToolsRequested);
 
-  return {
+  const config: StockTrendsMcpConfig = {
     apiBaseUrl,
     transport,
     logLevel,
@@ -43,18 +51,90 @@ export function parseConfig(env: Env = process.env): StockTrendsMcpConfig {
     paidTools,
     x402Relay
   };
+
+  if (transport === "streamable-http") {
+    config.http = parseStreamableHttpConfig(env);
+    assertStreamableHttpSafe(env, config);
+  }
+
+  return config;
 }
 
 function parseTransport(value: string | undefined): StockTrendsMcpTransport {
   const transport = normalize(value, "stdio");
 
-  if (transport !== "stdio") {
+  if (transport !== "stdio" && transport !== "streamable-http") {
     throw new StockTrendsMcpError("unsupported_transport", {
-      detail: "Set STOCKTRENDS_MCP_TRANSPORT=stdio."
+      detail: "Set STOCKTRENDS_MCP_TRANSPORT=stdio or streamable-http."
     });
   }
 
-  return "stdio";
+  return transport;
+}
+
+function parseStreamableHttpConfig(env: Env): StreamableHttpConfig {
+  const bindAddress = normalize(env.STOCKTRENDS_MCP_HTTP_BIND_ADDRESS, "127.0.0.1");
+  if (!bindAddress || /\s/.test(bindAddress)) {
+    throw new StockTrendsMcpError("invalid_config", {
+      detail: "STOCKTRENDS_MCP_HTTP_BIND_ADDRESS must be a non-empty hostname or IP address without whitespace."
+    });
+  }
+
+  const port = parsePort(env.STOCKTRENDS_MCP_HTTP_PORT);
+  const allowedHosts = parseHttpAllowlist(env.STOCKTRENDS_MCP_HTTP_ALLOWED_HOSTS, "STOCKTRENDS_MCP_HTTP_ALLOWED_HOSTS");
+  const allowedOrigins = parseHttpAllowlist(env.STOCKTRENDS_MCP_HTTP_ALLOWED_ORIGINS, "STOCKTRENDS_MCP_HTTP_ALLOWED_ORIGINS");
+  const loopbackBind = bindAddress === "127.0.0.1" || bindAddress === "localhost" || bindAddress === "::1";
+
+  if (!loopbackBind && !allowedHosts) {
+    throw new StockTrendsMcpError("invalid_config", {
+      detail: "STOCKTRENDS_MCP_HTTP_ALLOWED_HOSTS is required when STOCKTRENDS_MCP_HTTP_BIND_ADDRESS is not loopback."
+    });
+  }
+
+  return Object.freeze({ bindAddress, port, allowedHosts, allowedOrigins });
+}
+
+function parsePort(value: string | undefined): number {
+  const raw = normalize(value, "3000");
+  if (!/^\d+$/.test(raw)) {
+    throw new StockTrendsMcpError("invalid_config", { detail: "STOCKTRENDS_MCP_HTTP_PORT must be an integer from 1 to 65535." });
+  }
+  const port = Number(raw);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new StockTrendsMcpError("invalid_config", { detail: "STOCKTRENDS_MCP_HTTP_PORT must be an integer from 1 to 65535." });
+  }
+  return port;
+}
+
+function parseHttpAllowlist(value: string | undefined, variableName: string): readonly string[] | undefined {
+  if (value === undefined || !value.trim()) return undefined;
+  const values = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (!values.length || values.some((entry) => entry.includes("*") || /\s/.test(entry))) {
+    throw new StockTrendsMcpError("invalid_config", { detail: `${variableName} must be a comma-separated, non-wildcard hostname allowlist.` });
+  }
+  return Object.freeze([...new Set(values)]);
+}
+
+// This is deliberately limited to the credential/payment execution controls
+// that exist in this revision. Future controls must be added here explicitly.
+export function assertStreamableHttpSafe(env: Env, config: StockTrendsMcpConfig): void {
+  const apiKeyConfigured = Boolean(env.STOCKTRENDS_API_KEY?.trim());
+  const paidExecutionRequested = isLiteralTrue(env.STOCKTRENDS_ENABLE_PAID_EXECUTION);
+  const x402Configured =
+    config.x402Relay.relayEnabled ||
+    isLiteralTrue(env.STOCKTRENDS_ENABLE_X402_CHALLENGE_EXECUTION) ||
+    isLiteralTrue(env.STOCKTRENDS_ENABLE_X402_LIVE_CHALLENGE_RELAY) ||
+    isLiteralTrue(env.STOCKTRENDS_ENABLE_X402_PROOF_FORWARDING);
+
+  if (apiKeyConfigured || config.paidTools.requested || paidExecutionRequested || x402Configured) {
+    throw new StockTrendsMcpError("remote_transport_incompatible_config", {
+      detail: "streamable-http permits only credential-free public resources and workflow planning; disable current paid, API-key, and x402 configuration before startup."
+    });
+  }
+}
+
+function isLiteralTrue(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "true";
 }
 
 function parseLogLevel(value: string | undefined): StockTrendsMcpLogLevel {

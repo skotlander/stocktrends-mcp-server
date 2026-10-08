@@ -1,6 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport, type McpServer } from "@modelcontextprotocol/server";
 import { parseConfig, type Env } from "../src/config.js";
 import { createStockTrendsMcpServer } from "../src/server.js";
 import type { FetchLike } from "../src/stocktrendsClient.js";

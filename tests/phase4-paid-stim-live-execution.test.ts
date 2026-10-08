@@ -781,7 +781,7 @@ function serializedSafeError(error: unknown): string {
   return String(error);
 }
 
-function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/sdk/client/index.js").Client["callTool"]>>): Record<string, any> {
+function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/client").Client["callTool"]>>): Record<string, any> {
   if (!("structuredContent" in result) || !result.structuredContent) {
     throw new Error(`Expected structured tool content, got ${JSON.stringify(result)}`);
   }

@@ -1,8 +1,9 @@
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 
 export type StockTrendsErrorCode =
   | "invalid_config"
   | "unsupported_transport"
+  | "remote_transport_incompatible_config"
   | "invalid_resource_request"
   | "api_unavailable"
   | "timeout"
@@ -38,7 +39,8 @@ export interface SafeErrorData {
 
 const ERROR_MESSAGES: Record<StockTrendsErrorCode, string> = {
   invalid_config: "Invalid Stock Trends MCP configuration.",
-  unsupported_transport: "Unsupported transport; only stdio is enabled.",
+  unsupported_transport: "Unsupported Stock Trends MCP transport.",
+  remote_transport_incompatible_config: "streamable-http cannot start with paid, credential-bearing, or x402 configuration.",
   invalid_resource_request: "Unknown or unsupported public resource request.",
   api_unavailable: "Stock Trends API is unavailable for this public resource.",
   timeout: "Timed out fetching Stock Trends public resource.",
@@ -78,13 +80,13 @@ export class StockTrendsMcpError extends Error {
     };
   }
 
-  toMcpError(): McpError {
-    return new McpError(toJsonRpcErrorCode(this.errorCode), this.message, this.toSafeData());
+  toMcpError(): ProtocolError {
+    return new ProtocolError(toJsonRpcErrorCode(this.errorCode), this.message, this.toSafeData());
   }
 }
 
-export function toMcpError(error: unknown): McpError {
-  if (error instanceof McpError) {
+export function toMcpError(error: unknown): ProtocolError {
+  if (error instanceof ProtocolError) {
     return error;
   }
 
@@ -123,20 +125,17 @@ export function errorFromHttpStatus(status: number, safeData: Omit<SafeErrorData
   return new StockTrendsMcpError("api_unexpected_status", safeData);
 }
 
-function toJsonRpcErrorCode(errorCode: StockTrendsErrorCode): ErrorCode {
+function toJsonRpcErrorCode(errorCode: StockTrendsErrorCode): ProtocolErrorCode {
   if (
     errorCode === "invalid_config" ||
     errorCode === "unsupported_transport" ||
+    errorCode === "remote_transport_incompatible_config" ||
     errorCode === "invalid_resource_request" ||
     errorCode === "unapproved_auth_host" ||
     errorCode === "unapproved_paid_endpoint"
   ) {
-    return ErrorCode.InvalidParams;
+    return ProtocolErrorCode.InvalidParams;
   }
 
-  if (errorCode === "timeout") {
-    return ErrorCode.RequestTimeout;
-  }
-
-  return ErrorCode.InternalError;
+  return ProtocolErrorCode.InternalError;
 }

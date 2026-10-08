@@ -6,6 +6,12 @@ Local Model Context Protocol (MCP) adapter for public Stock Trends API resources
 
 This repository is a thin local stdio adapter over the front-facing Stock Trends API. It has no independent analytical authority of its own.
 
+## Streamable HTTP transport foundation
+
+Node.js **20+** is required. Local stdio remains the default and fully supported transport. Source now also supports explicit `STOCKTRENDS_MCP_TRANSPORT=streamable-http`, serving MCP at `/mcp` and operational checks at `/healthz` and `/readyz`; it binds to `127.0.0.1:3000` by default. This is source support only: no public hosted endpoint or Registry remote URL exists.
+
+The HTTP surface is deliberately credential-free: exactly the ten public resources and `stocktrends_estimate_workflow_cost`, with no prompts. Startup refuses a configured API key, paid-tools/execution settings, or current x402 relay/challenge/live/proof-forwarding settings. Local stdio retains its existing separately gated paid and x402 behavior. MPP and remote paid execution are not implemented.
+
 Authority flows in one direction only:
 
 ```

@@ -1,5 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { StockTrendsMcpConfig } from "../config.js";
 import { StockTrendsMcpError } from "../errors.js";
@@ -589,7 +588,7 @@ async function handleBreadthSectorLatestTool(
   const effectiveGroupLevel = input.group_level ?? BREADTH_DEFAULT_GROUP_LEVEL;
   // `limit` and `group_level` are ALWAYS present. The boolean/threshold filters
   // follow the repo's passthrough pattern: sent only when supplied so the API's
-  // documented defaults (cs_only true, include_unknown false) apply; the
+  // documented defaults (canonical equities for omitted cs_only, include_unknown false) apply; the
   // effective values are recorded in metadata either way. `weekdate` and
   // `vol_scale` have no code path here at all.
   const requestParameters: Record<string, unknown> = { group_level: effectiveGroupLevel, limit: effectiveLimit };
@@ -626,7 +625,9 @@ async function handleBreadthSectorLatestTool(
       group_level: effectiveGroupLevel,
       group_level_is_caller_supplied: input.group_level !== undefined,
       exchange: input.exchange ?? null,
-      cs_only_effective: input.cs_only ?? true,
+      // Omitted is intentionally null: the API's current default is canonical
+      // equities (CS+UN), not the legacy CS-only interpretation.
+      cs_only_effective: input.cs_only ?? null,
       cs_only_is_caller_supplied: input.cs_only !== undefined,
       include_unknown_effective: input.include_unknown ?? false,
       include_unknown_is_caller_supplied: input.include_unknown !== undefined,
@@ -641,7 +642,9 @@ async function handleBreadthSectorLatestTool(
       tool: BREADTH_SECTOR_LATEST_TOOL_NAME,
       group_level: effectiveGroupLevel,
       exchange: input.exchange ?? null,
-      cs_only: input.cs_only ?? true,
+      // Preserve omitted/default semantics as distinct from explicit true so
+      // repeated-call suppression never conflates different API populations.
+      cs_only: input.cs_only ?? null,
       include_unknown: input.include_unknown ?? false,
       min_price: input.min_price ?? null,
       min_volume: input.min_volume ?? null,

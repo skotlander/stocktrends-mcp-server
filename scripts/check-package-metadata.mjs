@@ -40,7 +40,7 @@ export const REVIEWED_VERSION = "1.0.1";
 // non-string value each fails closed the same way a name/version drift does.
 export const REVIEWED_MCP_NAME = "com.stocktrends/market-intelligence";
 export const REVIEWED_DESCRIPTION =
-  "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.";
+  "Stock Trends MCP adapter with local stdio and fail-closed Streamable HTTP public discovery support.";
 export const REVIEWED_AUTHOR = "Stocktrends Publications";
 export const REVIEWED_LICENSE = "MIT";
 export const REVIEWED_HOMEPAGE = "https://github.com/skotlander/stocktrends-mcp-server#readme";
@@ -55,7 +55,7 @@ export const REVIEWED_GITHUB_REPOSITORY = "skotlander/stocktrends-mcp-server";
 export const REVIEWED_BUGS = Object.freeze({
   url: "https://github.com/skotlander/stocktrends-mcp-server/issues"
 });
-export const REVIEWED_ENGINES = Object.freeze({ node: ">=18" });
+export const REVIEWED_ENGINES = Object.freeze({ node: ">=20" });
 // The explicit public-access, public-npm-registry publication configuration
 // (P-4). Making public access explicit is required for a scoped package; the
 // registry is pinned so the target cannot silently drift.
@@ -65,7 +65,8 @@ export const REVIEWED_PUBLISH_CONFIG = Object.freeze({
 });
 export const REVIEWED_FILES = Object.freeze(["dist/**/*.js", "dist/**/*.d.ts", "README.md", "LICENSE"]);
 export const REVIEWED_RUNTIME_DEPENDENCIES = Object.freeze({
-  "@modelcontextprotocol/sdk": "^1.29.0",
+  "@modelcontextprotocol/node": "2.1.1",
+  "@modelcontextprotocol/server": "2.3.1",
   zod: "^4.4.3"
 });
 

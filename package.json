@@ -2,7 +2,7 @@
   "name": "@stocktrends-publications/stocktrends-mcp-server",
   "version": "1.0.1",
   "mcpName": "com.stocktrends/market-intelligence",
-  "description": "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.",
+  "description": "Stock Trends MCP adapter with local stdio and fail-closed Streamable HTTP public discovery support.",
   "type": "module",
   "main": "dist/server.js",
   "types": "dist/server.d.ts",
@@ -16,7 +16,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "repository": {
     "type": "git",
@@ -48,10 +48,12 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
     "@types/node": "^26.1.0",
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",

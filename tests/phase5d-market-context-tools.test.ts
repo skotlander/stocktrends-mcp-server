@@ -631,9 +631,30 @@ describe("Phase 5D market context — limit safety (broad-sweep controls)", () =
     expect(body.mcp_metadata.effective_limits).toEqual({ limit: 50 });
     expect(body.mcp_metadata.market_context_parameters).toMatchObject({
       group_level: "sector",
-      cs_only_effective: true,
+      cs_only_effective: null,
       include_unknown_effective: false
     });
+
+    await client.close();
+    await server.close();
+  });
+
+  it("keeps omitted canonical equities distinct from explicit CS-only and legacy-all breadth requests", async () => {
+    const fetchFn = routedFetch();
+    const { client, server } = await connectMcp(fetchFn, EXEC_ENV);
+
+    const omitted = structured(await client.callTool({ name: BREADTH_SECTOR_LATEST_TOOL_NAME, arguments: {} }));
+    const csOnly = structured(await client.callTool({ name: BREADTH_SECTOR_LATEST_TOOL_NAME, arguments: { cs_only: true } }));
+    const legacyAll = structured(await client.callTool({ name: BREADTH_SECTOR_LATEST_TOOL_NAME, arguments: { cs_only: false } }));
+    const calls = pathCalls(fetchFn, BREADTH_SECTOR_LATEST_ENDPOINT_PATH);
+
+    expect(calls).toHaveLength(3);
+    expect(calls[0][0].searchParams.has("cs_only")).toBe(false);
+    expect(calls[1][0].searchParams.get("cs_only")).toBe("true");
+    expect(calls[2][0].searchParams.get("cs_only")).toBe("false");
+    expect(omitted.mcp_metadata.market_context_parameters.cs_only_effective).toBeNull();
+    expect(csOnly.mcp_metadata.market_context_parameters.cs_only_effective).toBe(true);
+    expect(legacyAll.mcp_metadata.market_context_parameters.cs_only_effective).toBe(false);
 
     await client.close();
     await server.close();
@@ -1547,7 +1568,7 @@ function definitionsBody(): Record<string, unknown> {
   };
 }
 
-function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/sdk/client/index.js").Client["callTool"]>>): Record<string, any> {
+function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/client").Client["callTool"]>>): Record<string, any> {
   if (!("structuredContent" in result) || !result.structuredContent) {
     throw new Error(`Expected structured tool content, got ${JSON.stringify(result)}`);
   }
@@ -1555,7 +1576,7 @@ function structured(result: Awaited<ReturnType<import("@modelcontextprotocol/sdk
   return result.structuredContent as Record<string, any>;
 }
 
-function text(result: Awaited<ReturnType<import("@modelcontextprotocol/sdk/client/index.js").Client["callTool"]>>): string {
+function text(result: Awaited<ReturnType<import("@modelcontextprotocol/client").Client["callTool"]>>): string {
   const content = (result as { content?: Array<{ type: string; text?: string }> }).content ?? [];
   return content.map((entry) => entry.text ?? "").join("\n");
 }

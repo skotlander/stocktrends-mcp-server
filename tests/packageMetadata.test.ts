@@ -33,13 +33,13 @@ function reviewedManifest(): Record<string, unknown> {
     version: "1.0.1",
     mcpName: "com.stocktrends/market-intelligence",
     description:
-      "Local stdio MCP adapter for Stock Trends public resources, workflow planning, and separately gated paid API tools.",
+      "Stock Trends MCP adapter with local stdio and fail-closed Streamable HTTP public discovery support.",
     type: "module",
     main: "dist/server.js",
     types: "dist/server.d.ts",
     bin: { "stocktrends-mcp-server": "dist/server.js" },
     files: ["dist/**/*.js", "dist/**/*.d.ts", "README.md", "LICENSE"],
-    engines: { node: ">=18" },
+    engines: { node: ">=20" },
     repository: { type: "git", url: "git+https://github.com/skotlander/stocktrends-mcp-server.git" },
     homepage: "https://github.com/skotlander/stocktrends-mcp-server#readme",
     bugs: { url: "https://github.com/skotlander/stocktrends-mcp-server/issues" },
@@ -52,7 +52,7 @@ function reviewedManifest(): Record<string, unknown> {
     author: "Stocktrends Publications",
     license: "MIT",
     publishConfig: { access: "public", registry: "https://registry.npmjs.org/" },
-    dependencies: { "@modelcontextprotocol/sdk": "^1.29.0", zod: "^4.4.3" },
+    dependencies: { "@modelcontextprotocol/node": "2.1.1", "@modelcontextprotocol/server": "2.3.1", zod: "^4.4.3" },
     devDependencies: { vitest: "^4.1.10" }
   };
 }
@@ -72,10 +72,10 @@ function reviewedLockfile(): Record<string, unknown> {
         name: "@stocktrends-publications/stocktrends-mcp-server",
         version: "1.0.1",
         license: "MIT",
-        dependencies: { "@modelcontextprotocol/sdk": "^1.29.0", zod: "^4.4.3" },
+        dependencies: { "@modelcontextprotocol/node": "2.1.1", "@modelcontextprotocol/server": "2.3.1", zod: "^4.4.3" },
         bin: { "stocktrends-mcp-server": "dist/server.js" },
         devDependencies: { vitest: "^4.1.10" },
-        engines: { node: ">=18" }
+        engines: { node: ">=20" }
       }
     }
   };
@@ -338,7 +338,7 @@ describe("package metadata contract check", () => {
 
     it("fails on an engines mismatch", () => {
       const violations = violationsFor((manifest) => {
-        manifest.engines = { node: ">=20" };
+        manifest.engines = { node: ">=18" };
       });
 
       expect(violations).toHaveLength(1);
@@ -677,7 +677,7 @@ describe("package metadata contract check", () => {
   describe("runtime dependency contract", () => {
     it("fails when a declared runtime dependency is dropped", () => {
       const violations = violationsFor((manifest) => {
-        manifest.dependencies = { "@modelcontextprotocol/sdk": "^1.29.0" };
+        manifest.dependencies = { "@modelcontextprotocol/server": "2.3.1" };
       });
 
       expect(violations).toHaveLength(1);
@@ -686,7 +686,7 @@ describe("package metadata contract check", () => {
 
     it("fails when a declared runtime dependency range drifts", () => {
       const violations = violationsFor((manifest) => {
-        manifest.dependencies = { "@modelcontextprotocol/sdk": "^1.29.0", zod: "^3.25.0" };
+        manifest.dependencies = { "@modelcontextprotocol/node": "2.1.1", "@modelcontextprotocol/server": "2.3.1", zod: "^3.25.0" };
       });
 
       expect(violations).toHaveLength(1);
@@ -695,7 +695,7 @@ describe("package metadata contract check", () => {
 
     it("fails when a runtime dependency is demoted to devDependencies", () => {
       const violations = violationsFor((manifest) => {
-        manifest.dependencies = { "@modelcontextprotocol/sdk": "^1.29.0" };
+        manifest.dependencies = { "@modelcontextprotocol/server": "2.3.1" };
         manifest.devDependencies = { vitest: "^4.1.10", zod: "^4.4.3" };
       });
 
@@ -757,7 +757,7 @@ describe("package metadata contract check", () => {
     it("fails when the lockfile root runtime dependencies drift", () => {
       const violations = lockViolationsFor((lock) => {
         (lock.packages as Record<string, Record<string, unknown>>)[""].dependencies = {
-          "@modelcontextprotocol/sdk": "^1.29.0"
+          "@modelcontextprotocol/server": "2.3.1"
         };
       });
 
