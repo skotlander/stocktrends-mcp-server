@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
-import { InMemoryTransport } from "@modelcontextprotocol/server/inMemory";
+import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { parseConfig } from "../src/config.js";
 import { createStockTrendsMcpServer } from "../src/server.js";
 import { createRemoteX402StimState } from "../src/tools/remoteX402StimTool.js";
