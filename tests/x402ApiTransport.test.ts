@@ -66,11 +66,11 @@ describe("production-shaped x402 API transport", () => {
     expect(calls).toBe(1);
   });
 
-  it("rejects non-canonical targets before fetch and rejects all payment forwarding", async () => {
+  it("rejects non-canonical targets before fetch and validates payment forwarding input", async () => {
     let calls = 0;
     const transport = new ProductionX402ApiTransport({ fetchFn: async () => { calls++; return challenge(); } });
     await expect(transport.requestAnonymousChallenge({ endpointPath: "/v1/stim/history", method: "GET", symbolExchange: "AAPL_Q" })).rejects.toBeInstanceOf(X402ApiTransportFailure);
-    await expect(transport.requestWithPayment({ endpointPath: "/v1/stim/latest", method: "GET", symbolExchange: "AAPL_Q", paymentSignature: "secret" })).rejects.toMatchObject({ code: "x402_transport_payment_forwarding_disabled" });
+    await expect(transport.requestWithPayment({ endpointPath: "/v1/stim/latest", method: "GET", symbolExchange: "AAPL_Q", paymentSignature: "secret" })).rejects.toMatchObject({ code: "x402_transport_target_rejected" });
     expect(calls).toBe(0);
   });
 

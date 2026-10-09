@@ -3,8 +3,8 @@ import { MAX_X402_CHALLENGE_RESPONSE_BYTES, MAX_X402_PAYMENT_REQUIRED_HEADER_BYT
 /**
  * Narrow production-shaped x402 upstream boundary.  It deliberately owns one
  * canonical resource only; it is not a general-purpose HTTP client and is not
- * constructed by normal MCP startup.  Payment forwarding remains a separate,
- * future activation decision.
+ * constructed by normal MCP startup. Payment forwarding is reachable only
+ * through the separate Remote-MCP activation boundary.
  */
 export const X402_STIM_LATEST_RESOURCE = "https://api.stocktrends.com/v1/stim/latest";
 export const X402_STIM_LATEST_PATH = "/v1/stim/latest";
@@ -16,6 +16,7 @@ export type X402ApiTransportError =
   | "x402_transport_timeout"
   | "x402_transport_unavailable"
   | "x402_transport_redirect_rejected"
+  | "x402_transport_payment_rejected"
   | "x402_transport_unexpected_status"
   | "x402_transport_malformed_response";
 
@@ -43,13 +44,18 @@ export interface X402ApiChallenge {
   body: JsonObject;
 }
 
+export interface X402PaidApiResponse {
+  status: 200;
+  body: JsonObject;
+  paymentResponse: JsonObject;
+}
+
 /**
- * The interface intentionally includes the future payment-bearing operation,
- * while this implementation makes forwarding impossible on every path.
+ * Both methods remain constrained to the one fixed API resource.
  */
 export interface X402PaymentBearingTransport {
   requestAnonymousChallenge(request: X402AnonymousChallengeRequest): Promise<X402ApiChallenge>;
-  requestWithPayment(request: X402PaymentBearingRequest): Promise<never>;
+  requestWithPayment(request: X402PaymentBearingRequest): Promise<X402PaidApiResponse>;
 }
 
 export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
@@ -115,10 +121,56 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
     }
   }
 
-  async requestWithPayment(_request: X402PaymentBearingRequest): Promise<never> {
-    // This must remain a terminal gate.  No configuration option exists that
-    // reaches a fetch with PAYMENT-SIGNATURE, Authorization, or X-API-Key.
-    throw new X402ApiTransportFailure("x402_transport_payment_forwarding_disabled");
+  async requestWithPayment(request: X402PaymentBearingRequest): Promise<X402PaidApiResponse> {
+    const url = buildCanonicalStimUrl(request);
+    if (!isBoundedBase64(request.paymentSignature, MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES)) {
+      throw new X402ApiTransportFailure("x402_transport_target_rejected");
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response: Response;
+    try {
+      response = await this.fetchFn(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "stocktrends-mcp-server/1.0",
+          "PAYMENT-SIGNATURE": request.paymentSignature
+        },
+        credentials: "omit",
+        redirect: "manual",
+        signal: controller.signal
+      });
+      if (response.redirected || (response.status >= 300 && response.status < 400)) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_redirect_rejected");
+      }
+      // An explicit 402 is a definitive authorization rejection. Every other
+      // non-success status is deliberately left as an opaque fail-closed error
+      // to the tool, which reports an uncertain outcome rather than guessing.
+      if (response.status === 402) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_payment_rejected");
+      }
+      if (response.status !== 200 || !isJson(response)) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_unexpected_status");
+      }
+      const paymentResponseHeader = response.headers.get("payment-response");
+      const paymentResponse = isBoundedBase64(paymentResponseHeader, MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES)
+        ? decodeJsonObject(paymentResponseHeader)
+        : null;
+      const body = await readBoundedJsonObject(response);
+      if (controller.signal.aborted) throw new X402ApiTransportFailure("x402_transport_timeout");
+      if (!paymentResponse || !body) throw new X402ApiTransportFailure("x402_transport_malformed_response");
+      return { status: 200, body, paymentResponse };
+    } catch (error) {
+      if (error instanceof X402ApiTransportFailure) throw error;
+      if (controller.signal.aborted || isAbortError(error)) throw new X402ApiTransportFailure("x402_transport_timeout");
+      throw new X402ApiTransportFailure("x402_transport_unavailable");
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
