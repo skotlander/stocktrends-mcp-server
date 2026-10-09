@@ -71,7 +71,7 @@ async function executeRemoteGet<Input>(descriptor: RemoteGetDescriptor<Input>, i
     const settlement = successfulSettlement(result.paymentResponse);
     if (settlement.kind === "explicit_failure") return paymentFailure(challenge.requirements, "Payment settlement failed.");
     if (settlement.kind !== "success") return paymentFailure(challenge.requirements, "Payment outcome unknown after forwarding; do not retry payment automatically.");
-    return { structuredContent: result.body, content: [{ type: "text", text: JSON.stringify(result.body) }], _meta: { "x402/payment-response": settlement.value } };
+    return { structuredContent: result.body, content: [{ type: "text" as const, text: JSON.stringify(result.body) }], _meta: { "x402/payment-response": settlement.value } };
   } catch (cause) { const rejected = cause instanceof X402ApiTransportFailure && cause.code === "x402_transport_payment_rejected"; return paymentFailure(challenge.requirements, rejected ? "Payment authorization rejected by API." : "Payment outcome unknown after forwarding; do not retry payment automatically."); }
 }
 
@@ -84,7 +84,7 @@ function successfulSettlement(value: JsonObject): Settlement { const explicitFai
 function paymentRequired(value: PaymentRequired) { return { isError: true, structuredContent: value, content: [{ type: "text" as const, text: JSON.stringify(value) }] }; }
 function paymentFailure(value: PaymentRequired, message: string) { return { isError: true, structuredContent: { ...value, error: message }, content: [{ type: "text" as const, text: JSON.stringify({ ...value, error: message }) }] }; }
 function error(code: string) { return { isError: true, structuredContent: { error: code }, content: [{ type: "text" as const, text: JSON.stringify({ error: code }) }] }; }
-function bindingKey(descriptor: RemoteGetDescriptor<unknown>, query: Readonly<Record<string, string>>) { return `${descriptor.toolName}\u0000${descriptor.endpointPath}\u0000GET\u0000${canonicalQuery(query)}`; }
+function bindingKey(descriptor: Pick<RemoteGetDescriptor<unknown>, "toolName" | "endpointPath">, query: Readonly<Record<string, string>>) { return `${descriptor.toolName}\u0000${descriptor.endpointPath}\u0000GET\u0000${canonicalQuery(query)}`; }
 function canonicalQuery(query: Readonly<Record<string, string>>) { return Object.keys(query).sort().map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(query[key])}`).join("&"); }
 function cleanup(state: RemoteX402StimState, time: number) { for (const [key, value] of state.challenges) if (value.expiresAt <= time) state.challenges.delete(key); for (const [key, expires] of state.consumedDigests) if (expires <= time) state.consumedDigests.delete(key); }
 function putChallenge(state: RemoteX402StimState, key: string, value: Challenge) { if (state.challenges.size >= MAX_STATE_ENTRIES) state.challenges.delete(state.challenges.keys().next().value!); state.challenges.set(key, value); }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
-import { InMemoryTransport } from "@modelcontextprotocol/client/inMemory";
+import { InMemoryTransport } from "@modelcontextprotocol/server/inMemory";
 import { parseConfig } from "../src/config.js";
 import { createStockTrendsMcpServer } from "../src/server.js";
 import { createRemoteX402StimState } from "../src/tools/remoteX402StimTool.js";
@@ -45,15 +45,17 @@ describe("Remote x402 Epoch GET tools", () => {
   it.each([{ limit: 0 }, { limit: 2601 }, { start_date: "2026-02-30" }, { start_date: "2026-02-01", end_date: "2026-01-01" }])("rejects invalid Epoch history input before challenge: %o", async (arguments_) => {
     let calls = 0;
     const client = await connected(async (url) => { calls++; return challengeFor(url); });
-    await expect(call(client, "stocktrends_get_market_epoch_history", arguments_)).rejects.toBeDefined();
+    const result = await call(client, "stocktrends_get_market_epoch_history", arguments_);
+    expect((result as any).isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("Input validation error");
     expect(calls).toBe(0);
     await client.close();
   });
 });
 
-async function connected(fetchFn: any) {
+async function connected(fetchFn: (url: URL) => Promise<Response>) {
   const config = parseConfig({ STOCKTRENDS_MCP_TRANSPORT: "streamable-http", STOCKTRENDS_ENABLE_REMOTE_X402_STIM: "true" });
-  const runtime = createStockTrendsMcpServer({ config, remoteX402StimState: createRemoteX402StimState(), fetchFn });
+  const runtime = createStockTrendsMcpServer({ config, remoteX402StimState: createRemoteX402StimState(), fetchFn: fetchFn as any });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "1" });
   await runtime.server.connect(serverTransport); await client.connect(clientTransport); return client;
