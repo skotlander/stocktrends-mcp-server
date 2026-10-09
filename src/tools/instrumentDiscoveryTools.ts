@@ -10,7 +10,7 @@ const resolveSchema = z.object({ symbol_exchange: symbolExchange.optional(), sym
 
 export function registerPublicInstrumentDiscoveryTools(server: McpServer, client: StockTrendsClient): void {
   register(server, client, "stocktrends_lookup_instruments", "Lookup Stock Trends Instruments", "Search public instrument candidates across exchanges. It does not select an ambiguous symbol or make a paid request.", "/v1/instruments/lookup", lookupSchema);
-  register(server, client, "stocktrends_resolve_instrument", "Resolve a Stock Trends Instrument", "Resolve a public canonical symbol_exchange. A 409 ambiguity response is preserved; callers must not infer a selection.", "/v1/instruments/resolve", resolveSchema);
+  register(server, client, "stocktrends_resolve_instrument", "Resolve a Stock Trends Instrument", "Resolve a Stock Trends instrument identifier. The API prefers U.S. listings by default; specify exchange or canonical symbol_exchange for a particular listing, including Canadian securities. Use lookup to explore alternatives. Upstream 404 and 409 responses are preserved.", "/v1/instruments/resolve", resolveSchema);
 }
 
 function register(server: McpServer, client: StockTrendsClient, name: string, title: string, description: string, endpointPath: string, inputSchema: any): void {
