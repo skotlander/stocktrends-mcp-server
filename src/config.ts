@@ -28,6 +28,8 @@ export interface StockTrendsMcpConfig {
   requestTimeoutMs: number;
   paidTools: PaidToolsConfig;
   x402Relay: X402RelayConfig;
+  /** Isolated Remote MCP x402 ST-IM vertical slice; disabled unless literal true. */
+  remoteX402StimEnabled?: boolean;
   http?: StreamableHttpConfig;
 }
 
@@ -42,6 +44,7 @@ export function parseConfig(env: Env = process.env): StockTrendsMcpConfig {
   const paidToolsRequested = parsePaidToolsEnabled(env.STOCKTRENDS_ENABLE_PAID_TOOLS, "STOCKTRENDS_ENABLE_PAID_TOOLS");
   const x402Relay = parseX402RelayConfig(env, { paidToolsRequested });
   const paidTools = parsePaidToolsConfig(env, paidToolsRequested);
+  const remoteX402StimEnabled = parsePaidToolsEnabled(env.STOCKTRENDS_ENABLE_REMOTE_X402_STIM, "STOCKTRENDS_ENABLE_REMOTE_X402_STIM");
 
   const config: StockTrendsMcpConfig = {
     apiBaseUrl,
@@ -49,7 +52,8 @@ export function parseConfig(env: Env = process.env): StockTrendsMcpConfig {
     logLevel,
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     paidTools,
-    x402Relay
+    x402Relay,
+    remoteX402StimEnabled
   };
 
   if (transport === "streamable-http") {
@@ -129,7 +133,7 @@ export function assertStreamableHttpConfigSafe(config: StockTrendsMcpConfig): vo
     config.x402Relay.liveChallengeEnabled ||
     config.x402Relay.proofForwardingEnabled;
 
-  if (paidConfigured || x402Configured) {
+  if (paidConfigured || x402Configured || (config.remoteX402StimEnabled && config.transport !== "streamable-http")) {
     throw new StockTrendsMcpError("remote_transport_incompatible_config", {
       detail: "streamable-http permits only credential-free public resources and workflow planning; disable current paid, API-key, and x402 configuration before startup."
     });

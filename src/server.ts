@@ -17,6 +17,8 @@ import { registerPaidSelectionsTools } from "./tools/selectionsTools.js";
 import { registerPaidStimTools } from "./tools/stimTools.js";
 import { registerX402PublicTools } from "./tools/x402Tools.js";
 import { registerSimulatedRemoteX402StimTool, type SimulatedX402RemoteOptions } from "./tools/x402SimulatedRemoteTool.js";
+import { registerRemoteX402StimTool, type RemoteX402StimState } from "./tools/remoteX402StimTool.js";
+import { ProductionX402ApiTransport } from "./x402ApiTransport.js";
 import { startStreamableHttpServer } from "./httpServer.js";
 
 export const SERVER_NAME = "stocktrends-mcp-server";
@@ -34,6 +36,9 @@ export interface CreateServerOptions {
   fetchFn?: FetchLike;
   /** Test-only injection seam. Never supplied by environment or startup code. */
   simulatedRemoteX402?: SimulatedX402RemoteOptions;
+  /** Shared by short-lived Streamable HTTP server instances only. */
+  remoteX402StimState?: RemoteX402StimState;
+  remoteX402StimNow?: () => number;
 }
 
 export function createStockTrendsMcpServer(options: CreateServerOptions = {}): StockTrendsServerRuntime {
@@ -100,6 +105,15 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
     // This isolated harness intentionally replaces every paid registration with
     // one simulated tool. It cannot be enabled by runtime configuration.
     registerSimulatedRemoteX402StimTool(server, options.simulatedRemoteX402);
+  } else if (config.remoteX402StimEnabled) {
+    if (config.transport !== "streamable-http" || !options.remoteX402StimState) {
+      throw new Error("Remote x402 ST-IM requires the Streamable HTTP activation boundary.");
+    }
+    registerRemoteX402StimTool(server, {
+      state: options.remoteX402StimState,
+      transport: new ProductionX402ApiTransport({ fetchFn: options.fetchFn }),
+      now: options.remoteX402StimNow
+    });
   } else {
     registerX402PublicTools(server, client, config);
   }

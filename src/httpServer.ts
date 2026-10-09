@@ -13,6 +13,7 @@ import { createLogger, safeErrorMessage } from "./logging.js";
 import { createStockTrendsMcpServer } from "./server.js";
 import type { FetchLike } from "./stocktrendsClient.js";
 import type { SimulatedX402RemoteOptions } from "./tools/x402SimulatedRemoteTool.js";
+import { createRemoteX402StimState, type RemoteX402StimState } from "./tools/remoteX402StimTool.js";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 const HTTP_HEADERS_TIMEOUT_MS = 10_000;
@@ -26,7 +27,15 @@ export interface StreamableHttpServerOptions {
   fetchFn?: FetchLike;
   /** Test-only programmatic seam; no environment variable can supply this. */
   simulatedRemoteX402?: SimulatedX402RemoteOptions;
+  /** Injection seam for HTTP lifecycle tests; never populated from requests. */
+  remoteX402StimState?: RemoteX402StimState;
 }
+
+// createMcpHandler constructs a new MCP server for independent HTTP requests.
+// This process-local state is intentionally passed into each such instance so
+// a standards-compliant unpaid call can be followed by a paid call. It stores
+// only bounded API challenge snapshots and SHA-256 digests, never proofs.
+const remoteX402StimState = createRemoteX402StimState();
 
 export interface RunningStreamableHttpServer {
   readonly server: Server;
@@ -43,7 +52,7 @@ export function createStreamableHttpMcpHandler(options: StreamableHttpServerOpti
 
   const logger = createLogger({ logLevel: config.logLevel });
   return createMcpHandler(
-    () => createStockTrendsMcpServer({ config, fetchFn: options.fetchFn, simulatedRemoteX402: options.simulatedRemoteX402 }).server,
+    () => createStockTrendsMcpServer({ config, fetchFn: options.fetchFn, simulatedRemoteX402: options.simulatedRemoteX402, remoteX402StimState: options.remoteX402StimState ?? remoteX402StimState }).server,
     {
       maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
       onerror: (error) => logger.error(safeErrorMessage(error))

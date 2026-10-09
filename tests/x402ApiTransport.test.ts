@@ -19,6 +19,28 @@ function challenge(): Response {
 afterEach(() => vi.useRealTimers());
 
 describe("production-shaped x402 API transport", () => {
+  it("forwards one validated signature only to the canonical route without credentials", async () => {
+    let calls = 0;
+    const transport = new ProductionX402ApiTransport({ fetchFn: async (url, init) => {
+      calls++;
+      expect(url.toString()).toBe("https://api.stocktrends.com/v1/stim/latest?symbol_exchange=IBM-N");
+      expect(init?.headers).toEqual({ Accept: "application/json", "User-Agent": "stocktrends-mcp-server/1.0", "PAYMENT-SIGNATURE": "cHJvb2Y=" });
+      return new Response(JSON.stringify({ score: 7 }), { status: 200, headers: { "content-type": "application/json", "payment-response": Buffer.from(JSON.stringify({ transaction: "tx" })).toString("base64") } });
+    } });
+    await expect(transport.requestWithPayment({ endpointPath: "/v1/stim/latest", method: "GET", symbolExchange: "IBM_N", paymentSignature: "cHJvb2Y=" })).resolves.toEqual({ status: 200, body: { score: 7 }, paymentResponse: { transaction: "tx" } });
+    expect(calls).toBe(1);
+  });
+
+  it.each([
+    ["missing payment response", () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })],
+    ["malformed payment response", () => new Response("{}", { status: 200, headers: { "content-type": "application/json", "payment-response": "not-base64" } })],
+    ["unexpected status", () => new Response("{}", { status: 500, headers: { "content-type": "application/json" } })],
+    ["payment rejection", () => new Response("{}", { status: 402, headers: { "content-type": "application/json" } })]
+  ])("fails closed for payment %s without retry", async (_name, response) => {
+    let calls = 0; const transport = new ProductionX402ApiTransport({ fetchFn: async () => { calls++; return response(); } });
+    await expect(transport.requestWithPayment({ endpointPath: "/v1/stim/latest", method: "GET", symbolExchange: "IBM_N", paymentSignature: "cHJvb2Y=" })).rejects.toBeInstanceOf(X402ApiTransportFailure);
+    expect(calls).toBe(1);
+  });
   it("sends exactly one anonymous, fixed-target challenge request without credential or payment fallback", async () => {
     let calls = 0;
     const transport = new ProductionX402ApiTransport({ fetchFn: async (url, init) => {
@@ -66,11 +88,11 @@ describe("production-shaped x402 API transport", () => {
     expect(calls).toBe(1);
   });
 
-  it("rejects non-canonical targets before fetch and rejects all payment forwarding", async () => {
+  it("rejects non-canonical targets before fetch and validates payment forwarding input", async () => {
     let calls = 0;
     const transport = new ProductionX402ApiTransport({ fetchFn: async () => { calls++; return challenge(); } });
     await expect(transport.requestAnonymousChallenge({ endpointPath: "/v1/stim/history", method: "GET", symbolExchange: "AAPL_Q" })).rejects.toBeInstanceOf(X402ApiTransportFailure);
-    await expect(transport.requestWithPayment({ endpointPath: "/v1/stim/latest", method: "GET", symbolExchange: "AAPL_Q", paymentSignature: "secret" })).rejects.toMatchObject({ code: "x402_transport_payment_forwarding_disabled" });
+    await expect(transport.requestWithPayment({ endpointPath: "/v1/stim/latest", method: "GET", symbolExchange: "AAPL_Q", paymentSignature: "secret" })).rejects.toMatchObject({ code: "x402_transport_target_rejected" });
     expect(calls).toBe(0);
   });
 
