@@ -38,6 +38,7 @@ export interface CreateServerOptions {
   simulatedRemoteX402?: SimulatedX402RemoteOptions;
   /** Shared by short-lived Streamable HTTP server instances only. */
   remoteX402StimState?: RemoteX402StimState;
+  remoteX402StimNow?: () => number;
 }
 
 export function createStockTrendsMcpServer(options: CreateServerOptions = {}): StockTrendsServerRuntime {
@@ -110,7 +111,8 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
     }
     registerRemoteX402StimTool(server, {
       state: options.remoteX402StimState,
-      transport: new ProductionX402ApiTransport({ fetchFn: options.fetchFn })
+      transport: new ProductionX402ApiTransport({ fetchFn: options.fetchFn }),
+      now: options.remoteX402StimNow
     });
   } else {
     registerX402PublicTools(server, client, config);

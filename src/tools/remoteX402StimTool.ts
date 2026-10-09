@@ -1,20 +1,24 @@
 import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { ProductionX402ApiTransport, X402ApiTransportFailure, X402_STIM_LATEST_PATH, X402_STIM_LATEST_RESOURCE } from "../x402ApiTransport.js";
+import { MAX_X402_PAYMENT_SIGNATURE_BYTES, ProductionX402ApiTransport, X402ApiTransportFailure, X402_STIM_LATEST_PATH, X402_STIM_LATEST_RESOURCE } from "../x402ApiTransport.js";
 import type { JsonObject } from "../stocktrendsClient.js";
 import { STIM_HTTP_METHOD, STIM_LATEST_TOOL_NAME } from "./stimTools.js";
 
-const MAX_PAYMENT_BYTES = 64 * 1024;
+// This is the encoded PAYMENT-SIGNATURE ceiling as well as the transport
+// ceiling. Base64 is ASCII, so string length and header byte length agree.
+export const MAX_PAYMENT_SIGNATURE_BYTES = MAX_X402_PAYMENT_SIGNATURE_BYTES;
+const MAX_PAYMENT_JSON_BYTES = Math.floor((MAX_PAYMENT_SIGNATURE_BYTES / 4) * 3);
 const CHALLENGE_TTL_MS = 60_000;
 const MAX_STATE_ENTRIES = 256;
+export const MAX_CONSUMED_PAYMENT_DIGESTS = 256;
 
 const inputSchema = z.object({
   symbol_exchange: z.string().trim().regex(/^[A-Z0-9][A-Z0-9.-]{0,31}_[NQABTI]$/)
 }).strict();
 
 type PaymentRequired = JsonObject & { x402Version: 2; resource: JsonObject; accepts: JsonObject[] };
-interface Challenge { requirements: PaymentRequired; expiresAt: number; consumed: boolean; }
+interface Challenge { requirements: PaymentRequired; expiresAt: number; }
 export interface RemoteX402StimState {
   challenges: Map<string, Challenge>;
   consumedDigests: Map<string, number>;
@@ -48,31 +52,33 @@ export function registerRemoteX402StimTool(server: McpServer, options: RemoteX40
     const payment = ctx.mcpReq._meta?.["x402/payment"];
     if (payment === undefined) {
       const current = options.state.challenges.get(key);
-      if (current && !current.consumed && current.expiresAt > time) return paymentRequired(current.requirements);
+      if (current && current.expiresAt > time) return paymentRequired(current.requirements);
       try {
         const challenge = await transport.requestAnonymousChallenge({ endpointPath: X402_STIM_LATEST_PATH, method: "GET", symbolExchange: input.symbol_exchange });
         const requirements = challenge.body.payment_required as PaymentRequired | undefined;
         if (!validRequirements(requirements)) return error("x402_invalid_payment_requirements");
-        putChallenge(options.state, key, { requirements, expiresAt: time + CHALLENGE_TTL_MS, consumed: false });
+        putChallenge(options.state, key, { requirements, expiresAt: time + CHALLENGE_TTL_MS });
         return paymentRequired(requirements);
       } catch { return error("x402_challenge_unavailable"); }
     }
     const challenge = options.state.challenges.get(key);
     if (!challenge || challenge.expiresAt <= time) return error("x402_challenge_missing_or_expired");
-    if (challenge.consumed) return paymentFailure(challenge.requirements, "Payment authorization has already been used; do not retry payment automatically.");
     const proof = validPayment(payment, challenge.requirements);
     if (!proof) return paymentFailure(challenge.requirements, "Payment authorization rejected before forwarding.");
     const digest = createHash("sha256").update(stable(proof), "utf8").digest("hex");
     if (options.state.consumedDigests.has(digest)) return paymentFailure(challenge.requirements, "Payment authorization has already been used; do not retry payment automatically.");
-    // Mark before I/O. This atomically prevents concurrent reuse and makes a
-    // post-forwarding timeout non-retryable at this boundary.
-    challenge.consumed = true;
+    const paymentSignature = Buffer.from(JSON.stringify(proof), "utf8").toString("base64");
+    if (paymentSignature.length > MAX_PAYMENT_SIGNATURE_BYTES) return paymentFailure(challenge.requirements, "Payment authorization is too large to forward.");
+    if (options.state.consumedDigests.size >= MAX_CONSUMED_PAYMENT_DIGESTS) return paymentFailure(challenge.requirements, "Payment authorization was not forwarded because local replay protection capacity is temporarily exhausted.");
+    // Record only this exact authorization before I/O. This atomically prevents
+    // concurrent duplicate forwarding without consuming the shared challenge.
     options.state.consumedDigests.set(digest, challenge.expiresAt);
     try {
-      const result = await transport.requestWithPayment({ endpointPath: X402_STIM_LATEST_PATH, method: "GET", symbolExchange: input.symbol_exchange, paymentSignature: Buffer.from(JSON.stringify(proof), "utf8").toString("base64") });
+      const result = await transport.requestWithPayment({ endpointPath: X402_STIM_LATEST_PATH, method: "GET", symbolExchange: input.symbol_exchange, paymentSignature });
       const settlement = successfulSettlement(result.paymentResponse);
-      if (!settlement) return paymentFailure(challenge.requirements, "Payment outcome unknown after forwarding; do not retry payment automatically.");
-      return { structuredContent: result.body, content: [{ type: "text", text: JSON.stringify(result.body) }], _meta: { "x402/payment-response": settlement } };
+      if (settlement.kind === "explicit_failure") return paymentFailure(challenge.requirements, "Payment settlement failed.");
+      if (settlement.kind !== "success") return paymentFailure(challenge.requirements, "Payment outcome unknown after forwarding; do not retry payment automatically.");
+      return { structuredContent: result.body, content: [{ type: "text", text: JSON.stringify(result.body) }], _meta: { "x402/payment-response": settlement.value } };
     } catch (cause) {
       const rejected = cause instanceof X402ApiTransportFailure && cause.code === "x402_transport_payment_rejected";
       return paymentFailure(challenge.requirements, rejected ? "Payment authorization rejected by API." : "Payment outcome unknown after forwarding; do not retry payment automatically.");
@@ -85,16 +91,20 @@ function validRequirements(value: unknown): value is PaymentRequired {
 }
 function validPayment(value: unknown, requirements: PaymentRequired): JsonObject | null {
   const serialized = safeStringify(value);
-  if (!isObject(value) || serialized === null || Buffer.byteLength(serialized, "utf8") > MAX_PAYMENT_BYTES || value.x402Version !== 2 || !isObject(value.resource) || !isObject(value.accepted) || !isObject(value.payload)) return null;
+  if (!isObject(value) || serialized === null || Buffer.byteLength(serialized, "utf8") > MAX_PAYMENT_JSON_BYTES || value.x402Version !== 2 || !isObject(value.resource) || !isObject(value.accepted) || !isObject(value.payload)) return null;
   if (stable(value.resource) !== stable(requirements.resource) || !requirements.accepts.some((accepted) => stable(accepted) === stable(value.accepted))) return null;
   const signature = value.payload.signature;
   if (typeof signature !== "string" || !signature.trim() || !isObject(value.payload.authorization)) return null;
   return value;
 }
-function successfulSettlement(value: JsonObject): JsonObject | null {
+type Settlement = { kind: "success"; value: JsonObject } | { kind: "explicit_failure" } | { kind: "unknown" };
+function successfulSettlement(value: JsonObject): Settlement {
   const explicitFailure = value.success === false || value.settled === false;
-  const confirmed = value.success === true || value.settled === true || typeof value.transaction === "string" || typeof value.txHash === "string";
-  return !explicitFailure && confirmed ? { ...value, success: true } : null;
+  const confirmedTransaction = (typeof value.transaction === "string" && Boolean(value.transaction.trim())) || (typeof value.txHash === "string" && Boolean(value.txHash.trim()));
+  const positive = value.success === true || value.settled === true || confirmedTransaction;
+  if (positive && explicitFailure) return { kind: "unknown" };
+  if (explicitFailure) return { kind: "explicit_failure" };
+  return positive ? { kind: "success", value } : { kind: "unknown" };
 }
 function paymentRequired(value: PaymentRequired) { return { isError: true, structuredContent: value, content: [{ type: "text" as const, text: JSON.stringify(value) }] }; }
 function paymentFailure(value: PaymentRequired, message: string) { return { isError: true, structuredContent: { ...value, error: message }, content: [{ type: "text" as const, text: JSON.stringify({ ...value, error: message }) }] }; }

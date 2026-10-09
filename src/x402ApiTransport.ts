@@ -9,6 +9,7 @@ import { MAX_X402_CHALLENGE_RESPONSE_BYTES, MAX_X402_PAYMENT_REQUIRED_HEADER_BYT
 export const X402_STIM_LATEST_RESOURCE = "https://api.stocktrends.com/v1/stim/latest";
 export const X402_STIM_LATEST_PATH = "/v1/stim/latest";
 export const X402_TRANSPORT_TIMEOUT_MS = 10_000;
+export const MAX_X402_PAYMENT_SIGNATURE_BYTES = MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES;
 
 export type X402ApiTransportError =
   | "x402_transport_target_rejected"
@@ -123,7 +124,7 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
 
   async requestWithPayment(request: X402PaymentBearingRequest): Promise<X402PaidApiResponse> {
     const url = buildCanonicalStimUrl(request);
-    if (!isBoundedBase64(request.paymentSignature, MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES)) {
+    if (!isBoundedBase64(request.paymentSignature, MAX_X402_PAYMENT_SIGNATURE_BYTES)) {
       throw new X402ApiTransportFailure("x402_transport_target_rejected");
     }
     const controller = new AbortController();
