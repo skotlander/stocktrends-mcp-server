@@ -12,6 +12,24 @@ export const X402_MARKET_EPOCH_LATEST_RESOURCE = "https://api.stocktrends.com/v1
 export const X402_MARKET_EPOCH_LATEST_PATH = "/v1/market/epoch/latest";
 export const X402_MARKET_EPOCH_HISTORY_RESOURCE = "https://api.stocktrends.com/v1/market/epoch/history";
 export const X402_MARKET_EPOCH_HISTORY_PATH = "/v1/market/epoch/history";
+export const X402_STIM_HISTORY_PATH = "/v1/stim/history";
+export const X402_STIM_HISTORY_RESOURCE = "https://api.stocktrends.com/v1/stim/history";
+export const X402_INDICATORS_LATEST_PATH = "/v1/indicators/latest";
+export const X402_INDICATORS_LATEST_RESOURCE = "https://api.stocktrends.com/v1/indicators/latest";
+export const X402_INDICATORS_HISTORY_PATH = "/v1/indicators/history";
+export const X402_INDICATORS_HISTORY_RESOURCE = "https://api.stocktrends.com/v1/indicators/history";
+export const X402_SELECTIONS_LATEST_PATH = "/v1/selections/latest";
+export const X402_SELECTIONS_LATEST_RESOURCE = "https://api.stocktrends.com/v1/selections/latest";
+export const X402_MARKET_REGIME_LATEST_PATH = "/v1/market/regime/latest";
+export const X402_MARKET_REGIME_LATEST_RESOURCE = "https://api.stocktrends.com/v1/market/regime/latest";
+export const X402_MARKET_REGIME_HISTORY_PATH = "/v1/market/regime/history";
+export const X402_MARKET_REGIME_HISTORY_RESOURCE = "https://api.stocktrends.com/v1/market/regime/history";
+export const X402_BREADTH_SECTOR_LATEST_PATH = "/v1/breadth/sector/latest";
+export const X402_BREADTH_SECTOR_LATEST_RESOURCE = "https://api.stocktrends.com/v1/breadth/sector/latest";
+export const X402_LEADERSHIP_SUMMARY_LATEST_PATH = "/v1/leadership/summary/latest";
+export const X402_LEADERSHIP_SUMMARY_LATEST_RESOURCE = "https://api.stocktrends.com/v1/leadership/summary/latest";
+export const X402_AGENT_SCREENER_TOP_PATH = "/v1/agent/screener/top";
+export const X402_AGENT_SCREENER_TOP_RESOURCE = "https://api.stocktrends.com/v1/agent/screener/top";
 export const X402_TRANSPORT_TIMEOUT_MS = 10_000;
 export const MAX_X402_PAYMENT_SIGNATURE_BYTES = MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES;
 
@@ -52,6 +70,15 @@ export interface X402RemoteGetRoute {
 
 export const X402_REMOTE_GET_ROUTES: readonly X402RemoteGetRoute[] = Object.freeze([
   { endpointPath: X402_STIM_LATEST_PATH, resource: X402_STIM_LATEST_RESOURCE, allowedQueryKeys: ["symbol_exchange"] },
+  { endpointPath: X402_STIM_HISTORY_PATH, resource: X402_STIM_HISTORY_RESOURCE, allowedQueryKeys: ["symbol_exchange", "start", "end", "limit", "include_gaps"] },
+  { endpointPath: X402_INDICATORS_LATEST_PATH, resource: X402_INDICATORS_LATEST_RESOURCE, allowedQueryKeys: ["symbol_exchange", "cs_only"] },
+  { endpointPath: X402_INDICATORS_HISTORY_PATH, resource: X402_INDICATORS_HISTORY_RESOURCE, allowedQueryKeys: ["symbol_exchange", "cs_only", "start", "end", "limit"] },
+  { endpointPath: X402_SELECTIONS_LATEST_PATH, resource: X402_SELECTIONS_LATEST_RESOURCE, allowedQueryKeys: ["exchange", "min_prob13wk", "limit", "include_data", "include_mast", "cs_only"] },
+  { endpointPath: X402_MARKET_REGIME_LATEST_PATH, resource: X402_MARKET_REGIME_LATEST_RESOURCE, allowedQueryKeys: [] },
+  { endpointPath: X402_MARKET_REGIME_HISTORY_PATH, resource: X402_MARKET_REGIME_HISTORY_RESOURCE, allowedQueryKeys: ["limit", "start_date"] },
+  { endpointPath: X402_BREADTH_SECTOR_LATEST_PATH, resource: X402_BREADTH_SECTOR_LATEST_RESOURCE, allowedQueryKeys: ["exchange", "cs_only", "include_unknown", "min_price", "min_volume", "group_level", "limit"] },
+  { endpointPath: X402_LEADERSHIP_SUMMARY_LATEST_PATH, resource: X402_LEADERSHIP_SUMMARY_LATEST_RESOURCE, allowedQueryKeys: ["min_rsi", "min_mt_cnt", "limit_overall", "limit_bucket"] },
+  { endpointPath: X402_AGENT_SCREENER_TOP_PATH, resource: X402_AGENT_SCREENER_TOP_RESOURCE, allowedQueryKeys: ["exchange", "trend", "min_rsi", "min_mt_cnt", "min_trend_cnt", "sort", "limit", "weekdate"] },
   { endpointPath: X402_MARKET_EPOCH_LATEST_PATH, resource: X402_MARKET_EPOCH_LATEST_RESOURCE, allowedQueryKeys: [] },
   { endpointPath: X402_MARKET_EPOCH_HISTORY_PATH, resource: X402_MARKET_EPOCH_HISTORY_RESOURCE, allowedQueryKeys: ["limit", "start_date", "end_date"] }
 ]);
