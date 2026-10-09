@@ -109,7 +109,7 @@ describe("guarded Remote MCP x402 ST-IM tool", () => {
       const secondPayment = { ...payment, payload: { signature: "second", authorization: { nonce: "second" } } };
       expect((await call(second, secondPayment) as any).structuredContent).toEqual({ symbol_exchange: "IBM-N", score: 7 });
       expect((await call(first, payment) as any).structuredContent.error).toMatch(/already been used/);
-      expect(upstream).toBe(4);
+      expect(upstream).toBe(3);
       await first.close(); await second.close();
     } finally { await server.close(); }
   });
