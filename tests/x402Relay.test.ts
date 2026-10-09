@@ -221,7 +221,7 @@ const FAKE_OUTPUT_PLACEMENTS = [
 ] as const;
 
 const EXPECTED_TEN_TOOL_NAMES = [
-  COST_ESTIMATE_TOOL_NAME,
+  COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument",
   ...AUTH_CAPABLE_PAID_ENDPOINT_POLICIES.map((policy) => policy.toolName)
 ].sort();
 
