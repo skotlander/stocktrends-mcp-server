@@ -63,7 +63,7 @@ describe("Phase 5B indicators — tool surface", () => {
     const { client, server } = await connectMcp(fetchFn, {});
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     expect(fetchFn).not.toHaveBeenCalled();
 
     await client.close();

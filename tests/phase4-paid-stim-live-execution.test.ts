@@ -95,7 +95,7 @@ describe("Phase 4 paid ST-IM live execution — tool surface & execution matrix"
     });
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
 
     await client.close();
     await server.close();

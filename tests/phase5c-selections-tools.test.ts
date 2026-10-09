@@ -62,7 +62,7 @@ describe("Phase 5C selections — tool surface", () => {
     const { client, server } = await connectMcp(fetchFn, {});
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     expect(toolNames).not.toContain(SELECTIONS_LATEST_TOOL_NAME);
     expect(fetchFn).not.toHaveBeenCalled();
 

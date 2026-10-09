@@ -55,7 +55,7 @@ describe("Phase 4 paid ST-IM foundation — tool surface", () => {
     const tools = await client.listTools();
     const resources = await client.listResources();
 
-    expect(tools.tools.map((tool) => tool.name)).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(tools.tools.map((tool) => tool.name)).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     expect(resources.resources.map((resource) => resource.uri)).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);
     expect(client.getServerCapabilities()?.prompts).toBeUndefined();
     expect(PHASE1_PROMPT_DEFINITIONS).toEqual([]);
@@ -97,7 +97,7 @@ describe("Phase 4 paid ST-IM foundation — tool surface", () => {
       );
       expect(toolNames).toHaveLength(10);
     } else {
-      expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
+      expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
       expect(toolNames).not.toContain(STIM_LATEST_TOOL_NAME);
       expect(toolNames).not.toContain(STIM_HISTORY_TOOL_NAME);
     }

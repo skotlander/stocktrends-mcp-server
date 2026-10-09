@@ -41,6 +41,37 @@ describe("Remote x402 Epoch GET tools", () => {
     const result = await call(client, name, arguments_ as Record<string, unknown>);
     expect((result as any).isError).toBe(true); expect(calls).toBe(0); await client.close();
   });
+  it.each([
+    ["stocktrends_get_stim_history", { symbol_exchange: "IBM-N" }, "/v1/stim/history"], ["stocktrends_get_indicators_latest", { symbol_exchange: "IBM-N" }, "/v1/indicators/latest"],
+    ["stocktrends_get_indicators_history", { symbol_exchange: "IBM-N" }, "/v1/indicators/history"], ["stocktrends_get_selections_latest", {}, "/v1/selections/latest"],
+    ["stocktrends_get_market_regime_latest", {}, "/v1/market/regime/latest"], ["stocktrends_get_market_regime_history", {}, "/v1/market/regime/history"],
+    ["stocktrends_get_breadth_sector_latest", {}, "/v1/breadth/sector/latest"], ["stocktrends_get_leadership_summary_latest", {}, "/v1/leadership/summary/latest"],
+    ["stocktrends_get_screener_top", {}, "/v1/agent/screener/top"]
+  ])("forwards one settled synthetic payment for %s", async (name, arguments_, path) => {
+    const requests: Array<{ path: string; search: string; payment: string | undefined }> = [];
+    const client = await connected(async (url, init) => {
+      const payment = (init?.headers as Record<string, string>)?.["PAYMENT-SIGNATURE"];
+      requests.push({ path: url.pathname, search: url.search, payment });
+      return payment ? json({ api_authored: name }, 200, { "payment-response": b64({ success: true, transaction: "synthetic" }) }) : challengeFor(url);
+    });
+    await call(client, name, arguments_ as Record<string, unknown>);
+    const result = await call(client, name, arguments_ as Record<string, unknown>, paymentFor(`https://api.stocktrends.com${path}`));
+    expect(requests).toHaveLength(2); expect(requests[1]).toMatchObject({ path, search: requests[0].search }); expect(requests[1].payment).toBeTruthy();
+    expect(JSON.stringify(result)).toContain(name); expect(JSON.stringify(result)).toContain("synthetic"); await client.close();
+  });
+
+  it.each([
+    ["stocktrends_get_stim_history", { symbol_exchange: "IBM-N" }, "/v1/stim/history"], ["stocktrends_get_indicators_latest", { symbol_exchange: "IBM-N" }, "/v1/indicators/latest"],
+    ["stocktrends_get_indicators_history", { symbol_exchange: "IBM-N" }, "/v1/indicators/history"], ["stocktrends_get_selections_latest", {}, "/v1/selections/latest"],
+    ["stocktrends_get_market_regime_latest", {}, "/v1/market/regime/latest"], ["stocktrends_get_market_regime_history", {}, "/v1/market/regime/history"],
+    ["stocktrends_get_breadth_sector_latest", {}, "/v1/breadth/sector/latest"], ["stocktrends_get_leadership_summary_latest", {}, "/v1/leadership/summary/latest"],
+    ["stocktrends_get_screener_top", {}, "/v1/agent/screener/top"]
+  ])("rejects wrong-resource payment for %s before forwarding", async (name, arguments_, path) => {
+    let paymentRequests = 0; const client = await connected(async (url, init) => { if ((init?.headers as Record<string, string>)?.["PAYMENT-SIGNATURE"]) paymentRequests++; return challengeFor(url); });
+    await call(client, name, arguments_ as Record<string, unknown>);
+    const result = await call(client, name, arguments_ as Record<string, unknown>, paymentFor(`https://api.stocktrends.com${path === "/v1/stim/history" ? "/v1/indicators/latest" : "/v1/stim/history"}`));
+    expect((result as any).isError).toBe(true); expect(paymentRequests).toBe(0); await client.close();
+  });
   it("registers both Epoch tools without changing public resources", async () => {
     const client = await connected(async (url) => challengeFor(url));
     const tools = await client.listTools();
