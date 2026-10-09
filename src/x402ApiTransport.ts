@@ -8,6 +8,10 @@ import { MAX_X402_CHALLENGE_RESPONSE_BYTES, MAX_X402_PAYMENT_REQUIRED_HEADER_BYT
  */
 export const X402_STIM_LATEST_RESOURCE = "https://api.stocktrends.com/v1/stim/latest";
 export const X402_STIM_LATEST_PATH = "/v1/stim/latest";
+export const X402_MARKET_EPOCH_LATEST_RESOURCE = "https://api.stocktrends.com/v1/market/epoch/latest";
+export const X402_MARKET_EPOCH_LATEST_PATH = "/v1/market/epoch/latest";
+export const X402_MARKET_EPOCH_HISTORY_RESOURCE = "https://api.stocktrends.com/v1/market/epoch/history";
+export const X402_MARKET_EPOCH_HISTORY_PATH = "/v1/market/epoch/history";
 export const X402_TRANSPORT_TIMEOUT_MS = 10_000;
 export const MAX_X402_PAYMENT_SIGNATURE_BYTES = MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES;
 
@@ -36,6 +40,29 @@ export interface X402AnonymousChallengeRequest {
 
 export interface X402PaymentBearingRequest extends X402AnonymousChallengeRequest {
   /** Reserved for a separately approved live-payment activation only. */
+  paymentSignature: string;
+}
+
+/** A deliberately closed set of Remote-MCP x402 GET targets. */
+export interface X402RemoteGetRoute {
+  endpointPath: string;
+  resource: string;
+  allowedQueryKeys: readonly string[];
+}
+
+export const X402_REMOTE_GET_ROUTES: readonly X402RemoteGetRoute[] = Object.freeze([
+  { endpointPath: X402_STIM_LATEST_PATH, resource: X402_STIM_LATEST_RESOURCE, allowedQueryKeys: ["symbol_exchange"] },
+  { endpointPath: X402_MARKET_EPOCH_LATEST_PATH, resource: X402_MARKET_EPOCH_LATEST_RESOURCE, allowedQueryKeys: [] },
+  { endpointPath: X402_MARKET_EPOCH_HISTORY_PATH, resource: X402_MARKET_EPOCH_HISTORY_RESOURCE, allowedQueryKeys: ["limit", "start_date", "end_date"] }
+]);
+
+export interface X402RemoteGetRequest {
+  endpointPath: string;
+  method: "GET";
+  query: Readonly<Record<string, string>>;
+}
+
+export interface X402RemoteGetPaymentRequest extends X402RemoteGetRequest {
   paymentSignature: string;
 }
 
@@ -72,7 +99,15 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
   }
 
   async requestAnonymousChallenge(request: X402AnonymousChallengeRequest): Promise<X402ApiChallenge> {
-    const url = buildCanonicalStimUrl(request);
+    return this.requestAnonymousChallengeForGet({
+      endpointPath: request.endpointPath,
+      method: request.method,
+      query: { symbol_exchange: normalizeLegacyStimSymbol(request.symbolExchange) }
+    });
+  }
+
+  async requestAnonymousChallengeForGet(request: X402RemoteGetRequest): Promise<X402ApiChallenge> {
+    const url = buildCanonicalRemoteGetUrl(request);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: Response;
@@ -123,7 +158,16 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
   }
 
   async requestWithPayment(request: X402PaymentBearingRequest): Promise<X402PaidApiResponse> {
-    const url = buildCanonicalStimUrl(request);
+    return this.requestWithPaymentForGet({
+      endpointPath: request.endpointPath,
+      method: request.method,
+      query: { symbol_exchange: normalizeLegacyStimSymbol(request.symbolExchange) },
+      paymentSignature: request.paymentSignature
+    });
+  }
+
+  async requestWithPaymentForGet(request: X402RemoteGetPaymentRequest): Promise<X402PaidApiResponse> {
+    const url = buildCanonicalRemoteGetUrl(request);
     if (!isBoundedBase64(request.paymentSignature, MAX_X402_PAYMENT_SIGNATURE_BYTES)) {
       throw new X402ApiTransportFailure("x402_transport_target_rejected");
     }
@@ -175,12 +219,24 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
   }
 }
 
-function buildCanonicalStimUrl(request: X402AnonymousChallengeRequest): URL {
-  if (request.method !== "GET" || request.endpointPath !== X402_STIM_LATEST_PATH || !/^[A-Z0-9][A-Z0-9.-]{0,31}_[NQABTI]$/.test(request.symbolExchange)) {
+function normalizeLegacyStimSymbol(value: string): string {
+  if (!/^[A-Z0-9][A-Z0-9.-]{0,31}[-_][NQABTI]$/.test(value)) {
     throw new X402ApiTransportFailure("x402_transport_target_rejected");
   }
-  const url = new URL(X402_STIM_LATEST_RESOURCE);
-  url.searchParams.set("symbol_exchange", request.symbolExchange.replace(/_([NQABTI])$/, "-$1"));
+  return value.replace(/_([NQABTI])$/, "-$1");
+}
+
+function buildCanonicalRemoteGetUrl(request: X402RemoteGetRequest): URL {
+  const route = X402_REMOTE_GET_ROUTES.find((candidate) => candidate.endpointPath === request.endpointPath);
+  if (!route || request.method !== "GET") {
+    throw new X402ApiTransportFailure("x402_transport_target_rejected");
+  }
+  const queryKeys = Object.keys(request.query).sort();
+  if (queryKeys.some((key) => !route.allowedQueryKeys.includes(key)) || queryKeys.some((key) => typeof request.query[key] !== "string" || !request.query[key])) {
+    throw new X402ApiTransportFailure("x402_transport_target_rejected");
+  }
+  const url = new URL(route.resource);
+  for (const key of queryKeys) url.searchParams.set(key, request.query[key]);
   return url;
 }
 
@@ -232,7 +288,8 @@ function isApprovedRequirements(value: JsonObject): boolean {
   return (
     value.x402Version === 2 &&
     isObject(resource) &&
-    resource.url === X402_STIM_LATEST_RESOURCE &&
+    typeof resource.url === "string" &&
+    X402_REMOTE_GET_ROUTES.some((route) => route.resource === resource.url) &&
     Array.isArray(value.accepts) &&
     value.accepts.length > 0 &&
     value.accepts.every((accepted) => {
