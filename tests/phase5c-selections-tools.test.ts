@@ -19,7 +19,7 @@ const MOCK_KEY = "mock-selections-secret-must-never-be-sent";
 const PUBLIC_HEADERS = { Accept: "application/json", "User-Agent": "stocktrends-mcp-server/1.0" };
 
 const TEN_PAID_TOOLS = [
-  COST_ESTIMATE_TOOL_NAME,
+  COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument",
   STIM_LATEST_TOOL_NAME,
   STIM_HISTORY_TOOL_NAME,
   INDICATORS_LATEST_TOOL_NAME,
@@ -62,7 +62,7 @@ describe("Phase 5C selections — tool surface", () => {
     const { client, server } = await connectMcp(fetchFn, {});
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     expect(toolNames).not.toContain(SELECTIONS_LATEST_TOOL_NAME);
     expect(fetchFn).not.toHaveBeenCalled();
 
@@ -76,7 +76,7 @@ describe("Phase 5C selections — tool surface", () => {
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     expect(toolNames).toEqual(TEN_PAID_TOOLS);
-    expect(toolNames).toHaveLength(10);
+    expect(toolNames).toHaveLength(12);
     expect(toolNames).toContain(SELECTIONS_LATEST_TOOL_NAME);
     expect(PAID_SELECTIONS_TOOL_NAMES).toEqual([SELECTIONS_LATEST_TOOL_NAME]);
 

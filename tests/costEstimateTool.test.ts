@@ -39,7 +39,7 @@ describe("stocktrends_estimate_workflow_cost", () => {
     const tools = await client.listTools();
     const resources = await client.listResources();
 
-    expect(tools.tools).toHaveLength(1);
+    expect(tools.tools).toHaveLength(3);
     expect(tools.tools[0]?.name).toBe(COST_ESTIMATE_TOOL_NAME);
     expect(tools.tools[0]?.inputSchema.required).toEqual(["workflow_id"]);
     expect(tools.tools[0]?.inputSchema.additionalProperties).toBe(false);

@@ -80,7 +80,7 @@ describe("streamable HTTP transport", () => {
     const client = await connect(server);
     const [tools, resources, prompts] = await Promise.all([client.listTools(), client.listResources(), client.listPrompts()]);
 
-    expect(tools.tools.map((tool) => tool.name)).toEqual(["stocktrends_estimate_workflow_cost"]);
+    expect(tools.tools.map((tool) => tool.name)).toEqual(["stocktrends_estimate_workflow_cost", "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     expect(resources.resources).toHaveLength(10);
     expect(resources.resources.map((resource) => resource.uri).sort()).toEqual(PUBLIC_RESOURCES.map((resource) => resource.uri).sort());
     expect(prompts.prompts).toEqual([]);

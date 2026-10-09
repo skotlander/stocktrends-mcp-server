@@ -20,7 +20,7 @@ const PUBLIC_HEADERS = { Accept: "application/json", "User-Agent": "stocktrends-
 
 // Paid-exposed surface after PR 51 adds the four market-context tools: ten tools.
 const TEN_PAID_TOOLS = [
-  COST_ESTIMATE_TOOL_NAME,
+  COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument",
   STIM_LATEST_TOOL_NAME,
   STIM_HISTORY_TOOL_NAME,
   INDICATORS_LATEST_TOOL_NAME,
@@ -63,7 +63,7 @@ describe("Phase 5B indicators — tool surface", () => {
     const { client, server } = await connectMcp(fetchFn, {});
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     expect(fetchFn).not.toHaveBeenCalled();
 
     await client.close();
@@ -76,7 +76,7 @@ describe("Phase 5B indicators — tool surface", () => {
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     expect(toolNames).toEqual(TEN_PAID_TOOLS);
-    expect(toolNames).toHaveLength(10);
+    expect(toolNames).toHaveLength(12);
 
     await client.close();
     await server.close();

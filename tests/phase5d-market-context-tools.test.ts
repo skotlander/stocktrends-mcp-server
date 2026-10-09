@@ -43,7 +43,7 @@ const LEADERSHIP_DEFINITIONS_RESOURCE_URI = "stocktrends://leadership/definition
 const LEADERSHIP_DEFINITIONS_ENDPOINT_PATH = "/v1/leadership/definitions";
 
 const TEN_PAID_TOOLS = [
-  COST_ESTIMATE_TOOL_NAME,
+  COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument",
   STIM_LATEST_TOOL_NAME,
   STIM_HISTORY_TOOL_NAME,
   INDICATORS_LATEST_TOOL_NAME,
@@ -103,7 +103,7 @@ describe("Phase 5D market context — tool surface", () => {
     const { client, server } = await connectMcp(fetchFn, {});
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(toolNames).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     for (const { tool } of MARKET_CONTEXT_TOOLS) {
       expect(toolNames).not.toContain(tool);
     }
@@ -119,7 +119,7 @@ describe("Phase 5D market context — tool surface", () => {
 
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     expect(toolNames).toEqual(TEN_PAID_TOOLS);
-    expect(toolNames).toHaveLength(10);
+    expect(toolNames).toHaveLength(12);
     expect(PAID_MARKET_CONTEXT_TOOL_NAMES).toEqual([
       MARKET_REGIME_LATEST_TOOL_NAME,
       MARKET_REGIME_HISTORY_TOOL_NAME,

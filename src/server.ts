@@ -11,6 +11,7 @@ import { createPaidPricingReconciliationState } from "./paidPricing.js";
 import { registerPublicResources } from "./resources/index.js";
 import { StockTrendsClient, type FetchLike } from "./stocktrendsClient.js";
 import { registerPublicPlanningTools } from "./tools/index.js";
+import { registerPublicInstrumentDiscoveryTools } from "./tools/instrumentDiscoveryTools.js";
 import { registerPaidIndicatorsTools } from "./tools/indicatorsTools.js";
 import { registerPaidMarketContextTools } from "./tools/marketContextTools.js";
 import { registerPaidSelectionsTools } from "./tools/selectionsTools.js";
@@ -60,6 +61,7 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
 
   registerPublicResources(server, client);
   registerPublicPlanningTools(server, client);
+  registerPublicInstrumentDiscoveryTools(server, client);
   // Paired paid ST-IM tools. These register only when paid mode is explicitly
   // enabled with an API key. Live subscription/API-key execution runs only when
   // the execution flag, authoritative static pricing/preflight, a passing

@@ -5,7 +5,7 @@ import { COST_ESTIMATE_TOOL_NAME, listPublicPlanningToolNames, PAID_RUNTIME_TOOL
 import { connectMcp, jsonResponse } from "./helpers.js";
 
 describe("MCP safety surface", () => {
-  it("exposes exactly one public planning tool and no prompts by default", async () => {
+  it("exposes the three public tools and no prompts by default", async () => {
     const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
     const { client, server } = await connectMcp(fetchFn);
     const tools = await client.listTools();
@@ -13,7 +13,7 @@ describe("MCP safety surface", () => {
     expect(PHASE1_TOOL_DEFINITIONS).toEqual([]);
     expect(PAID_RUNTIME_TOOL_DEFINITIONS).toEqual([]);
     expect(listPublicPlanningToolNames()).toEqual([COST_ESTIMATE_TOOL_NAME]);
-    expect(tools.tools.map((tool) => tool.name)).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect(tools.tools.map((tool) => tool.name)).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     expect(PHASE1_PROMPT_DEFINITIONS).toEqual([]);
     expect(client.getServerCapabilities()?.tools).toBeDefined();
     expect(client.getServerCapabilities()?.prompts).toBeUndefined();
