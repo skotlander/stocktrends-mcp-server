@@ -55,7 +55,7 @@ describe("Phase 3 paid-auth foundation", () => {
     const paidToolsExposed = env.STOCKTRENDS_ENABLE_PAID_TOOLS === "true" && Boolean(env.STOCKTRENDS_API_KEY);
     const expectedToolNames = paidToolsExposed
       ? [
-          COST_ESTIMATE_TOOL_NAME,
+          COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument",
           "stocktrends_get_stim_latest",
           "stocktrends_get_stim_history",
           "stocktrends_get_indicators_latest",
@@ -66,7 +66,7 @@ describe("Phase 3 paid-auth foundation", () => {
           "stocktrends_get_breadth_sector_latest",
           "stocktrends_get_leadership_summary_latest"
         ].sort()
-      : [COST_ESTIMATE_TOOL_NAME];
+      : [COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"];
 
     expect(fetchFn).not.toHaveBeenCalled();
     expect(resources.resources.map((resource) => resource.uri)).toEqual(EXPECTED_PUBLIC_RESOURCE_URIS);

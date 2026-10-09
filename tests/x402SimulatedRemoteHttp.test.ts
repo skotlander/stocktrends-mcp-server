@@ -35,7 +35,7 @@ describe("simulated x402 Remote MCP over Streamable HTTP", () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${server.port}/mcp`)));
 
     const tools = await client.listTools();
-    expect(tools.tools.map((tool) => tool.name).sort()).toEqual(["stocktrends_estimate_workflow_cost", "stocktrends_get_stim_latest"]);
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual(["stocktrends_estimate_workflow_cost", "stocktrends_get_stim_latest", "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     const challenge = await client.request(
       { method: "tools/call", params: { name: "stocktrends_get_stim_latest", arguments: { symbol_exchange: "AAPL_Q" } } } as any,
       undefined as any

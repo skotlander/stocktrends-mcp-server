@@ -15,12 +15,13 @@ describe("Remote x402 Epoch GET tools", () => {
   it("registers both Epoch tools without changing public resources", async () => {
     const client = await connected(async (url) => challengeFor(url));
     const tools = await client.listTools();
-    expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-      "stocktrends_get_stim_latest", "stocktrends_get_stim_history", "stocktrends_get_indicators_latest", "stocktrends_get_indicators_history",
-      "stocktrends_get_selections_latest", "stocktrends_get_market_regime_latest", "stocktrends_get_market_regime_history",
-      "stocktrends_get_breadth_sector_latest", "stocktrends_get_leadership_summary_latest", "stocktrends_get_screener_top",
-      "stocktrends_get_market_epoch_latest", "stocktrends_get_market_epoch_history", "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"
-    ]));
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "stocktrends_estimate_workflow_cost", "stocktrends_get_breadth_sector_latest", "stocktrends_get_indicators_history",
+      "stocktrends_get_indicators_latest", "stocktrends_get_leadership_summary_latest", "stocktrends_get_market_epoch_history",
+      "stocktrends_get_market_epoch_latest", "stocktrends_get_market_regime_history", "stocktrends_get_market_regime_latest",
+      "stocktrends_get_screener_top", "stocktrends_get_selections_latest", "stocktrends_get_stim_history", "stocktrends_get_stim_latest",
+      "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"
+    ]);
     const resourcesResult = await client.listResources();
     expect(resourcesResult.resources).toHaveLength(10);
     await client.close();

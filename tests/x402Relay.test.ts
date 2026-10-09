@@ -481,7 +481,7 @@ describe("Phase 5F x402 mock challenge relay config and surface", () => {
     const fetchFn = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
     const { client, server } = await connectMcp(fetchFn);
 
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([COST_ESTIMATE_TOOL_NAME]);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([COST_ESTIMATE_TOOL_NAME, "stocktrends_lookup_instruments", "stocktrends_resolve_instrument"]);
     expect((await client.listResources()).resources).toHaveLength(10);
     expect(client.getServerCapabilities()?.prompts).toBeUndefined();
     expect(fetchFn).not.toHaveBeenCalled();
