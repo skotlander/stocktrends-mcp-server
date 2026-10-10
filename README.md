@@ -315,9 +315,11 @@ Paid tools are **disabled by default**. Nothing in this section is required to i
 - `STOCKTRENDS_ENABLE_PAID_TOOLS=true`
 - `STOCKTRENDS_API_KEY` configured
 
-With both set, the server additionally registers the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, the base selections tool *definition*, and the four market-context tool *definitions*, so the exposed tool set becomes exactly ten:
+With both set, the server additionally registers the two paired paid ST-IM tool *definitions*, the two paired paid indicators tool *definitions*, the base selections tool *definition*, and the four market-context tool *definitions*, so the exposed tool set becomes exactly twelve:
 
 - `stocktrends_estimate_workflow_cost` — the credential-free planning tool (always present)
+- `stocktrends_lookup_instruments` — credential-free instrument-discovery tool (always present)
+- `stocktrends_resolve_instrument` — credential-free instrument-resolution tool (always present)
 - `stocktrends_get_stim_latest` — paid ST-IM tool definition
 - `stocktrends_get_stim_history` — paid ST-IM tool definition
 - `stocktrends_get_indicators_latest` — paid indicators tool definition
@@ -354,7 +356,7 @@ The local subscription/API-key paid surface contains twelve tools when exposure 
 
 ### Enable paid tool exposure (exposure only — no execution)
 
-The example below exposes the paid tool *definitions* so an operator can confirm the ten-tool surface. It is for **tool exposure only**: it does **not** enable paid execution and must not be used to perform a live paid call.
+The example below exposes the paid tool *definitions* so an operator can confirm the twelve-tool surface. It is for **tool exposure only**: it does **not** enable paid execution and must not be used to perform a live paid call.
 
 ```sh
 # Exposure only: makes the nine paid ST-IM, indicators, base-selections, and
@@ -637,7 +639,7 @@ These two tools are always registered together (history-beside-latest rule). Eve
 
 ## Conditional Paid Indicators Tools (subscription/API-key execution)
 
-When paid tools are enabled with an API key, the server also registers the paired paid indicators tool *definitions* alongside the ST-IM pair (contributing to the exactly-ten-tool paid-exposed surface described in [Paid Mode Configuration](#paid-mode-configuration)). They are always registered together (history-beside-latest rule) and behave exactly like the ST-IM pair, with one addition: an **internal, credential-free instrument resolver** runs before any paid boundary.
+When paid tools are enabled with an API key, the server also registers the paired paid indicators tool *definitions* alongside the ST-IM pair (contributing to the twelve-tool paid-exposed surface described in [Paid Mode Configuration](#paid-mode-configuration)). They are always registered together (history-beside-latest rule) and behave exactly like the ST-IM pair, with one addition: an **internal, credential-free instrument resolver** runs before any paid boundary.
 
 | MCP tool | Endpoint | Execution |
 | --- | --- | --- |
@@ -654,7 +656,7 @@ Only after a single safe canonical identity exists does the tool run the same pa
 
 ## Conditional Paid Selections Tool (subscription/API-key execution)
 
-When paid tools are enabled with an API key, the server also registers a single base ST-IM selection-universe tool alongside the ST-IM and indicators pairs (contributing to the exactly-ten-tool paid-exposed surface described in [Paid Mode Configuration](#paid-mode-configuration)). It behaves like the other paid tools with the same gate policy, plus **list-shaped broad-sweep/limit-safety controls** because it returns a universe/list rather than a single row. It is **exchange-scoped, not symbol-keyed**, so it uses no instrument resolver.
+When paid tools are enabled with an API key, the server also registers a single base ST-IM selection-universe tool alongside the ST-IM and indicators pairs (contributing to the twelve-tool paid-exposed surface described in [Paid Mode Configuration](#paid-mode-configuration)). It behaves like the other paid tools with the same gate policy, plus **list-shaped broad-sweep/limit-safety controls** because it returns a universe/list rather than a single row. It is **exchange-scoped, not symbol-keyed**, so it uses no instrument resolver.
 
 | MCP tool | Endpoint | Execution |
 | --- | --- | --- |

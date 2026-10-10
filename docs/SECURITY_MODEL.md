@@ -450,15 +450,19 @@ gate it and adds no tool.
 
 ### 16.1 Paid-exposed six-tool surface
 
-Registering `stocktrends_get_selections_latest` brings the paid-exposed surface
-from five tools to **exactly six**: the planning tool
+This subsection records the original Phase 5C implementation stage. At that
+stage, registering `stocktrends_get_selections_latest` brought the paid-exposed
+surface from five tools to **exactly six**: the planning tool
 (`stocktrends_estimate_workflow_cost`), the paired paid ST-IM tools, the paired
-paid indicators tools, and the single base-selections tool. The **default/free
-surface remains exactly three tools**, and there are **zero MCP prompts** in every
-mode. Exposure uses the same gate as the ST-IM/indicators families (paid-tools
-flag + configured API key) and is independent of the execution flag. No
+paid indicators tools, and the single base-selections tool. The historical
+**default/free surface remained exactly one tool**, and there were **zero MCP
+prompts** in every mode. Exposure used the same gate as the ST-IM/indicators
+families (paid-tools flag + configured API key) and was independent of the
+execution flag. No
 `selections/history`, no `selections/published/*`, and no public selections
-resource is added this increment.
+resource was added in that increment. Current source subsequently adds the two
+public instrument-discovery tools; see §15 for the current three-free-tool and
+twelve-tool local subscription/API-key model.
 
 ### 16.2 Auth-capable allowlist promotion
 
@@ -578,22 +582,26 @@ bulk use.
 
 ### 17.1 Surface counts (paid-exposed ten-tool surface, ten public resources)
 
-Registering the four market-context tools brings the paid-exposed surface from
-six tools to **exactly ten**: the planning tool
+This subsection records the original Phase 5D implementation stage. At that
+stage, registering the four market-context tools brought the paid-exposed
+surface from six tools to **exactly ten**: the planning tool
 (`stocktrends_estimate_workflow_cost`), the paired paid ST-IM tools, the paired
 paid indicators tools, the base-selections tool, and the four market-context
 tools (`stocktrends_get_market_regime_latest`,
 `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`,
-`stocktrends_get_leadership_summary_latest`). The **default/free surface remains
-exactly three tools**, and there are **zero MCP prompts** in every mode. Exposure
-uses the same gate as every prior family (paid-tools flag + configured API key —
-neither alone exposes anything) and is independent of the execution flag, which
-changes call behavior, never tool count. The **public resource count changes
-from nine to ten** in every mode: `stocktrends://leadership/definitions`
+`stocktrends_get_leadership_summary_latest`). The historical **default/free
+surface remained exactly one tool**, and there were **zero MCP prompts** in every
+mode. Exposure used the same gate as every prior family (paid-tools flag +
+configured API key — neither alone exposed anything) and was independent of the
+execution flag, which changed call behavior, never tool count. The **public
+resource count changed from nine to ten** in every mode:
+`stocktrends://leadership/definitions`
 (backing `GET /v1/leadership/definitions`) is registered as a credential-free
 public resource — verified public/zero-cost by the credential-free `200` read
-recorded in the design memo §3 — and is **never keyed** under any configuration.
-No dynamic registration occurs.
+recorded in the design memo §3 — and was **never keyed** under any configuration.
+No dynamic registration occurred. Current source subsequently adds the two
+public instrument-discovery tools, yielding twelve tools under local
+subscription/API-key exposure; see §15 for the current model.
 
 ### 17.2 Auth-capable allowlist promotions
 
