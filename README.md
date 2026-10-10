@@ -8,19 +8,21 @@ This repository is a thin MCP adapter over the front-facing Stock Trends API. It
 
 ## Public Remote MCP
 
-Connect a remote MCP client to the credential-free, free-only Streamable HTTP endpoint:
+Connect a remote MCP client to the Streamable HTTP endpoint:
 
 ```
 https://mcp.stocktrends.com/mcp
 ```
 
-Developer connection guidance is available at [developer.stocktrends.com/mcp](https://developer.stocktrends.com/mcp). The deployed remote surface exposes exactly ten public resources, one free planning tool (`stocktrends_estimate_workflow_cost`), and zero prompts. It does not expose paid market-data tools, customer API-key forwarding, paid execution, x402 payment execution, OAuth subscriber login, MPP, or Market Epoch MCP tools.
+Developer connection guidance is available at [developer.stocktrends.com/mcp](https://developer.stocktrends.com/mcp). The deployed remote surface exposes exactly 19 tools, ten public resources, and zero prompts. Connection and discovery require no Stock Trends subscription API key. Three tools are free: `stocktrends_estimate_workflow_cost`, `stocktrends_lookup_instruments`, and `stocktrends_resolve_instrument`. Sixteen tools are x402 V2 paid tools: the 12 GET tools `stocktrends_get_stim_latest`, `stocktrends_get_stim_history`, `stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`, `stocktrends_get_selections_latest`, `stocktrends_get_market_regime_latest`, `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`, `stocktrends_get_leadership_summary_latest`, `stocktrends_get_screener_top`, `stocktrends_get_market_epoch_latest`, and `stocktrends_get_market_epoch_history`; and the four POST tools `stocktrends_evaluate_symbol` (`POST /v1/decision/evaluate-symbol`), `stocktrends_construct_portfolio` (`POST /v1/portfolio/construct`), `stocktrends_evaluate_portfolio` (`POST /v1/portfolio/evaluate`), and `stocktrends_compare_portfolios` (`POST /v1/portfolio/compare`). `stocktrends_get_selections_latest` returns the base selection universe, not the separately thresholded published ST-IM Select list.
+
+For the paid remote tools, a payment-capable MCP client obtains and authorizes payment. It supplies that authorization in MCP request metadata as `x402/payment`; the adapter forwards it to the Stock Trends API in the upstream `PAYMENT-SIGNATURE` header and returns confirmed settlement metadata as `x402/payment-response`. These MCP metadata fields are distinct from the API headers. The server does not control a buyer wallet, hold private keys, sign payment authorizations, initiate spending, recompute Stock Trends intelligence, or execute securities trades. A client does not gain payment capability merely by connecting, and a conforming x402 REST buyer does not automatically implement this MCP-specific exchange. Do not automatically retry an uncertain payment outcome; for a POST tool, a settled payment can accompany an analytical HTTP error, and pending challenge state is bound to the adapter's canonical request body rather than independently cryptographically signing that body.
 
 ## Local stdio and Streamable HTTP configuration
 
 Node.js **20+** is required for local use. Local stdio remains the default transport for local process startup and is fully supported. Source also supports explicit `STOCKTRENDS_MCP_TRANSPORT=streamable-http`, serving MCP at `/mcp` and operational checks at `/healthz` and `/readyz`; its local listener binds to `127.0.0.1:3000` by default. The deployed public endpoint above is distinct from this local configuration. No MCP Registry remote URL is claimed.
 
-The Streamable HTTP surface is deliberately credential-free: exactly the ten public resources and `stocktrends_estimate_workflow_cost`, with no prompts. Startup refuses a configured API key, paid-tools/execution settings, or current x402 relay/challenge/live/proof-forwarding settings. Local stdio retains separately gated subscription/API-key paid REST calls. Its optional, default-off x402 mode is challenge metadata inspection/relay only: it neither makes a payment nor forwards payment proof or payment headers, returns paid API data, or spends. MPP and remote paid execution are not implemented.
+For a locally started `streamable-http` configuration, the surface is deliberately credential-free: exactly the ten public resources and `stocktrends_estimate_workflow_cost`, with no prompts. Startup refuses a configured API key, paid-tools/execution settings, or current local x402 relay/challenge/live/proof-forwarding settings. This local configuration is distinct from the deployed public Remote MCP above and must not be treated as equivalent to it. Local stdio retains separately gated subscription/API-key paid REST calls. Its optional, default-off x402 mode is challenge metadata inspection/relay only: it neither makes a payment nor forwards payment proof or payment headers, returns paid API data, or spends. MPP is not implemented.
 
 Authority flows in one direction only:
 
@@ -474,14 +476,15 @@ Before a release, run the manual secret-safety scan in the [Phase 5A Operator Sa
 
 ## Current Status
 
-This repository powers the deployed credential-free, free-only public Remote MCP at `https://mcp.stocktrends.com/mcp` over Streamable HTTP: exactly ten resources, one free workflow cost-estimate planning tool, and zero prompts. Local stdio remains the default for local process startup and supports the free/default surface, separately gated subscription/API-key paid tools, and optional default-off x402 challenge inspection/relay only (no payment, proof forwarding, payment header, paid data, or spend).
+This repository powers the deployed public Remote MCP at `https://mcp.stocktrends.com/mcp` over Streamable HTTP: 19 tools (three free and 16 x402 V2 paid), ten resources, and zero prompts. The paid remote surface includes 12 GET tools and four analytical POST tools; it uses the MCP-specific `x402/payment` and `x402/payment-response` metadata exchange, while forwarding accepted authorization upstream in `PAYMENT-SIGNATURE`. Local stdio remains the default for local process startup and supports the free/default surface, separately gated subscription/API-key paid tools, and optional default-off x402 challenge inspection/relay only (no payment, proof forwarding, payment header, paid data, or spend).
 
 Included:
 
 - Live public Streamable HTTP Remote MCP and separately supported local stdio transport (the default for local process startup).
-- Public Stock Trends API resources and public/free planning tool.
+- Public Stock Trends API resources, three free Remote MCP tools, and the deployed 16-tool x402 V2 paid Remote MCP surface.
 - Fetch-on-request behavior; no startup API fetch is required.
-- One public/free MCP planning tool: `stocktrends_estimate_workflow_cost`.
+- Three free Remote MCP tools: `stocktrends_estimate_workflow_cost`, `stocktrends_lookup_instruments`, and `stocktrends_resolve_instrument`.
+- Sixteen deployed x402 V2 paid Remote MCP tools: the twelve GET tools and four analytical POST tools listed in [Public Remote MCP](#public-remote-mcp). Payment authorization is supplied by the client through `x402/payment`; the server forwards it only to the allowlisted Stock Trends API endpoint as `PAYMENT-SIGNATURE`, reports confirmed settlement through `x402/payment-response`, and neither holds nor signs with a buyer wallet.
 - Conditional paired paid ST-IM tools (`stocktrends_get_stim_latest`, `stocktrends_get_stim_history`), paired paid indicators tools (`stocktrends_get_indicators_latest`, `stocktrends_get_indicators_history`), the base ST-IM selection-universe tool (`stocktrends_get_selections_latest`), and the four market-context tools (`stocktrends_get_market_regime_latest`, `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`, `stocktrends_get_leadership_summary_latest`), exposed only when paid mode is explicitly enabled with an API key (paid-exposed surface = ten tools). Live subscription/API-key execution (`X-API-Key` only) runs **only** behind the two-gate policy — the paid-tools flag, an API key, the distinct `STOCKTRENDS_ENABLE_PAID_EXECUTION` runtime flag, authoritative static pricing/preflight, family-scoped catalog reconciliation, and nonzero local caps (plus a covering budget) — and, for indicators, only after a bare/raw symbol has resolved credential-free to a single canonical identity, and, for selections and market-context, under list-shaped broad-sweep/limit-safety controls (always-sent bounded limits, one fetch, no bulk/retry, repeated-identical-call loop denial); otherwise it fails closed with no request and no auth/payment header. See the [Conditional Paid ST-IM Tools](#conditional-paid-st-im-tools-subscriptionapi-key-execution), [Conditional Paid Indicators Tools](#conditional-paid-indicators-tools-subscriptionapi-key-execution), [Conditional Paid Selections Tool](#conditional-paid-selections-tool-subscriptionapi-key-execution), and [Conditional Paid Market-Context Tools](#conditional-paid-market-context-tools-subscriptionapi-key-execution) sections.
 - Zero MCP prompts.
 - No API key requirement for the default/public surface.
@@ -499,12 +502,15 @@ Included:
 Excluded:
 
 - Live API validation in automated tests (execution paths exist in code but are exercised mock-only; live validation requires separate operator authorization after merge).
-- x402 proof forwarding, paid fulfillment, payments, wallets, payment retries,
-  payment headers, and OAuth. Live x402 support in this build is challenge-only,
-  no-key, no-proof, no-payment, no-spend, and shape-metadata-only.
+- Wallet custody, wallet configuration, private-key handling, payment signing,
+  autonomous spending, automatic payment retries, OAuth, and MPP. The deployed
+  Remote MCP forwards client-supplied x402 authorization and handles confirmed
+  settlement; its separately gated local stdio x402 relay remains challenge-only,
+  no-key, no-proof-forwarding, no-payment, no-spend, and shape-metadata-only.
 - `Authorization: Bearer` fallback.
-- Remote paid or authenticated MCP hosting/execution, including customer API-key
-  forwarding and payment execution.
+- Customer API-key forwarding and remote OAuth/subscriber authentication. The
+  deployed Remote MCP's x402-paid execution is payment-client initiated, not an
+  API-key or wallet-custody service.
 - Database or control-plane access.
 - Dynamic MCP registration from `/v1/ai/tools` or `/v1/workflows`.
 - Intelligence Agent recomputation, generated guidance, generated research, or a parallel reasoning layer.
@@ -598,7 +604,7 @@ Candidate intelligence resources remain excluded until no-key public verificatio
 
 ## Public Planning Tools
 
-The server registers one public/free MCP planning tool:
+Local default/free mode registers one public/free MCP planning tool:
 
 | MCP tool | Backing endpoint | Purpose |
 | --- | --- | --- |
@@ -607,8 +613,9 @@ The server registers one public/free MCP planning tool:
 This tool sends no API key or auth header, does not call paid endpoints or
 `/v1/pricing/catalog`, does not authorize paid execution or payment, and
 implements no x402 payment, wallet, OAuth, database, or control-plane behavior.
-It is the one free planning tool exposed by the public Remote MCP and is also
-available in local default/free mode.
+It is the one free planning tool exposed by local default/free mode. The deployed
+Remote MCP additionally exposes credential-free `stocktrends_lookup_instruments`
+and `stocktrends_resolve_instrument`; see [Public Remote MCP](#public-remote-mcp).
 
 ## Conditional Paid ST-IM Tools (subscription/API-key execution)
 

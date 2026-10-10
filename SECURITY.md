@@ -30,7 +30,7 @@ This repository contains the Stock Trends MCP server and its public adapter beha
 
 - Paid execution is disabled by default.
 - Enabling paid execution requires explicit, governed configuration: nonzero per-call or call-count caps (as applicable) and a nonzero covering budget or spending cap. Caps default-deny, so a paid call with no covering budget cap is denied before execution.
-- For x402, challenge validation does not authorize spending. The MCP server must not forward payment proof or initiate spending unless a separately reviewed future implementation explicitly establishes that authority.
+- For the deployed Remote MCP, x402 V2 payment authorization supplied by a payment-capable client in `x402/payment` is validated, bound to the challenged request, forwarded only to the allowlisted Stock Trends API endpoint as `PAYMENT-SIGNATURE`, and confirmed settlement is returned in `x402/payment-response`. The server does not control wallets, hold private keys, sign authorizations, or initiate spending. Local stdio's default-off x402 challenge relay remains separate: it does not forward proof or payment headers, return paid data, or spend.
 - Cost estimation does not execute a paid request or make a payment.
 - The optional Streamable HTTP transport is loopback-bound by default, uses SDK Host and Origin validation before MCP dispatch, accepts no-Origin server-to-server requests, and has no CORS policy. It rejects incompatible API-key, paid-execution, and x402 configuration before listening.
 

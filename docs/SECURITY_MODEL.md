@@ -12,7 +12,7 @@ Primary threats:
 - Prompt injection through API-returned text, artifact payloads, or user-supplied symbols and artifact ids.
 - Confused-deputy behavior where a local MCP client uses the adapter's credentials for a task the user did not authorize.
 - Schema drift between MCP tools and the Stock Trends API.
-- Remote paid or authenticated transport exposure before authentication, authorization, rate limiting, and tenant isolation are designed.
+- Any remote paid or authenticated transport beyond the deployed client-authorized x402 exchange before its required authentication, authorization, rate-limiting, and tenant-isolation controls are designed.
 
 Non-threats for v1 only because they are out of scope:
 
@@ -40,9 +40,9 @@ v1 should support API-key first:
 - Public endpoints should remain callable without credentials.
 - Paid tools should be disabled unless credentials are configured and local policy allows paid calls.
 
-## 4. Default-Off x402 Challenge Groundwork; Payment and Wallet Handling Deferred
+## 4. Historical Default-Off Local x402 Challenge Groundwork; Payment and Wallet Handling Deferred
 
-The v1 implementation now contains default-off mock challenge relay groundwork
+The following records the earlier local-stdio v1 implementation phase. It contains default-off mock challenge relay groundwork
 and a separately gated, default-off live no-key challenge relay path. The live
 path is limited to one capped no-key GET for safe HTTP 402 shape inspection; it
 does not relay conditional challenge values, send payment/proof/auth headers,
@@ -50,7 +50,7 @@ return paid data, retry, or spend. Automated coverage is mocked-network only.
 Live no-key challenge validation has not run and is not authorized by this
 document.
 
-Still deferred and not approved:
+For that local-stdio challenge-relay posture, the following remained deferred and not approved:
 
 - Proof forwarding, payment, signing, wallet custody/configuration, private keys,
   seed phrases, settlement verification, and failed-payment handling.
@@ -63,6 +63,8 @@ Still deferred and not approved:
   the existing relay groundwork establishes challenge inspection only.
 - Any broader challenge-value relay, replay policy, or payment authorization
   beyond a separately reviewed and auditable design.
+
+This local historical posture does not describe the subsequently deployed public Remote MCP. That service implements a narrowly scoped x402 V2 exchange for its allowlisted paid tools: a payment-capable client provides authorization in `x402/payment`, the adapter binds it to the challenged canonical request, forwards it upstream as `PAYMENT-SIGNATURE`, and returns confirmed settlement in `x402/payment-response`. It does not take wallet custody, hold private keys, sign authorizations, initiate spending, or make uncertain-outcome retries.
 
 ## 5. Paid Call Safety
 
@@ -159,13 +161,13 @@ Controls:
 - Never expose credentials through resources or prompts.
 - Keep the process single-user and local in v1.
 
-## 12. Public Remote MCP and Future Remote-Paid Risks
+## 12. Deployed Public Remote MCP and Remaining Remote-Paid Risks
 
-The deployed public Remote MCP is Streamable HTTP at `https://mcp.stocktrends.com/mcp`. It is credential-free and free-only: exactly ten public resources, `stocktrends_estimate_workflow_cost` as its one planning tool, and zero prompts. It validates Host and Origin before MCP dispatch, uses SDK bounded body reads, and fails startup before listening if this revision's API-key, paid, x402 relay/challenge/live, or proof-forwarding configuration is active. This is a fail-closed boundary: the public remote surface does not provide CORS, remote authentication, tenant isolation, remote paid execution, customer API-key forwarding, payment forwarding, MPP, or transaction-complete x402.
+The deployed public Remote MCP is Streamable HTTP at `https://mcp.stocktrends.com/mcp`. It exposes ten public resources, three free tools, 12 x402 V2-paid GET tools, four x402 V2-paid POST tools, and zero prompts. Connection and discovery require no Stock Trends subscription API key. It validates Host and Origin before MCP dispatch and uses SDK bounded body reads. For paid tools, the client supplies payment authorization through MCP `x402/payment`; the adapter validates it against a bounded pending challenge tied to the canonical request, forwards the authorization only to an allowlisted API route as `PAYMENT-SIGNATURE`, and returns confirmed settlement through `x402/payment-response`. The service does not control buyer wallets, hold buyer private keys, sign authorizations, initiate autonomous spending, recompute intelligence, or execute trades. It does not automatically retry uncertain settlement outcomes; a paid POST can settle even when the analytical API response is an error.
 
-Remote paid or authenticated HTTP/SSE/Streamable HTTP transport remains a separate security surface and must not ship until it is reviewed. Secret storage, distributed paid limits, OAuth, remote payment execution, and tenant isolation remain future concerns; their absence is intentional and must not be bypassed by the public free-only endpoint.
+The default-off local stdio x402 relay and locally started credential-free Streamable HTTP configuration remain separate security postures; neither should be represented as the deployed public service. Remote OAuth/subscriber authentication, customer API-key forwarding, wallet custody or signing, MPP, distributed paid limits, tenant isolation, and secret storage remain outside this implemented Remote MCP boundary. A funded end-to-end production POST demonstration has not been completed, although GET and POST code has been independently reviewed and exercised by automated tests.
 
-Required future topics:
+Remaining future topics:
 
 - Client authentication and authorization.
 - Tenant isolation and per-user credentials.
@@ -205,11 +207,13 @@ Before any runtime code is merged:
 - [ ] Define startup diagnostics.
 - [ ] Define OpenAPI/tools manifest compatibility checks.
 - [ ] Confirm no direct database access is introduced.
-- [ ] Confirm x402 proof forwarding, payment, signing, wallet custody, and
-      settlement verification remain deferred; default-off challenge inspection
-      remains within its separately reviewed no-key boundary.
+- [ ] For the historical local-stdio design phase, confirm x402 proof
+      forwarding, payment, signing, wallet custody, and settlement verification
+      remain deferred; default-off challenge inspection remains within its
+      separately reviewed no-key boundary.
 - [ ] Complete a separate security review before any remote paid or
-      authenticated MCP transport or execution.
+      authenticated MCP transport or execution beyond the deployed
+      client-authorized x402 exchange.
 
 ## 15. Paid ST-IM and Indicators Live Execution (Subscription/API-Key)
 
