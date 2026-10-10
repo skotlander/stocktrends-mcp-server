@@ -30,8 +30,17 @@ export const X402_LEADERSHIP_SUMMARY_LATEST_PATH = "/v1/leadership/summary/lates
 export const X402_LEADERSHIP_SUMMARY_LATEST_RESOURCE = "https://api.stocktrends.com/v1/leadership/summary/latest";
 export const X402_AGENT_SCREENER_TOP_PATH = "/v1/agent/screener/top";
 export const X402_AGENT_SCREENER_TOP_RESOURCE = "https://api.stocktrends.com/v1/agent/screener/top";
+export const X402_DECISION_EVALUATE_SYMBOL_PATH = "/v1/decision/evaluate-symbol";
+export const X402_DECISION_EVALUATE_SYMBOL_RESOURCE = "https://api.stocktrends.com/v1/decision/evaluate-symbol";
+export const X402_PORTFOLIO_CONSTRUCT_PATH = "/v1/portfolio/construct";
+export const X402_PORTFOLIO_CONSTRUCT_RESOURCE = "https://api.stocktrends.com/v1/portfolio/construct";
+export const X402_PORTFOLIO_EVALUATE_PATH = "/v1/portfolio/evaluate";
+export const X402_PORTFOLIO_EVALUATE_RESOURCE = "https://api.stocktrends.com/v1/portfolio/evaluate";
+export const X402_PORTFOLIO_COMPARE_PATH = "/v1/portfolio/compare";
+export const X402_PORTFOLIO_COMPARE_RESOURCE = "https://api.stocktrends.com/v1/portfolio/compare";
 export const X402_TRANSPORT_TIMEOUT_MS = 10_000;
 export const MAX_X402_PAYMENT_SIGNATURE_BYTES = MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES;
+export const MAX_X402_POST_BODY_BYTES = 16 * 1024;
 
 export type X402ApiTransportError =
   | "x402_transport_target_rejected"
@@ -83,6 +92,19 @@ export const X402_REMOTE_GET_ROUTES: readonly X402RemoteGetRoute[] = Object.free
   { endpointPath: X402_MARKET_EPOCH_HISTORY_PATH, resource: X402_MARKET_EPOCH_HISTORY_RESOURCE, allowedQueryKeys: ["limit", "start_date", "end_date"] }
 ]);
 
+export interface X402RemotePostRoute {
+  endpointPath: string;
+  resource: string;
+}
+
+/** A deliberately closed set of Remote-MCP x402 POST targets. */
+export const X402_REMOTE_POST_ROUTES: readonly X402RemotePostRoute[] = Object.freeze([
+  { endpointPath: X402_DECISION_EVALUATE_SYMBOL_PATH, resource: X402_DECISION_EVALUATE_SYMBOL_RESOURCE },
+  { endpointPath: X402_PORTFOLIO_CONSTRUCT_PATH, resource: X402_PORTFOLIO_CONSTRUCT_RESOURCE },
+  { endpointPath: X402_PORTFOLIO_EVALUATE_PATH, resource: X402_PORTFOLIO_EVALUATE_RESOURCE },
+  { endpointPath: X402_PORTFOLIO_COMPARE_PATH, resource: X402_PORTFOLIO_COMPARE_RESOURCE }
+]);
+
 export interface X402RemoteGetRequest {
   endpointPath: string;
   method: "GET";
@@ -90,6 +112,17 @@ export interface X402RemoteGetRequest {
 }
 
 export interface X402RemoteGetPaymentRequest extends X402RemoteGetRequest {
+  paymentSignature: string;
+}
+
+/** The body text is produced once by the tool and reused byte-for-byte. */
+export interface X402RemotePostRequest {
+  endpointPath: string;
+  method: "POST";
+  bodyText: string;
+}
+
+export interface X402RemotePostPaymentRequest extends X402RemotePostRequest {
   paymentSignature: string;
 }
 
@@ -244,6 +277,81 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
       clearTimeout(timeout);
     }
   }
+
+  async requestAnonymousChallengeForPost(request: X402RemotePostRequest): Promise<X402ApiChallenge> {
+    return this.requestPost(request) as Promise<X402ApiChallenge>;
+  }
+
+  async requestWithPaymentForPost(request: X402RemotePostPaymentRequest): Promise<X402PaidApiResponse> {
+    if (!isBoundedBase64(request.paymentSignature, MAX_X402_PAYMENT_SIGNATURE_BYTES)) {
+      throw new X402ApiTransportFailure("x402_transport_target_rejected");
+    }
+    return this.requestPost(request) as Promise<X402PaidApiResponse>;
+  }
+
+  private async requestPost(request: X402RemotePostRequest | X402RemotePostPaymentRequest): Promise<X402ApiChallenge | X402PaidApiResponse> {
+    const url = buildCanonicalRemotePostUrl(request);
+    const isPaid = "paymentSignature" in request;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response: Response;
+    try {
+      response = await this.fetchFn(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "stocktrends-mcp-server/1.0",
+          ...(isPaid ? { "PAYMENT-SIGNATURE": request.paymentSignature } : {})
+        },
+        body: request.bodyText,
+        credentials: "omit",
+        redirect: "manual",
+        signal: controller.signal
+      });
+      if (response.redirected || (response.status >= 300 && response.status < 400)) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_redirect_rejected");
+      }
+      if (!isPaid) {
+        if (response.status !== 402 || !isJson(response)) {
+          await cancelBody(response);
+          throw new X402ApiTransportFailure("x402_transport_unexpected_status");
+        }
+        const paymentRequiredHeader = response.headers.get("payment-required");
+        if (!isBoundedBase64(paymentRequiredHeader, MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES)) {
+          await cancelBody(response);
+          throw new X402ApiTransportFailure("x402_transport_malformed_response");
+        }
+        const headerValue = decodeJsonObject(paymentRequiredHeader);
+        const body = await readBoundedJsonObject(response);
+        if (controller.signal.aborted) throw new X402ApiTransportFailure("x402_transport_timeout");
+        if (!headerValue || !body || !isSameJson(headerValue, body.payment_required) || !isApprovedRequirements(headerValue)) {
+          throw new X402ApiTransportFailure("x402_transport_malformed_response");
+        }
+        return { status: 402, paymentRequiredHeader, body };
+      }
+      if (response.status === 402) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_payment_rejected");
+      }
+      if (response.status !== 200 || !isJson(response)) {
+        await cancelBody(response);
+        throw new X402ApiTransportFailure("x402_transport_unexpected_status");
+      }
+      const paymentResponseHeader = response.headers.get("payment-response");
+      const paymentResponse = isBoundedBase64(paymentResponseHeader, MAX_X402_PAYMENT_REQUIRED_HEADER_BYTES)
+        ? decodeJsonObject(paymentResponseHeader) : null;
+      const body = await readBoundedJsonObject(response);
+      if (controller.signal.aborted) throw new X402ApiTransportFailure("x402_transport_timeout");
+      if (!paymentResponse || !body) throw new X402ApiTransportFailure("x402_transport_malformed_response");
+      return { status: 200, body, paymentResponse };
+    } catch (error) {
+      if (error instanceof X402ApiTransportFailure) throw error;
+      if (controller.signal.aborted || isAbortError(error)) throw new X402ApiTransportFailure("x402_transport_timeout");
+      throw new X402ApiTransportFailure("x402_transport_unavailable");
+    } finally { clearTimeout(timeout); }
+  }
 }
 
 function normalizeLegacyStimSymbol(value: string): string {
@@ -265,6 +373,19 @@ function buildCanonicalRemoteGetUrl(request: X402RemoteGetRequest): URL {
   const url = new URL(route.resource);
   for (const key of queryKeys) url.searchParams.set(key, request.query[key]);
   return url;
+}
+
+function buildCanonicalRemotePostUrl(request: X402RemotePostRequest): URL {
+  const route = X402_REMOTE_POST_ROUTES.find((candidate) => candidate.endpointPath === request.endpointPath);
+  if (!route || request.method !== "POST" || !isBoundedJsonBody(request.bodyText)) {
+    throw new X402ApiTransportFailure("x402_transport_target_rejected");
+  }
+  return new URL(route.resource);
+}
+
+function isBoundedJsonBody(bodyText: string): boolean {
+  if (!bodyText || Buffer.byteLength(bodyText, "utf8") > MAX_X402_POST_BODY_BYTES) return false;
+  try { return isObject(JSON.parse(bodyText)); } catch { return false; }
 }
 
 function isJson(response: Response): boolean {
@@ -316,7 +437,7 @@ function isApprovedRequirements(value: JsonObject): boolean {
     value.x402Version === 2 &&
     isObject(resource) &&
     typeof resource.url === "string" &&
-    X402_REMOTE_GET_ROUTES.some((route) => route.resource === resource.url) &&
+    [...X402_REMOTE_GET_ROUTES, ...X402_REMOTE_POST_ROUTES].some((route) => route.resource === resource.url) &&
     Array.isArray(value.accepts) &&
     value.accepts.length > 0 &&
     value.accepts.every((accepted) => {
