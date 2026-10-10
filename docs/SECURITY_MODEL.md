@@ -250,9 +250,11 @@ must agree before any call:
   `STOCKTRENDS_API_KEY`, registers the paired paid ST-IM tool *definitions*, the
   paired paid indicators tool *definitions*, the base selections tool
   *definition* (§16), and the four market-context tool *definitions* (§17) —
-  the current paid-exposed total is exactly 10 tools; the default/free surface
-  remains exactly 1. This flag, or the API key, alone never exposes or executes
-  anything. The internal instrument resolver adds **no** public tool.
+  the current local subscription/API-key paid-exposed total is exactly 12 tools:
+  three free tools plus nine paid tools. The default/free surface remains
+  exactly 3. This flag, or the API key, alone never exposes or executes
+  anything. The internal resolver helper is distinct from the two public
+  instrument-discovery tools.
 - **`STOCKTRENDS_ENABLE_PAID_EXECUTION` (execution).** A distinct runtime flag.
   Live execution additionally requires it to be `true`. Exposure is independent
   of it: the tools appear whether or not it is set; only execution is gated.
@@ -260,12 +262,12 @@ must agree before any call:
 
   | Configuration | Exposure | Execution |
   | --- | --- | --- |
-  | API key only | none (1 planning tool) | none |
-  | Paid-tools flag only (no key) | none (1 planning tool) | none |
-  | Execution flag only (no tools flag / no key) | none (1 planning tool) | none |
-  | Paid-tools flag + key, no execution flag | 10 tools | none (`paid_execution_disabled`) |
-  | Paid-tools flag + key + execution flag, no caps | 10 tools | none (`spend_cap_exceeded`) |
-  | Paid-tools flag + key + execution flag + ≥1 nonzero call cap + a budget cap covering the nonzero cost | 10 tools | permitted after full preflight (indicators additionally require a safe resolved identity; selections and market-context additionally require bounded always-sent limits) |
+  | API key only | none (3 free tools) | none |
+  | Paid-tools flag only (no key) | none (3 free tools) | none |
+  | Execution flag only (no tools flag / no key) | none (3 free tools) | none |
+  | Paid-tools flag + key, no execution flag | 12 tools | none (`paid_execution_disabled`) |
+  | Paid-tools flag + key + execution flag, no caps | 12 tools | none (`spend_cap_exceeded`) |
+  | Paid-tools flag + key + execution flag + ≥1 nonzero call cap + a budget cap covering the nonzero cost | 12 tools | permitted after full preflight (indicators additionally require a safe resolved identity; selections and market-context additionally require bounded always-sent limits) |
 
   There is no dry-run flag in this build; a not-yet-enabled configuration simply
   fails closed with `paid_execution_disabled` and sends no request.
@@ -404,8 +406,9 @@ separately reviewed promotion into the auth-capable allowlist.
 
 Indicators (and any future stock-specific paid family) resolve a caller identity
 to exactly one safe canonical `symbol_exchange` **before** any paid boundary. The
-resolver is an **internal helper only** — it adds **no public MCP tool** and no
-MCP resource, so the default/free surface stays at exactly one tool — and every
+resolver is an **internal helper** distinct from the two public
+instrument-discovery tools, so the default/free surface stays at exactly three
+tools — and every
 call it makes is **credential-free** (Accept + User-Agent only; never
 `X-API-Key`, `Authorization`, or a payment header).
 
@@ -451,7 +454,7 @@ Registering `stocktrends_get_selections_latest` brings the paid-exposed surface
 from five tools to **exactly six**: the planning tool
 (`stocktrends_estimate_workflow_cost`), the paired paid ST-IM tools, the paired
 paid indicators tools, and the single base-selections tool. The **default/free
-surface remains exactly one tool**, and there are **zero MCP prompts** in every
+surface remains exactly three tools**, and there are **zero MCP prompts** in every
 mode. Exposure uses the same gate as the ST-IM/indicators families (paid-tools
 flag + configured API key) and is independent of the execution flag. No
 `selections/history`, no `selections/published/*`, and no public selections
@@ -582,7 +585,7 @@ paid indicators tools, the base-selections tool, and the four market-context
 tools (`stocktrends_get_market_regime_latest`,
 `stocktrends_get_market_regime_history`, `stocktrends_get_breadth_sector_latest`,
 `stocktrends_get_leadership_summary_latest`). The **default/free surface remains
-exactly one tool**, and there are **zero MCP prompts** in every mode. Exposure
+exactly three tools**, and there are **zero MCP prompts** in every mode. Exposure
 uses the same gate as every prior family (paid-tools flag + configured API key —
 neither alone exposes anything) and is independent of the execution flag, which
 changes call behavior, never tool count. The **public resource count changes
@@ -863,9 +866,11 @@ It updates and does not relax §18.
   carries the matching `title`, `description`, `repository`, `version`, and a
   single `packages` entry identifying the published npm package
   (`@stocktrends-publications/stocktrends-mcp-server`, transport `stdio`).
-- **No mandatory credential for the default surface.** The default MCP
-  package requires no API key or other environment variable to initialize,
-  list its one default tool, or list its ten resources. Accordingly,
+- **No mandatory credential for the published npm `1.0.1` default surface.**
+  That published package requires no API key or other environment variable to
+  initialize, list its one default tool, or list its ten resources. This
+  historical package result does not describe the current source checkout,
+  which registers three free tools. Accordingly,
   `server.json` declares no `environmentVariables`, no payment/x402
   configuration, and no remote transport — only the exact reviewed `stdio`
   npm package entry.
