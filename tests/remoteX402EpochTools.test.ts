@@ -76,7 +76,8 @@ describe("Remote x402 Epoch GET tools", () => {
     const client = await connected(async (url) => challengeFor(url));
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
-      "stocktrends_estimate_workflow_cost", "stocktrends_get_breadth_sector_latest", "stocktrends_get_indicators_history",
+      "stocktrends_compare_portfolios", "stocktrends_construct_portfolio", "stocktrends_estimate_workflow_cost",
+      "stocktrends_evaluate_portfolio", "stocktrends_evaluate_symbol", "stocktrends_get_breadth_sector_latest", "stocktrends_get_indicators_history",
       "stocktrends_get_indicators_latest", "stocktrends_get_leadership_summary_latest", "stocktrends_get_market_epoch_history",
       "stocktrends_get_market_epoch_latest", "stocktrends_get_market_regime_history", "stocktrends_get_market_regime_latest",
       "stocktrends_get_screener_top", "stocktrends_get_selections_latest", "stocktrends_get_stim_history", "stocktrends_get_stim_latest",

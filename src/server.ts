@@ -19,6 +19,7 @@ import { registerPaidStimTools } from "./tools/stimTools.js";
 import { registerX402PublicTools } from "./tools/x402Tools.js";
 import { registerSimulatedRemoteX402StimTool, type SimulatedX402RemoteOptions } from "./tools/x402SimulatedRemoteTool.js";
 import { registerRemoteX402StimTool, type RemoteX402StimState } from "./tools/remoteX402StimTool.js";
+import { registerRemoteX402PaidPostTools } from "./tools/remoteX402PostTools.js";
 import { ProductionX402ApiTransport } from "./x402ApiTransport.js";
 import { startStreamableHttpServer } from "./httpServer.js";
 
@@ -112,6 +113,11 @@ export function createStockTrendsMcpServer(options: CreateServerOptions = {}): S
       throw new Error("Remote x402 ST-IM requires the Streamable HTTP activation boundary.");
     }
     registerRemoteX402StimTool(server, {
+      state: options.remoteX402StimState,
+      transport: new ProductionX402ApiTransport({ fetchFn: options.fetchFn }),
+      now: options.remoteX402StimNow
+    });
+    registerRemoteX402PaidPostTools(server, {
       state: options.remoteX402StimState,
       transport: new ProductionX402ApiTransport({ fetchFn: options.fetchFn }),
       now: options.remoteX402StimNow
