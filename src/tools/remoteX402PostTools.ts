@@ -93,6 +93,14 @@ async function execute<Input>(descriptor: Descriptor<Input>, input: Input, payme
     const settlement = successfulSettlement(result.paymentResponse);
     if (settlement.kind === "explicit_failure") return paymentFailure(challenge.requirements, "Payment settlement failed.");
     if (settlement.kind !== "success") return paymentFailure(challenge.requirements, "Payment outcome unknown after forwarding; do not retry payment automatically.");
+    if (result.status !== 200) {
+      return {
+        isError: true,
+        structuredContent: result.body,
+        content: [{ type: "text" as const, text: `Payment settled successfully, but the Stock Trends API returned HTTP ${result.status}. ${JSON.stringify(result.body)}` }],
+        _meta: { "x402/payment-response": settlement.value, "x402/http-status": result.status }
+      };
+    }
     return { structuredContent: result.body, content: [{ type: "text" as const, text: JSON.stringify(result.body) }], _meta: { "x402/payment-response": settlement.value } };
   } catch (cause) { return paymentFailure(challenge.requirements, cause instanceof X402ApiTransportFailure && cause.code === "x402_transport_payment_rejected" ? "Payment authorization rejected by API." : "Payment outcome unknown after forwarding; do not retry payment automatically."); }
 }

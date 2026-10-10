@@ -138,6 +138,13 @@ export interface X402PaidApiResponse {
   paymentResponse: JsonObject;
 }
 
+/** A paid POST can settle before the analytical handler returns an API error. */
+export interface X402PaidPostApiResponse {
+  status: number;
+  body: JsonObject;
+  paymentResponse: JsonObject;
+}
+
 /**
  * Both methods remain constrained to the one fixed API resource.
  */
@@ -282,14 +289,14 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
     return this.requestPost(request) as Promise<X402ApiChallenge>;
   }
 
-  async requestWithPaymentForPost(request: X402RemotePostPaymentRequest): Promise<X402PaidApiResponse> {
+  async requestWithPaymentForPost(request: X402RemotePostPaymentRequest): Promise<X402PaidPostApiResponse> {
     if (!isBoundedBase64(request.paymentSignature, MAX_X402_PAYMENT_SIGNATURE_BYTES)) {
       throw new X402ApiTransportFailure("x402_transport_target_rejected");
     }
-    return this.requestPost(request) as Promise<X402PaidApiResponse>;
+    return this.requestPost(request) as Promise<X402PaidPostApiResponse>;
   }
 
-  private async requestPost(request: X402RemotePostRequest | X402RemotePostPaymentRequest): Promise<X402ApiChallenge | X402PaidApiResponse> {
+  private async requestPost(request: X402RemotePostRequest | X402RemotePostPaymentRequest): Promise<X402ApiChallenge | X402PaidPostApiResponse> {
     const url = buildCanonicalRemotePostUrl(request);
     const isPaid = "paymentSignature" in request;
     const controller = new AbortController();
@@ -335,7 +342,8 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
         await cancelBody(response);
         throw new X402ApiTransportFailure("x402_transport_payment_rejected");
       }
-      if (response.status !== 200 || !isJson(response)) {
+      const settledApiError = response.status >= 400 && response.status <= 599;
+      if ((response.status !== 200 && !settledApiError) || !isJson(response)) {
         await cancelBody(response);
         throw new X402ApiTransportFailure("x402_transport_unexpected_status");
       }
@@ -345,7 +353,7 @@ export class ProductionX402ApiTransport implements X402PaymentBearingTransport {
       const body = await readBoundedJsonObject(response);
       if (controller.signal.aborted) throw new X402ApiTransportFailure("x402_transport_timeout");
       if (!paymentResponse || !body) throw new X402ApiTransportFailure("x402_transport_malformed_response");
-      return { status: 200, body, paymentResponse };
+      return { status: response.status, body, paymentResponse };
     } catch (error) {
       if (error instanceof X402ApiTransportFailure) throw error;
       if (controller.signal.aborted || isAbortError(error)) throw new X402ApiTransportFailure("x402_transport_timeout");

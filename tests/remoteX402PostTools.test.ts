@@ -77,6 +77,37 @@ describe("Remote x402 analytical POST tools", () => {
     const result = await call(client, "stocktrends_evaluate_symbol", { symbol_exchange: "IBM-N" }, paymentFor("https://api.stocktrends.com/v1/portfolio/evaluate"));
     expect(result.isError).toBe(true); expect(paid).toBe(0); await client.close();
   });
+
+  it("preserves a settled 404 API error without presenting it as analytical success", async () => {
+    let paidCalls = 0; const client = await connected(async (url, init) => {
+      if ((init?.headers as Record<string, string>)?.["PAYMENT-SIGNATURE"]) {
+        paidCalls++;
+        return json({ detail: { error: "symbol_not_found" } }, 404, { "payment-response": b64({ success: true, transaction: "settled-404" }) });
+      }
+      return challengeFor(url);
+    });
+    await call(client, "stocktrends_evaluate_symbol", { symbol_exchange: "ZZZZ-N" });
+    const result = await call(client, "stocktrends_evaluate_symbol", { symbol_exchange: "ZZZZ-N" }, paymentFor("https://api.stocktrends.com/v1/decision/evaluate-symbol"));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({ detail: { error: "symbol_not_found" } });
+    expect(result.content[0].text).toContain("Payment settled successfully, but the Stock Trends API returned HTTP 404.");
+    expect(result._meta).toEqual({ "x402/payment-response": { success: true, transaction: "settled-404" }, "x402/http-status": 404 });
+    expect(paidCalls).toBe(1); await client.close();
+  });
+
+  it("does not release an API error when paid POST settlement evidence is missing", async () => {
+    let paidCalls = 0; const client = await connected(async (url, init) => {
+      if ((init?.headers as Record<string, string>)?.["PAYMENT-SIGNATURE"]) { paidCalls++; return json({ detail: { error: "internal_failure" } }, 500, {}); }
+      return challengeFor(url);
+    });
+    await call(client, "stocktrends_evaluate_symbol", { symbol_exchange: "IBM-N" });
+    const result = await call(client, "stocktrends_evaluate_symbol", { symbol_exchange: "IBM-N" }, paymentFor("https://api.stocktrends.com/v1/decision/evaluate-symbol"));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toContain("Payment outcome unknown after forwarding");
+    expect(JSON.stringify(result)).not.toContain("internal_failure");
+    expect(result._meta?.["x402/payment-response"]).toBeUndefined();
+    expect(paidCalls).toBe(1); await client.close();
+  });
 });
 
 async function connected(fetchFn: FetchLike) {
