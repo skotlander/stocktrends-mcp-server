@@ -840,16 +840,14 @@ Minimum controls for this surface:
   remained default-off throughout. This is repository-configuration and
   package-registry state, not MCP Registry (`com.stocktrends/...`)
   registration — see the next bullet and §19.
-- **MCP Registry registration has not yet occurred.** Publishing an npm
-  package under a scoped npm identity is a separate action from registering
-  that package's `server.json` with the official MCP Registry under the
-  `com.stocktrends/market-intelligence` namespace. `1.0.1` adds only the
-  Registry-readiness metadata (`package.json` `mcpName`, repository-root
-  `server.json`, and their validators — §19); it does **not** perform domain
-  authentication, does **not** submit `server.json` to the Registry, and does
-  **not** create any Registry record. `npm view`, `npm search`, `npm info`,
-  `mcp-publisher`, and any npm account, trusted-publisher, or MCP Registry
-  operation remain out of scope for every validation pass described here.
+- **MCP Registry registration status.** The original registration for
+  `com.stocktrends/market-intelligence` was published on July 19, 2026; its
+  Registry `1.0.1` record is active. Publishing an npm package under a scoped
+  npm identity remains separate from publishing later `server.json` metadata:
+  proposed Registry `1.0.2` has not been published. `npm view`, `npm search`,
+  `npm info`, `mcp-publisher`, and any npm account, trusted-publisher, or MCP
+  Registry operation remain out of scope for every validation pass described
+  here.
 - **Private source repository; no automatic provenance expected.** The source
   GitHub repository remains private, and automatic npm provenance is not
   expected while that remains true. Trusted publishing itself is still usable
@@ -867,6 +865,11 @@ narrower surface than §18's npm package distribution surface. It records the
 `1.0.1` Registry-readiness change implemented per
 [`MCP_REGISTRY_READINESS_IMPLEMENTATION_NOTES.md`](MCP_REGISTRY_READINESS_IMPLEMENTATION_NOTES.md).
 It updates and does not relax §18.
+
+**Current status clarification.** The original Registry `1.0.1` record is
+active (published July 19, 2026). The repository's `server.json` contains the
+proposed Registry `1.0.2` metadata, which has not been published; publishing
+it remains a separate, owner-authorized action.
 
 - **Reviewed identity.** The MCP Registry server name is
   `com.stocktrends/market-intelligence`. `package.json` declares this as
