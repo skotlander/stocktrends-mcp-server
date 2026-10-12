@@ -40,10 +40,18 @@ export const REVIEWED_REPOSITORY = Object.freeze({
   source: "github"
 });
 export const REVIEWED_GITHUB_REPOSITORY = "skotlander/stocktrends-mcp-server";
-export const REVIEWED_VERSION = "1.0.1";
+// Registry server releases are versioned independently from the referenced
+// npm artifact. This metadata-only release advertises the existing 1.0.1
+// package while advancing the Registry record to 1.0.2.
+export const REVIEWED_REGISTRY_VERSION = "1.0.2";
+export const REVIEWED_PACKAGE_VERSION = "1.0.1";
 export const REVIEWED_NPM_IDENTIFIER = "@stocktrends-publications/stocktrends-mcp-server";
 export const REVIEWED_REGISTRY_TYPE = "npm";
 export const REVIEWED_TRANSPORT = Object.freeze({ type: "stdio" });
+export const REVIEWED_REMOTE = Object.freeze({
+  type: "streamable-http",
+  url: "https://mcp.stocktrends.com/mcp"
+});
 
 // Registry schema shape bounds (2025-12-11/server.schema.json), enforced
 // independently of the exact-value checks above -- a value can be the wrong
@@ -61,7 +69,7 @@ export const MIN_NAME_LENGTH = 3;
 export const MAX_NAME_LENGTH = 200;
 
 // server.json is closed: only these top-level and per-package fields are
-// reviewed. Anything else is an unreviewed, unexpected addition -- remotes,
+// reviewed. Anything else is an unreviewed, unexpected addition --
 // environmentVariables, package arguments, credentials, and any other field
 // each fail closed rather than being silently ignored.
 export const ALLOWED_TOP_LEVEL_FIELDS = Object.freeze([
@@ -71,9 +79,11 @@ export const ALLOWED_TOP_LEVEL_FIELDS = Object.freeze([
   "description",
   "repository",
   "version",
+  "remotes",
   "packages"
 ]);
 export const ALLOWED_PACKAGE_FIELDS = Object.freeze(["registryType", "identifier", "version", "transport"]);
+export const ALLOWED_REMOTE_FIELDS = Object.freeze(["type", "url"]);
 
 export function summarizeValue(value, maxLength = 160) {
   let rendered;
@@ -213,8 +223,29 @@ function checkTopLevelFields(server, violations) {
       `server.json repository must be exactly ${summarizeValue(REVIEWED_REPOSITORY)} (found ${summarizeValue(server.repository)}).`
     );
   }
-  if (server.version !== REVIEWED_VERSION) {
-    violations.push(`server.json version must be exactly ${summarizeValue(REVIEWED_VERSION)} (found ${summarizeValue(server.version)}).`);
+  if (server.version !== REVIEWED_REGISTRY_VERSION) {
+    violations.push(`server.json version must be exactly ${summarizeValue(REVIEWED_REGISTRY_VERSION)} (found ${summarizeValue(server.version)}).`);
+  }
+}
+
+function checkRemotesArray(server, violations) {
+  const remotes = server.remotes;
+  if (!Array.isArray(remotes)) {
+    violations.push(`server.json remotes must be an array of exactly one item (found ${summarizeValue(remotes)}).`);
+    return;
+  }
+  if (remotes.length !== 1) {
+    violations.push(`server.json remotes must contain exactly one item (found ${remotes.length}).`);
+    return;
+  }
+  const remote = remotes[0];
+  if (remote === null || typeof remote !== "object" || Array.isArray(remote)) {
+    violations.push(`server.json remotes[0] must be an object (found ${summarizeValue(remote)}).`);
+    return;
+  }
+  checkUnexpectedFields(remote, ALLOWED_REMOTE_FIELDS, "server.json remotes[0]", violations);
+  if (!deepEqual(remote, REVIEWED_REMOTE)) {
+    violations.push(`server.json remotes[0] must be exactly ${summarizeValue(REVIEWED_REMOTE)} (found ${summarizeValue(remote)}).`);
   }
 }
 
@@ -257,9 +288,9 @@ function checkPackagesArray(server, violations) {
       `server.json packages[0].identifier must be exactly ${summarizeValue(REVIEWED_NPM_IDENTIFIER)} (found ${summarizeValue(pkg.identifier)}).`
     );
   }
-  if (pkg.version !== REVIEWED_VERSION) {
+  if (pkg.version !== REVIEWED_PACKAGE_VERSION) {
     violations.push(
-      `server.json packages[0].version must be exactly ${summarizeValue(REVIEWED_VERSION)} (found ${summarizeValue(pkg.version)}).`
+      `server.json packages[0].version must be exactly ${summarizeValue(REVIEWED_PACKAGE_VERSION)} (found ${summarizeValue(pkg.version)}).`
     );
   }
   if (!deepEqual(pkg.transport, REVIEWED_TRANSPORT)) {
@@ -276,6 +307,7 @@ export function analyzeServerJson({ serverJsonPath }) {
   const violations = [];
 
   checkTopLevelFields(server, violations);
+  checkRemotesArray(server, violations);
   checkPackagesArray(server, violations);
 
   return { violations };
@@ -295,9 +327,10 @@ export function analyzeRegistryMetadataAgreement({ serverJsonPath, packageJsonPa
       `package.json mcpName ${summarizeValue(pkg.mcpName)} must exactly equal server.json name ${summarizeValue(server.name)}.`
     );
   }
-  if (pkg.version !== server.version) {
+  const packageVersion = Array.isArray(server.packages) && server.packages.length === 1 ? server.packages[0]?.version : undefined;
+  if (pkg.version !== packageVersion) {
     violations.push(
-      `package.json version ${summarizeValue(pkg.version)} must exactly equal server.json version ${summarizeValue(server.version)}.`
+      `package.json version ${summarizeValue(pkg.version)} must exactly equal server.json packages[0].version ${summarizeValue(packageVersion)}.`
     );
   }
 
@@ -312,9 +345,9 @@ export function analyzeRegistryMetadataAgreement({ serverJsonPath, packageJsonPa
     lock.packages !== null && typeof lock.packages === "object" && !Array.isArray(lock.packages) ? lock.packages[""] : undefined;
   const hasRootPackage = rootPackage !== null && typeof rootPackage === "object" && !Array.isArray(rootPackage);
   const lockVersion = hasRootPackage ? rootPackage.version : undefined;
-  if (lock.version !== server.version || lockVersion !== server.version) {
+  if (lock.version !== packageVersion || lockVersion !== packageVersion) {
     violations.push(
-      `package-lock.json root version (top-level ${summarizeValue(lock.version)}, packages[""] ${summarizeValue(lockVersion)}) must agree with server.json version ${summarizeValue(server.version)}.`
+      `package-lock.json root version (top-level ${summarizeValue(lock.version)}, packages[""] ${summarizeValue(lockVersion)}) must agree with server.json packages[0].version ${summarizeValue(packageVersion)}.`
     );
   }
 

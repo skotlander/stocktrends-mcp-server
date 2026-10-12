@@ -871,22 +871,26 @@ It updates and does not relax §18.
 - **Reviewed identity.** The MCP Registry server name is
   `com.stocktrends/market-intelligence`. `package.json` declares this as
   `mcpName`; the repository-root `server.json` declares it as `name` and
-  carries the matching `title`, `description`, `repository`, `version`, and a
-  single `packages` entry identifying the published npm package
-  (`@stocktrends-publications/stocktrends-mcp-server`, transport `stdio`).
+  carries the matching `title`, `description`, and `repository`, plus a
+  Registry server version, a single stdio `packages` entry identifying the
+  published npm package `@stocktrends-publications/stocktrends-mcp-server`,
+  and one reviewed Streamable HTTP remote endpoint. Registry metadata releases
+  and referenced package releases are deliberately versioned independently:
+  Registry `1.0.2` references the existing npm package `1.0.1`.
 - **No mandatory credential for the published npm `1.0.1` default surface.**
   That published package requires no API key or other environment variable to
   initialize, list its one default tool, or list its ten resources. This
   historical package result does not describe the current source checkout,
   which registers three free tools. Accordingly,
-  `server.json` declares no `environmentVariables`, no payment/x402
-  configuration, and no remote transport — only the exact reviewed `stdio`
-  npm package entry.
+  `server.json` declares no `environmentVariables`, payment/x402
+  configuration, or credential/header requirement. It declares only the exact
+  reviewed `stdio` npm package entry and Streamable HTTP remote endpoint.
 - **Offline, fail-closed validation.** `npm run check:mcp-registry-metadata`
   (`scripts/check-mcp-registry-metadata.mjs`) statically validates
   `server.json` against the reviewed contract and cross-checks agreement with
-  `package.json` (`mcpName`, `version`, `name`/npm identifier, GitHub
-  repository identity) and `package-lock.json` (root version). It reads only
+  `package.json` (`mcpName`, `name`/npm identifier, GitHub repository identity,
+  and the declared npm-package version) and `package-lock.json` (root package
+  version). It reads only
   local files; it runs no npm, `mcp-publisher`, registry, or network
   operation. It is wired into `.github/workflows/npm-stage-release.yml` after
   dependency installation and before tarball creation, alongside
