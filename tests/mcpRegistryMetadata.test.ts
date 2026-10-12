@@ -17,7 +17,9 @@ import {
   REVIEWED_SCHEMA,
   REVIEWED_TITLE,
   REVIEWED_TRANSPORT,
-  REVIEWED_VERSION
+  REVIEWED_REGISTRY_VERSION,
+  REVIEWED_PACKAGE_VERSION,
+  REVIEWED_REMOTE
 } from "../scripts/check-mcp-registry-metadata.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,12 +43,13 @@ function reviewedServerJson(): Record<string, unknown> {
     title: REVIEWED_TITLE,
     description: REVIEWED_DESCRIPTION,
     repository: { url: REVIEWED_REPOSITORY.url, source: REVIEWED_REPOSITORY.source },
-    version: REVIEWED_VERSION,
+    version: REVIEWED_REGISTRY_VERSION,
+    remotes: [{ type: REVIEWED_REMOTE.type, url: REVIEWED_REMOTE.url }],
     packages: [
       {
         registryType: "npm",
         identifier: REVIEWED_NPM_IDENTIFIER,
-        version: REVIEWED_VERSION,
+        version: REVIEWED_PACKAGE_VERSION,
         transport: { type: REVIEWED_TRANSPORT.type }
       }
     ]
@@ -58,7 +61,7 @@ function reviewedServerJson(): Record<string, unknown> {
 function reviewedPackageJsonFixture(): Record<string, unknown> {
   return {
     name: REVIEWED_NPM_IDENTIFIER,
-    version: REVIEWED_VERSION,
+    version: REVIEWED_PACKAGE_VERSION,
     mcpName: REVIEWED_MCP_NAME,
     repository: { type: "git", url: "git+https://github.com/skotlander/stocktrends-mcp-server.git" }
   };
@@ -69,13 +72,13 @@ function reviewedPackageJsonFixture(): Record<string, unknown> {
 function reviewedLockJsonFixture(): Record<string, unknown> {
   return {
     name: REVIEWED_NPM_IDENTIFIER,
-    version: REVIEWED_VERSION,
+    version: REVIEWED_PACKAGE_VERSION,
     lockfileVersion: 3,
     requires: true,
     packages: {
       "": {
         name: REVIEWED_NPM_IDENTIFIER,
-        version: REVIEWED_VERSION
+        version: REVIEWED_PACKAGE_VERSION
       }
     }
   };
@@ -227,10 +230,52 @@ describe("MCP Registry metadata contract check", () => {
 
     it("fails on an unexpected top-level field", () => {
       const violations = serverViolationsFor((server) => {
-        (server as Record<string, unknown>).remotes = [{ type: "streamable-http", url: "https://example.com" }];
+        (server as Record<string, unknown>).environmentVariables = [];
       });
 
-      expect(violations.some((v) => v.includes("unexpected field") && v.includes("remotes"))).toBe(true);
+      expect(violations.some((v) => v.includes("unexpected field") && v.includes("environmentVariables"))).toBe(true);
+    });
+  });
+
+  describe("remote endpoint", () => {
+    it("fails when the remote endpoint is missing", () => {
+      const violations = serverViolationsFor((server) => {
+        delete server.remotes;
+      });
+
+      expect(violations.some((v) => v.includes("remotes must be an array"))).toBe(true);
+    });
+
+    it("fails on an unknown remote URL", () => {
+      const violations = serverViolationsFor((server) => {
+        (server.remotes as Array<Record<string, unknown>>)[0].url = "https://example.com/mcp";
+      });
+
+      expect(violations.some((v) => v.includes("remotes[0] must be exactly"))).toBe(true);
+    });
+
+    it("fails on an unexpected remote transport", () => {
+      const violations = serverViolationsFor((server) => {
+        (server.remotes as Array<Record<string, unknown>>)[0].type = "sse";
+      });
+
+      expect(violations.some((v) => v.includes("remotes[0] must be exactly"))).toBe(true);
+    });
+
+    it("fails on an additional remote endpoint", () => {
+      const violations = serverViolationsFor((server) => {
+        (server.remotes as Array<Record<string, unknown>>).push({ type: "streamable-http", url: "https://example.com/mcp" });
+      });
+
+      expect(violations.some((v) => v.includes("remotes must contain exactly one item"))).toBe(true);
+    });
+
+    it("fails on remote credential declarations", () => {
+      const violations = serverViolationsFor((server) => {
+        (server.remotes as Array<Record<string, unknown>>)[0].headers = [];
+      });
+
+      expect(violations.some((v) => v.includes("unexpected field") && v.includes("headers"))).toBe(true);
     });
   });
 
