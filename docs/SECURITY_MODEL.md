@@ -840,14 +840,15 @@ Minimum controls for this surface:
   remained default-off throughout. This is repository-configuration and
   package-registry state, not MCP Registry (`com.stocktrends/...`)
   registration — see the next bullet and §19.
-- **MCP Registry registration status.** The original registration for
-  `com.stocktrends/market-intelligence` was published on July 19, 2026; its
-  Registry `1.0.1` record is active. Publishing an npm package under a scoped
-  npm identity remains separate from publishing later `server.json` metadata:
-  proposed Registry `1.0.2` has not been published. `npm view`, `npm search`,
-  `npm info`, `mcp-publisher`, and any npm account, trusted-publisher, or MCP
-  Registry operation remain out of scope for every validation pass described
-  here.
+- **MCP Registry publication status.** The original registration for
+  `com.stocktrends/market-intelligence` was published on July 19, 2026. Registry
+  `1.0.2` was published on October 12, 2026 and independently verified as
+  active and latest. It preserves the local stdio npm package at `1.0.1` and
+  registers the Remote MCP endpoint successfully. Publishing an npm package
+  under a scoped npm identity remains separate from publishing `server.json`
+  metadata. `npm view`, `npm search`, `npm info`, `mcp-publisher`, and any npm
+  account, trusted-publisher, or MCP Registry operation remain out of scope for
+  every historical validation pass described here.
 - **Private source repository; no automatic provenance expected.** The source
   GitHub repository remains private, and automatic npm provenance is not
   expected while that remains true. Trusted publishing itself is still usable
@@ -866,10 +867,12 @@ narrower surface than §18's npm package distribution surface. It records the
 [`MCP_REGISTRY_READINESS_IMPLEMENTATION_NOTES.md`](MCP_REGISTRY_READINESS_IMPLEMENTATION_NOTES.md).
 It updates and does not relax §18.
 
-**Current status clarification.** The original Registry `1.0.1` record is
-active (published July 19, 2026). The repository's `server.json` contains the
-proposed Registry `1.0.2` metadata, which has not been published; publishing
-it remains a separate, owner-authorized action.
+**Current status clarification.** The original Registry `1.0.1` record was
+published July 19, 2026. Registry `1.0.2` was published October 12, 2026 and
+independently verified as active and latest. It preserves the local stdio npm
+package at `1.0.1` while successfully registering the Remote MCP endpoint. The
+publication reused the existing DNS Ed25519 authentication method, and the
+publisher authentication session was cleared after publication.
 
 - **Reviewed identity.** The MCP Registry server name is
   `com.stocktrends/market-intelligence`. `package.json` declares this as
@@ -903,12 +906,12 @@ it remains a separate, owner-authorized action.
   **not** included in `package.json`'s closed `files` allowlist and is
   therefore **not** packaged into the npm tarball; the tarball's closed
   allowlist and file count (§18) are unchanged by its addition.
-- **Registration remains a separate, later, owner-authorized action.** Adding
-  and validating `server.json` configures repository metadata only. It does
-  **not** perform domain authentication for `stocktrends.com`, does **not**
-  generate or use a Registry authentication private key, does **not** create a
-  DNS or `/.well-known/mcp-registry-auth` record, does **not** install or run
-  `mcp-publisher`, and does **not** submit anything to the MCP Registry. The
-  next gates — domain authentication, `server.json` submission, and Registry
-  record verification — are separate, later, explicitly authorized actions
-  (see the implementation notes' next-gates list).
+- **Historical implementation boundary.** When the Registry-readiness work was
+  implemented, adding and validating `server.json` configured repository
+  metadata only. That work did **not** perform domain authentication for
+  `stocktrends.com`, generate or use a Registry authentication private key,
+  create a DNS or `/.well-known/mcp-registry-auth` record, install or run
+  `mcp-publisher`, or submit anything to the MCP Registry. Those later,
+  owner-authorized gates have since been completed for Registry `1.0.2` using
+  the existing DNS Ed25519 authentication method; the publisher authentication
+  session was cleared after publication.
